@@ -57,7 +57,12 @@ func runConnect(args []string) {
 		return
 	}
 
-	authURL, state, err := oauthService.StartAuthFlow(ctx, provider.ID)
+	var authURL, state string
+	if *callbackAddr != "" {
+		authURL, state, err = oauthService.StartAuthFlowWithCallback(ctx, provider.ID, *callbackAddr)
+	} else {
+		authURL, state, err = oauthService.StartAuthFlow(ctx, provider.ID)
+	}
 	if err != nil {
 		logger.Error("failed to start auth flow", "error", err)
 		os.Exit(1)

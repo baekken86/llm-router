@@ -69,7 +69,7 @@
       "id": "S001T007",
       "title": "VirtualModelService (CRUD, Filter/Sort-Validation, Resolution)",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 3,
       "depends_on": [
         "S001T004"

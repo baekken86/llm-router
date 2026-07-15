@@ -81,7 +81,7 @@ func (s *oauthService) HandleCallback(ctx context.Context, code, state string) (
 	}
 	delete(s.states, state)
 
-	tokenInfo, err := s.oauth.ExchangeCode(ctx, code)
+	tokenInfo, err := s.oauth.ExchangeCode(ctx, code, state)
 	if err != nil {
 		return nil, fmt.Errorf("exchange code: %w", err)
 	}

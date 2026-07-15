@@ -78,24 +78,16 @@ func (a *AnthropicOAuth) GetAuthorizationURL(state string) string {
 	return AnthropicAuthURL + "?" + params.Encode()
 }
 
-func (a *AnthropicOAuth) ExchangeCode(ctx context.Context, code string) (*AnthropicTokenInfo, error) {
-	authCode := code
-	codeState := ""
-	if strings.Contains(code, "#") {
-		parts := strings.SplitN(code, "#", 2)
-		authCode = parts[0]
-		codeState = parts[1]
-	}
-
+func (a *AnthropicOAuth) ExchangeCode(ctx context.Context, code, state string) (*AnthropicTokenInfo, error) {
 	body := map[string]string{
-		"code":          authCode,
+		"code":          code,
 		"grant_type":    "authorization_code",
 		"client_id":     a.clientID,
 		"redirect_uri":  a.redirectURI,
 		"code_verifier": a.codeVerifier,
 	}
-	if codeState != "" {
-		body["state"] = codeState
+	if state != "" {
+		body["state"] = state
 	}
 
 	return a.doTokenRequestJSON(ctx, body)

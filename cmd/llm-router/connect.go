@@ -90,10 +90,14 @@ func runManual(ctx context.Context, oauthService service.OAuthService, authURL, 
 		os.Exit(1)
 	}
 
-	code := extractCodeFromURL(callbackURL)
+	code, returnedState := extractCodeAndState(callbackURL)
 	if code == "" {
 		logger.Error("could not extract code from URL")
 		os.Exit(1)
+	}
+
+	if returnedState != "" {
+		state = returnedState
 	}
 
 	token, err := oauthService.HandleCallback(ctx, code, state)
@@ -110,10 +114,10 @@ func runManual(ctx context.Context, oauthService service.OAuthService, authURL, 
 	fmt.Println("You can now use Claude Code models in your virtual models.")
 }
 
-func extractCodeFromURL(rawURL string) string {
+func extractCodeAndState(rawURL string) (code, state string) {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	return u.Query().Get("code")
+	return u.Query().Get("code"), u.Query().Get("state")
 }

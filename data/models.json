@@ -1,28 +1,37 @@
 {
   "fields": {
-    "intel": {
-      "description": "Intelligence score (0-100). Higher = smarter.",
-      "type": "number",
-      "min": 0,
-      "max": 100
-    },
-    "speed": {
-      "description": "Response speed (0-100). Higher = faster.",
-      "type": "number",
-      "min": 0,
-      "max": 100
-    },
-    "reasoning": {
-      "description": "Reasoning capability (0-100). Higher = better reasoning.",
+    "intelligence": {
+      "description": "AA Intelligence Index v4.1 score (0-100). Higher = more intelligent.",
+      "source": "artificialanalysis.ai",
       "type": "number",
       "min": 0,
       "max": 100
     },
     "hallucination": {
-      "description": "Hallucination rate (0-100). Lower = less hallucination.",
+      "description": "AA Omniscience Hallucination Rate (0-100). Lower = less hallucination.",
+      "source": "artificialanalysis.ai",
       "type": "number",
       "min": 0,
       "max": 100
+    },
+    "coding": {
+      "description": "AA Coding Index score (0-100). Higher = better at coding.",
+      "source": "artificialanalysis.ai",
+      "type": "number",
+      "min": 0,
+      "max": 100
+    },
+    "speed": {
+      "description": "Output speed in tokens per second. Higher = faster.",
+      "source": "artificialanalysis.ai",
+      "type": "number",
+      "unit": "tokens/sec"
+    },
+    "latency": {
+      "description": "Time to first token in seconds. Lower = faster response.",
+      "source": "artificialanalysis.ai",
+      "type": "number",
+      "unit": "seconds"
     },
     "context_window": {
       "description": "Maximum context window in tokens.",
@@ -35,14 +44,21 @@
     },
     "cost_per_1m_input": {
       "description": "Cost per 1M input tokens in USD.",
-      "type": "number"
+      "type": "number",
+      "unit": "USD"
     },
     "cost_per_1m_output": {
       "description": "Cost per 1M output tokens in USD.",
-      "type": "number"
+      "type": "number",
+      "unit": "USD"
+    },
+    "cost_per_1m_cache": {
+      "description": "Cost per 1M cached input tokens in USD.",
+      "type": "number",
+      "unit": "USD"
     },
     "has_reasoning_effort": {
-      "description": "Whether the model supports configurable reasoning effort levels.",
+      "description": "Whether the model supports configurable reasoning effort levels (low/medium/high).",
       "type": "boolean"
     }
   },
@@ -56,20 +72,14 @@
       "cost_per_1m_output": 75.00,
       "efforts": {
         "high": {
-          "intel": 98,
-          "speed": 40,
-          "reasoning": 99
+          "intelligence": 38,
+          "hallucination": 76,
+          "speed": 36
         },
-        "medium": {
-          "intel": 95,
-          "speed": 60,
-          "reasoning": 95,
-          "hallucination": 8
-        },
-        "low": {
-          "intel": 90,
-          "speed": 80,
-          "reasoning": 85
+        "max": {
+          "intelligence": 44,
+          "hallucination": 61,
+          "speed": 40
         }
       }
     },
@@ -81,21 +91,16 @@
       "cost_per_1m_input": 3.00,
       "cost_per_1m_output": 15.00,
       "efforts": {
-        "high": {
-          "intel": 92,
-          "speed": 60,
-          "reasoning": 95
+        "max": {
+          "intelligence": 47,
+          "hallucination": 46,
+          "coding": 63,
+          "speed": 56
         },
-        "medium": {
-          "intel": 88,
-          "speed": 85,
-          "reasoning": 88,
-          "hallucination": 10
-        },
-        "low": {
-          "intel": 83,
-          "speed": 95,
-          "reasoning": 78
+        "non-reasoning": {
+          "intelligence": 36,
+          "hallucination": 66,
+          "speed": 42
         }
       }
     },
@@ -104,36 +109,22 @@
       "has_reasoning_effort": false,
       "context_window": 200000,
       "cost_type": "subscription",
-      "cost_per_1m_input": 0.25,
-      "cost_per_1m_output": 1.25,
-      "intel": 75,
-      "speed": 95,
-      "reasoning": 70,
-      "hallucination": 15
+      "cost_per_1m_input": 1.00,
+      "cost_per_1m_output": 5.00,
+      "speed": 91
     },
     {
       "name": "o3",
       "has_reasoning_effort": true,
       "context_window": 200000,
       "cost_type": "api-creds",
-      "cost_per_1m_input": 10.00,
-      "cost_per_1m_output": 40.00,
+      "cost_per_1m_input": 2.00,
+      "cost_per_1m_output": 8.00,
       "efforts": {
-        "high": {
-          "intel": 96,
-          "speed": 30,
-          "reasoning": 99
-        },
-        "medium": {
-          "intel": 92,
-          "speed": 50,
-          "reasoning": 95,
-          "hallucination": 8
-        },
-        "low": {
-          "intel": 85,
-          "speed": 70,
-          "reasoning": 85
+        "default": {
+          "intelligence": 30,
+          "hallucination": 87,
+          "speed": 151
         }
       }
     },
@@ -145,21 +136,29 @@
       "cost_per_1m_input": 1.10,
       "cost_per_1m_output": 4.40,
       "efforts": {
+        "default": {
+          "intelligence": 19,
+          "speed": 216
+        },
         "high": {
-          "intel": 90,
-          "speed": 50,
-          "reasoning": 95
-        },
-        "medium": {
-          "intel": 85,
-          "speed": 70,
-          "reasoning": 90,
-          "hallucination": 10
-        },
-        "low": {
-          "intel": 80,
-          "speed": 85,
-          "reasoning": 82
+          "intelligence": 16,
+          "hallucination": 79,
+          "coding": 16,
+          "speed": 235
+        }
+      }
+    },
+    {
+      "name": "o3-pro",
+      "has_reasoning_effort": true,
+      "context_window": 200000,
+      "cost_type": "api-creds",
+      "cost_per_1m_input": 20.00,
+      "cost_per_1m_output": 80.00,
+      "efforts": {
+        "default": {
+          "intelligence": 33,
+          "speed": 40
         }
       }
     },
@@ -172,20 +171,9 @@
       "cost_per_1m_output": 4.40,
       "efforts": {
         "high": {
-          "intel": 88,
-          "speed": 55,
-          "reasoning": 93
-        },
-        "medium": {
-          "intel": 83,
-          "speed": 75,
-          "reasoning": 88,
-          "hallucination": 11
-        },
-        "low": {
-          "intel": 78,
-          "speed": 90,
-          "reasoning": 80
+          "intelligence": 26,
+          "hallucination": 80,
+          "speed": 171
         }
       }
     },
@@ -195,83 +183,57 @@
       "context_window": 128000,
       "cost_type": "api-creds",
       "cost_per_1m_input": 2.50,
-      "cost_per_1m_output": 10.00,
-      "intel": 85,
-      "speed": 80,
-      "reasoning": 80,
-      "hallucination": 12
-    },
-    {
-      "name": "gpt-4o-mini",
-      "has_reasoning_effort": false,
-      "context_window": 128000,
-      "cost_type": "api-creds",
-      "cost_per_1m_input": 0.15,
-      "cost_per_1m_output": 0.60,
-      "intel": 80,
-      "speed": 90,
-      "reasoning": 75,
-      "hallucination": 14
+      "cost_per_1m_output": 10.00
     },
     {
       "name": "deepseek-v4-pro",
       "has_reasoning_effort": false,
       "context_window": 128000,
       "cost_type": "subscription",
-      "cost_per_1m_input": 1.74,
-      "cost_per_1m_output": 3.48,
-      "intel": 86,
-      "speed": 75,
-      "reasoning": 88,
-      "hallucination": 10
+      "cost_per_1m_input": 0.435,
+      "cost_per_1m_output": 0.87,
+      "cost_per_1m_cache": 0.004,
+      "intelligence": 31,
+      "hallucination": 88,
+      "speed": 67,
+      "latency": 1.48
     },
     {
       "name": "deepseek-v4-flash",
       "has_reasoning_effort": false,
       "context_window": 128000,
       "cost_type": "subscription",
-      "cost_per_1m_input": 0.14,
-      "cost_per_1m_output": 0.28,
-      "intel": 80,
-      "speed": 95,
-      "reasoning": 78,
-      "hallucination": 14
+      "intelligence": 40,
+      "hallucination": 95,
+      "coding": 56,
+      "speed": 105
     },
     {
       "name": "glm-5.2",
       "has_reasoning_effort": false,
       "context_window": 128000,
       "cost_type": "subscription",
-      "cost_per_1m_input": 1.40,
-      "cost_per_1m_output": 4.40,
-      "intel": 85,
-      "speed": 80,
-      "reasoning": 82,
-      "hallucination": 12
+      "intelligence": 34,
+      "hallucination": 34,
+      "coding": 47,
+      "speed": 110
     },
     {
       "name": "kimi-k2.7-code",
       "has_reasoning_effort": false,
       "context_window": 128000,
       "cost_type": "subscription",
-      "cost_per_1m_input": 0.95,
-      "cost_per_1m_output": 4.00,
-      "intel": 84,
-      "speed": 85,
-      "reasoning": 85,
-      "hallucination": 11
+      "cost_per_1m_input": 0.72,
+      "cost_per_1m_output": 3.50,
+      "intelligence": 42,
+      "hallucination": 80,
+      "coding": 61
     },
     {
       "name": "mimo-v2.5",
       "has_reasoning_effort": false,
       "context_window": 128000,
-      "cost_type": "subscription",
-      "cost_per_1m_input": 0.14,
-      "cost_per_1m_output": 0.28,
-      "intel": 78,
-      "speed": 92,
-      "reasoning": 72,
-      "hallucination": 15
+      "cost_type": "subscription"
     },
     {
       "name": "minimax-m3",
@@ -279,23 +241,17 @@
       "context_window": 128000,
       "cost_type": "subscription",
       "cost_per_1m_input": 0.30,
-      "cost_per_1m_output": 1.20,
-      "intel": 81,
-      "speed": 85,
-      "reasoning": 78,
-      "hallucination": 13
+      "cost_per_1m_output": 1.20
     },
     {
       "name": "qwen3.7-max",
       "has_reasoning_effort": false,
       "context_window": 128000,
       "cost_type": "subscription",
-      "cost_per_1m_input": 2.50,
-      "cost_per_1m_output": 7.50,
-      "intel": 84,
-      "speed": 80,
-      "reasoning": 85,
-      "hallucination": 11
+      "intelligence": 46,
+      "hallucination": 23,
+      "coding": 66,
+      "speed": 194
     }
   ]
 }

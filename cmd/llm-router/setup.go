@@ -215,8 +215,35 @@ func discoverModels(ctx context.Context, modelService service.ModelService, prov
 		fmt.Printf("  - %s\n", m.Name)
 	}
 
-	fmt.Println("\nTag models with metadata:")
-	fmt.Printf("  llm-router tag --model <name> --set intel=85 --set speed=80\n")
+	importDefaultCSV(ctx, modelService, logger)
+}
+
+func importDefaultCSV(ctx context.Context, modelService service.ModelService, logger *slog.Logger) {
+	csvPath := "data/models.csv"
+	if _, err := os.Stat(csvPath); os.IsNotExist(err) {
+		csvPath = "../data/models.csv"
+		if _, err := os.Stat(csvPath); os.IsNotExist(err) {
+			return
+		}
+	}
+
+	fmt.Printf("\nImporting default metadata from %s...\n", csvPath)
+
+	f, err := os.Open(csvPath)
+	if err != nil {
+		logger.Warn("could not open default CSV", "error", err)
+		return
+	}
+	defer f.Close()
+
+	importService := service.NewImportService(nil, nil)
+	result, err := importService.ImportCSV(ctx, f, service.ImportModeMerge)
+	if err != nil {
+		logger.Warn("could not import default CSV", "error", err)
+		return
+	}
+
+	fmt.Printf("✓ Imported metadata for %d models\n", result.Imported)
 }
 
 func printSupportedProviders() {

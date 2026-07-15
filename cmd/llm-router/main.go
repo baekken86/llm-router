@@ -226,7 +226,7 @@ func runProxy(args []string) {
 	}()
 
 	if !*noTUI {
-		go tui.Run(logChan)
+		go tui.Run(logChan, vmRepo, modelRepo, tagRepo, providerRepo)
 	}
 
 	quit := make(chan os.Signal, 1)

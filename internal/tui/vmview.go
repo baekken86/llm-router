@@ -1,11 +1,15 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/chris/llm-router/internal/models"
+	"github.com/chris/llm-router/internal/repository"
 )
 
 type VMViewMsg struct {
@@ -153,7 +157,10 @@ func FetchVMData(client *APIClient) tea.Cmd {
 
 		var items []VirtualModelInfo
 		for _, vm := range vms {
-			resolved, _ := client.GetResolvedModels(vm.ID)
+			resolved, err := client.GetResolvedModels(vm.ID)
+			if err != nil {
+				resolved = nil
+			}
 
 			var resolvedInfo []ResolvedModelInfo
 			for i, r := range resolved {
@@ -191,4 +198,123 @@ func formatSort(sort interface{}) string {
 		return "[]"
 	}
 	return string(data)
+}
+
+func FetchVMDataLocal(vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		vms, err := vmRepo.List(ctx)
+		if err != nil {
+			return VMViewMsg{}
+		}
+
+		var items []VirtualModelInfo
+		for _, vm := range vms {
+			var filterExpr models.FilterExpr
+			if len(vm.FilterExpr) > 0 {
+				json.Unmarshal(vm.FilterExpr, &filterExpr)
+			}
+
+			var sortExpr models.SortExpr
+			if len(vm.SortExpr) > 0 {
+				json.Unmarshal(vm.SortExpr, &sortExpr)
+			}
+
+			allModels, _ := modelRepo.ListAll(ctx)
+			var resolved []ResolvedModelInfo
+			pos := 1
+
+			for _, m := range allModels {
+				tags, _ := tagRepo.GetByModel(ctx, m.ID)
+				tagMap := make(map[string]string)
+				for _, t := range tags {
+					if t.ReasoningEffort == "" {
+						tagMap[t.Key] = t.Value
+					}
+				}
+
+				if !matchesFilter(tagMap, filterExpr) {
+					continue
+				}
+
+				provider, _ := providerRepo.GetByID(ctx, m.ProviderID)
+				if provider == nil {
+					continue
+				}
+
+				resolved = append(resolved, ResolvedModelInfo{
+					ModelName:    m.Name,
+					ProviderName: provider.Name,
+					Tags:         tagMap,
+					Position:     pos,
+				})
+				pos++
+			}
+
+			items = append(items, VirtualModelInfo{
+				Name:           vm.Name,
+				Filter:         string(vm.FilterExpr),
+				Sort:           string(vm.SortExpr),
+				ResolvedModels: resolved,
+			})
+		}
+
+		return VMViewMsg{VirtualModels: items}
+	}
+}
+
+func matchesFilter(tags map[string]string, filter models.FilterExpr) bool {
+	if len(filter.And) == 0 {
+		return true
+	}
+
+	for _, cond := range filter.And {
+		val, exists := tags[cond.Key]
+		if !exists {
+			return false
+		}
+		if !evaluateCondition(val, cond.Op, cond.Value) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func evaluateCondition(actual string, op string, expected interface{}) bool {
+	switch op {
+	case "eq":
+		return fmt.Sprintf("%v", expected) == actual
+	case "neq":
+		return fmt.Sprintf("%v", expected) != actual
+	case "gt":
+		return compareNumeric(actual, expected) > 0
+	case "gte":
+		return compareNumeric(actual, expected) >= 0
+	case "lt":
+		return compareNumeric(actual, expected) < 0
+	case "lte":
+		return compareNumeric(actual, expected) <= 0
+	default:
+		return false
+	}
+}
+
+func compareNumeric(actual string, expected interface{}) int {
+	a := parseFloat(actual)
+	b := parseFloat(fmt.Sprintf("%v", expected))
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
+}
+
+func parseFloat(s string) float64 {
+	var f float64
+	fmt.Sscanf(s, "%f", &f)
+	return f
 }

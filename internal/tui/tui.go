@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/chris/llm-router/internal/proxy"
+	"github.com/chris/llm-router/internal/repository"
 )
 
 type LogMsg struct {
@@ -37,15 +38,23 @@ type Model struct {
 	ready      bool
 	logChan    <-chan proxy.RequestLog
 	apiClient  *APIClient
+	vmRepo     repository.VirtualModelRepository
+	modelRepo  repository.ModelRepository
+	tagRepo    repository.TagRepository
+	providerRepo repository.ProviderRepository
 }
 
-func New(logChan <-chan proxy.RequestLog) Model {
+func New(logChan <-chan proxy.RequestLog, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository) Model {
 	return Model{
-		logView: NewLogViewModel(500),
-		stats:   NewStatsModel(),
-		vmView:  NewVMViewModel(),
-		tab:     TabLog,
-		logChan: logChan,
+		logView:      NewLogViewModel(500),
+		stats:        NewStatsModel(),
+		vmView:       NewVMViewModel(),
+		tab:          TabLog,
+		logChan:      logChan,
+		vmRepo:       vmRepo,
+		modelRepo:    modelRepo,
+		tagRepo:      tagRepo,
+		providerRepo: providerRepo,
 	}
 }
 
@@ -68,6 +77,8 @@ func (m Model) Init() tea.Cmd {
 	if m.apiClient != nil {
 		cmds = append(cmds, m.refreshStats())
 		cmds = append(cmds, FetchVMData(m.apiClient))
+	} else if m.vmRepo != nil {
+		cmds = append(cmds, FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo))
 	}
 	return tea.Batch(cmds...)
 }
@@ -119,15 +130,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case TabVM:
 				m.tab = TabLog
 			}
-			if m.tab == TabVM && m.apiClient != nil {
-				return m, FetchVMData(m.apiClient)
+			if m.tab == TabVM {
+				if m.apiClient != nil {
+					return m, FetchVMData(m.apiClient)
+				} else if m.vmRepo != nil {
+					return m, FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo)
+				}
 			}
 			return m, nil
 		case "r":
 			if m.tab == TabStats {
 				m.stats, _ = m.stats.Update(StatsResetMsg{})
-			} else if m.tab == TabVM && m.apiClient != nil {
-				return m, FetchVMData(m.apiClient)
+			} else if m.tab == TabVM {
+				if m.apiClient != nil {
+					return m, FetchVMData(m.apiClient)
+				} else if m.vmRepo != nil {
+					return m, FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo)
+				}
 			}
 			return m, nil
 		case "up", "k":
@@ -151,7 +170,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case LogMsg:
-		m.logView.AddEntry(msg.Log)
+		if m.tab == TabLog {
+			m.logView.AddEntry(msg.Log)
+		}
 		m.stats, _ = m.stats.Update(StatsUpdateMsg{Log: msg.Log})
 		return m, m.waitForLog()
 
@@ -217,8 +238,8 @@ func (m Model) renderFooter() string {
 	return lipgloss.Place(m.width, 1, lipgloss.Left, lipgloss.Bottom, help)
 }
 
-func Run(logChan <-chan proxy.RequestLog) {
-	p := tea.NewProgram(New(logChan), tea.WithAltScreen())
+func Run(logChan <-chan proxy.RequestLog, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository) {
+	p := tea.NewProgram(New(logChan, vmRepo, modelRepo, tagRepo, providerRepo), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("TUI error: %v\n", err)
 	}

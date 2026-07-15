@@ -61,6 +61,12 @@
       "type": "number",
       "unit": "USD"
     },
+    "cost_per_task": {
+      "description": "Cost per AA Intelligence Index Task in USD. Lower = cheaper per task.",
+      "source": "artificialanalysis.ai",
+      "type": "number",
+      "unit": "USD"
+    },
     "has_reasoning_effort": {
       "description": "Whether the model supports configurable reasoning effort levels.",
       "type": "boolean"
@@ -176,6 +182,7 @@
       "intelligence": 24.0,
       "coding": 43.9,
       "hallucination": 26.0,
+      "cost_per_task": 0.24,
       "speed": 91.0,
       "has_reasoning_effort": false
     },
@@ -184,6 +191,7 @@
       "intelligence": 29.0,
       "coding": 52.1,
       "hallucination": 51.0,
+      "cost_per_task": 0.41,
       "speed": 38.0,
       "has_reasoning_effort": false
     },
@@ -198,6 +206,7 @@
       "intelligence": 60.0,
       "coding": 76.5,
       "hallucination": 55.0,
+      "cost_per_task": 2.75,
       "speed": 58.0,
       "cost_per_1m_input": 10.0,
       "cost_per_1m_output": 50.0,
@@ -250,6 +259,7 @@
           "intelligence": 54.0,
           "coding": 73.6,
           "hallucination": 36.0,
+          "cost_per_task": 1.97,
           "cost_per_1m_input": 5.0,
           "cost_per_1m_output": 25.0
         }
@@ -265,6 +275,7 @@
           "intelligence": 56.0,
           "coding": 74.3,
           "hallucination": 36.0,
+          "cost_per_task": 1.8,
           "speed": 54.0,
           "cost_per_1m_input": 5.0,
           "cost_per_1m_output": 25.0
@@ -292,6 +303,7 @@
           "intelligence": 47.0,
           "coding": 63.0,
           "hallucination": 46.0,
+          "cost_per_task": 1.14,
           "speed": 56.0
         }
       }
@@ -335,6 +347,7 @@
           "intelligence": 53.0,
           "coding": 71.5,
           "hallucination": 37.0,
+          "cost_per_task": 1.53,
           "speed": 72.0,
           "cost_per_1m_input": 2.0,
           "cost_per_1m_output": 10.0
@@ -435,6 +448,7 @@
       "intelligence": 19.0,
       "coding": 24.6,
       "hallucination": 90.0,
+      "cost_per_task": 0.25,
       "has_reasoning_effort": false
     },
     {
@@ -496,6 +510,7 @@
       "intelligence": 14.0,
       "coding": 23.0,
       "hallucination": 89.0,
+      "cost_per_task": 0.03,
       "has_reasoning_effort": false
     },
     {
@@ -503,6 +518,7 @@
       "intelligence": 15.0,
       "coding": 21.2,
       "hallucination": 77.0,
+      "cost_per_task": 0.19,
       "cost_per_1m_input": 0.24,
       "cost_per_1m_output": 0.9,
       "has_reasoning_effort": false
@@ -566,6 +582,7 @@
           "intelligence": 40.0,
           "coding": 56.2,
           "hallucination": 96.0,
+          "cost_per_task": 0.02,
           "speed": 100.0,
           "cost_per_1m_input": 0.077,
           "cost_per_1m_output": 0.154
@@ -594,6 +611,7 @@
           "intelligence": 44.3,
           "coding": 59.4,
           "hallucination": 94.0,
+          "cost_per_task": 0.04,
           "speed": 62.0,
           "cost_per_1m_input": 0.435,
           "cost_per_1m_output": 0.87
@@ -796,6 +814,7 @@
       "intelligence": 26.0,
       "coding": 33.3,
       "hallucination": 87.0,
+      "cost_per_task": 0.2,
       "speed": 144.0,
       "cost_per_1m_input": 1.25,
       "cost_per_1m_output": 10.0,
@@ -842,6 +861,7 @@
       "intelligence": 25.0,
       "coding": 34.7,
       "hallucination": 82.0,
+      "cost_per_task": 0.04,
       "speed": 289.0,
       "has_reasoning_effort": false
     },
@@ -863,6 +883,7 @@
       "intelligence": 46.0,
       "coding": 68.8,
       "hallucination": 50.0,
+      "cost_per_task": 0.29,
       "cost_per_1m_input": 2.0,
       "cost_per_1m_output": 12.0,
       "has_reasoning_effort": false
@@ -872,6 +893,7 @@
       "intelligence": 50.0,
       "coding": 70.1,
       "hallucination": 61.0,
+      "cost_per_task": 0.59,
       "speed": 161.0,
       "cost_per_1m_input": 1.5,
       "cost_per_1m_output": 9.0,
@@ -976,6 +998,7 @@
       "intelligence": 20.0,
       "coding": 39.3,
       "hallucination": 92.0,
+      "cost_per_task": 0.03,
       "cost_per_1m_input": 0.06,
       "cost_per_1m_output": 0.33,
       "has_reasoning_effort": false
@@ -989,6 +1012,7 @@
       "intelligence": 22.0,
       "coding": 33.2,
       "hallucination": 82.0,
+      "cost_per_task": 0.03,
       "speed": 35.0,
       "cost_per_1m_input": 0.12,
       "cost_per_1m_output": 0.35,
@@ -1037,6 +1061,7 @@
       "intelligence": 23.0,
       "coding": 45.8,
       "hallucination": 95.0,
+      "cost_per_task": 0.28,
       "speed": 43.0,
       "has_reasoning_effort": false
     },
@@ -1052,6 +1077,7 @@
       "intelligence": 27.0,
       "coding": 45.3,
       "hallucination": 92.0,
+      "cost_per_task": 0.3,
       "speed": 92.0,
       "has_reasoning_effort": false
     },
@@ -1082,6 +1108,7 @@
       "intelligence": 35.0,
       "coding": 55.8,
       "hallucination": 63.0,
+      "cost_per_task": 0.23,
       "speed": 79.0,
       "has_reasoning_effort": false
     },
@@ -1099,6 +1126,7 @@
           "intelligence": 51.0,
           "coding": 68.8,
           "hallucination": 28.0,
+          "cost_per_task": 0.37,
           "speed": 174.0
         }
       }
@@ -1152,6 +1180,7 @@
       "intelligence": 15.0,
       "coding": 20.2,
       "hallucination": 82.0,
+      "cost_per_task": 0.06,
       "speed": 68.0,
       "has_reasoning_effort": false
     },
@@ -1226,6 +1255,7 @@
           "intelligence": 35.0,
           "coding": 37.8,
           "hallucination": 82.0,
+          "cost_per_task": 0.21,
           "speed": 99.0,
           "cost_per_1m_input": 1.25,
           "cost_per_1m_output": 10.0
@@ -1281,6 +1311,7 @@
           "intelligence": 25.0,
           "coding": 15.6,
           "hallucination": 54.0,
+          "cost_per_task": 0.03,
           "speed": 98.0
         },
         "medium": {
@@ -1332,6 +1363,7 @@
           "intelligence": 37.0,
           "coding": 49.4,
           "hallucination": 51.0,
+          "cost_per_task": 0.27,
           "cost_per_1m_input": 1.25,
           "cost_per_1m_output": 10.0
         }
@@ -1421,6 +1453,7 @@
           "intelligence": 51.0,
           "coding": 71.1,
           "hallucination": 89.0,
+          "cost_per_task": 0.89,
           "speed": 142.0,
           "cost_per_1m_input": 2.5,
           "cost_per_1m_output": 15.0
@@ -1454,6 +1487,7 @@
           "intelligence": 40.0,
           "coding": 56.1,
           "hallucination": 90.0,
+          "cost_per_task": 0.48,
           "speed": 167.0
         }
       }
@@ -1471,6 +1505,7 @@
           "intelligence": 38.0,
           "coding": 56.1,
           "hallucination": 74.0,
+          "cost_per_task": 0.13,
           "speed": 161.0
         }
       }
@@ -1495,6 +1530,7 @@
           "intelligence": 53.0,
           "coding": 71.6,
           "hallucination": 86.0,
+          "cost_per_task": 0.61,
           "cost_per_1m_input": 5.0,
           "cost_per_1m_output": 30.0
         },
@@ -1502,6 +1538,7 @@
           "intelligence": 43.0,
           "coding": 60.9,
           "hallucination": 86.0,
+          "cost_per_task": 0.19,
           "speed": 60.0,
           "cost_per_1m_input": 5.0,
           "cost_per_1m_output": 30.0
@@ -1510,6 +1547,7 @@
           "intelligence": 50.0,
           "coding": 71.5,
           "hallucination": 86.0,
+          "cost_per_task": 0.34,
           "speed": 59.0,
           "cost_per_1m_input": 5.0,
           "cost_per_1m_output": 30.0
@@ -1518,6 +1556,7 @@
           "intelligence": 55.0,
           "coding": 74.9,
           "hallucination": 86.0,
+          "cost_per_task": 0.86,
           "speed": 76.0,
           "cost_per_1m_input": 5.0,
           "cost_per_1m_output": 30.0
@@ -1529,6 +1568,7 @@
       "intelligence": 35.0,
       "coding": 56.5,
       "hallucination": 91.0,
+      "cost_per_task": 0.15,
       "speed": 59.0,
       "cost_per_1m_input": 5.0,
       "cost_per_1m_output": 30.0,
@@ -1567,6 +1607,7 @@
           "intelligence": 46.0,
           "coding": 63.3,
           "hallucination": 90.0,
+          "cost_per_task": 0.09,
           "speed": 194.0,
           "cost_per_1m_input": 1.0,
           "cost_per_1m_output": 6.0
@@ -1575,6 +1616,7 @@
           "intelligence": 33.0,
           "coding": 44.2,
           "hallucination": 88.0,
+          "cost_per_task": 0.04,
           "speed": 191.0,
           "cost_per_1m_input": 1.0,
           "cost_per_1m_output": 6.0
@@ -1583,6 +1625,7 @@
           "intelligence": 51.0,
           "coding": 71.4,
           "hallucination": 90.0,
+          "cost_per_task": 0.21,
           "speed": 216.0,
           "cost_per_1m_input": 1.0,
           "cost_per_1m_output": 6.0
@@ -1591,6 +1634,7 @@
           "intelligence": 38.0,
           "coding": 50.7,
           "hallucination": 89.0,
+          "cost_per_task": 0.05,
           "speed": 199.0,
           "cost_per_1m_input": 1.0,
           "cost_per_1m_output": 6.0
@@ -1599,6 +1643,7 @@
           "intelligence": 49.0,
           "coding": 68.6,
           "hallucination": 90.0,
+          "cost_per_task": 0.14,
           "speed": 212.0,
           "cost_per_1m_input": 1.0,
           "cost_per_1m_output": 6.0
@@ -1610,6 +1655,7 @@
       "intelligence": 27.0,
       "coding": 39.3,
       "hallucination": 73.0,
+      "cost_per_task": 0.05,
       "speed": 198.0,
       "cost_per_1m_input": 1.0,
       "cost_per_1m_output": 6.0,
@@ -1629,6 +1675,7 @@
           "intelligence": 56.0,
           "coding": 77.2,
           "hallucination": 88.0,
+          "cost_per_task": 0.45,
           "speed": 64.0,
           "cost_per_1m_input": 5.0,
           "cost_per_1m_output": 30.0
@@ -1637,6 +1684,7 @@
           "intelligence": 49.0,
           "coding": 69.7,
           "hallucination": 87.0,
+          "cost_per_task": 0.2,
           "speed": 58.0,
           "cost_per_1m_input": 5.0,
           "cost_per_1m_output": 30.0
@@ -1645,6 +1693,7 @@
           "intelligence": 59.0,
           "coding": 77.4,
           "hallucination": 89.0,
+          "cost_per_task": 1.04,
           "speed": 66.0,
           "cost_per_1m_input": 5.0,
           "cost_per_1m_output": 30.0
@@ -1653,6 +1702,7 @@
           "intelligence": 54.0,
           "coding": 76.3,
           "hallucination": 87.0,
+          "cost_per_task": 0.31,
           "cost_per_1m_input": 5.0,
           "cost_per_1m_output": 30.0
         },
@@ -1660,6 +1710,7 @@
           "intelligence": 58.0,
           "coding": 78.3,
           "hallucination": 89.0,
+          "cost_per_task": 0.68,
           "speed": 64.0,
           "cost_per_1m_input": 5.0,
           "cost_per_1m_output": 30.0
@@ -1671,6 +1722,7 @@
       "intelligence": 41.0,
       "coding": 65.1,
       "hallucination": 91.0,
+      "cost_per_task": 0.2,
       "speed": 31.0,
       "cost_per_1m_input": 5.0,
       "cost_per_1m_output": 30.0,
@@ -1690,6 +1742,7 @@
           "intelligence": 49.0,
           "coding": 67.1,
           "hallucination": 87.0,
+          "cost_per_task": 0.24,
           "speed": 107.0,
           "cost_per_1m_input": 2.5,
           "cost_per_1m_output": 15.0
@@ -1698,6 +1751,7 @@
           "intelligence": 40.0,
           "coding": 58.1,
           "hallucination": 88.0,
+          "cost_per_task": 0.1,
           "speed": 108.0,
           "cost_per_1m_input": 2.5,
           "cost_per_1m_output": 15.0
@@ -1706,6 +1760,7 @@
           "intelligence": 55.0,
           "coding": 76.7,
           "hallucination": 85.0,
+          "cost_per_task": 0.55,
           "speed": 137.0,
           "cost_per_1m_input": 2.5,
           "cost_per_1m_output": 15.0
@@ -1714,6 +1769,7 @@
           "intelligence": 46.0,
           "coding": 64.7,
           "hallucination": 88.0,
+          "cost_per_task": 0.13,
           "speed": 107.0,
           "cost_per_1m_input": 2.5,
           "cost_per_1m_output": 15.0
@@ -1722,6 +1778,7 @@
           "intelligence": 52.0,
           "coding": 70.6,
           "hallucination": 87.0,
+          "cost_per_task": 0.33,
           "speed": 120.0,
           "cost_per_1m_input": 2.5,
           "cost_per_1m_output": 15.0
@@ -1733,6 +1790,7 @@
       "intelligence": 34.0,
       "coding": 52.3,
       "hallucination": 94.0,
+      "cost_per_task": 0.11,
       "cost_per_1m_input": 2.5,
       "cost_per_1m_output": 15.0,
       "has_reasoning_effort": false
@@ -1751,6 +1809,7 @@
           "intelligence": 24.0,
           "coding": 30.4,
           "hallucination": 91.0,
+          "cost_per_task": 0.06,
           "speed": 306.0,
           "cost_per_1m_input": 0.036,
           "cost_per_1m_output": 0.18
@@ -1777,6 +1836,7 @@
           "intelligence": 15.0,
           "coding": 20.7,
           "hallucination": 94.0,
+          "cost_per_task": 0.02,
           "speed": 225.0,
           "cost_per_1m_input": 0.029,
           "cost_per_1m_output": 0.14
@@ -1937,6 +1997,7 @@
           "intelligence": 38.0,
           "coding": 42.2,
           "hallucination": 25.0,
+          "cost_per_task": 0.14,
           "speed": 112.0,
           "cost_per_1m_input": 1.25,
           "cost_per_1m_output": 2.5
@@ -1961,6 +2022,7 @@
       "intelligence": 25.0,
       "coding": 35.2,
       "hallucination": 74.0,
+      "cost_per_task": 0.29,
       "cost_per_1m_input": 1.25,
       "cost_per_1m_output": 2.5,
       "has_reasoning_effort": false
@@ -1975,6 +2037,7 @@
           "intelligence": 54.0,
           "coding": 72.4,
           "hallucination": 54.0,
+          "cost_per_task": 0.31,
           "speed": 113.0,
           "cost_per_1m_input": 2.0,
           "cost_per_1m_output": 6.0
@@ -1997,6 +2060,7 @@
       "intelligence": 40.0,
       "coding": 51.5,
       "hallucination": 90.0,
+      "cost_per_task": 0.21,
       "speed": 65.0,
       "has_reasoning_effort": false
     },
@@ -2046,6 +2110,7 @@
       "intelligence": 18.0,
       "coding": 23.2,
       "hallucination": 82.0,
+      "cost_per_task": 0.02,
       "has_reasoning_effort": false
     },
     {
@@ -2198,6 +2263,7 @@
       "intelligence": 35.0,
       "coding": 61.8,
       "hallucination": 43.0,
+      "cost_per_task": 0.35,
       "speed": 44.0,
       "cost_per_1m_input": 0.66,
       "cost_per_1m_output": 3.41,
@@ -2208,6 +2274,7 @@
       "intelligence": 42.0,
       "coding": 60.8,
       "hallucination": 80.0,
+      "cost_per_task": 0.18,
       "speed": 45.0,
       "cost_per_1m_input": 0.72,
       "cost_per_1m_output": 3.5,
@@ -2407,6 +2474,7 @@
       "intelligence": 9.0,
       "coding": 11.9,
       "hallucination": 85.0,
+      "cost_per_task": 0.08,
       "speed": 87.0,
       "has_reasoning_effort": false
     },
@@ -2431,6 +2499,7 @@
       "intelligence": 14.0,
       "coding": 16.3,
       "hallucination": 87.0,
+      "cost_per_task": 0.03,
       "speed": 110.0,
       "cost_per_1m_input": 0.2,
       "cost_per_1m_output": 0.8,
@@ -2441,6 +2510,7 @@
       "intelligence": 10.0,
       "coding": 8.2,
       "hallucination": 78.0,
+      "cost_per_task": 0.01,
       "cost_per_1m_input": 0.1,
       "cost_per_1m_output": 0.3,
       "has_reasoning_effort": false
@@ -2481,6 +2551,7 @@
       "intelligence": 18.0,
       "coding": 21.3,
       "hallucination": 59.0,
+      "cost_per_task": 0.75,
       "speed": 40.0,
       "has_reasoning_effort": false
     },
@@ -2495,6 +2566,7 @@
       "intelligence": 11.0,
       "coding": 14.7,
       "hallucination": 91.0,
+      "cost_per_task": 0.25,
       "speed": 81.0,
       "has_reasoning_effort": false
     },
@@ -2523,6 +2595,7 @@
       "intelligence": 25.0,
       "coding": 49.8,
       "hallucination": 91.0,
+      "cost_per_task": 0.35,
       "has_reasoning_effort": false
     },
     {
@@ -2554,6 +2627,7 @@
       "intelligence": 37.2,
       "coding": 56.8,
       "hallucination": 32.0,
+      "cost_per_task": 0.01,
       "speed": 88.0,
       "cost_per_1m_input": 0.14,
       "cost_per_1m_output": 0.28,
@@ -2565,6 +2639,7 @@
       "intelligence": 42.2,
       "coding": 60.2,
       "hallucination": 89.0,
+      "cost_per_task": 0.03,
       "speed": 58.0,
       "latency": 2.04,
       "cost_per_1m_input": 0.435,
@@ -2634,6 +2709,7 @@
       "intelligence": 44.0,
       "coding": 58.6,
       "hallucination": 16.0,
+      "cost_per_task": 0.12,
       "speed": 94.0,
       "has_reasoning_effort": false
     },
@@ -2642,6 +2718,7 @@
       "intelligence": 11.0,
       "coding": 14.4,
       "hallucination": 90.0,
+      "cost_per_task": 0.15,
       "speed": 83.0,
       "has_reasoning_effort": false
     },
@@ -2656,6 +2733,7 @@
       "intelligence": 7.0,
       "coding": 4.8,
       "hallucination": 78.0,
+      "cost_per_task": 0.13,
       "speed": 158.0,
       "has_reasoning_effort": false
     },
@@ -2670,6 +2748,7 @@
       "intelligence": 9.0,
       "coding": 9.7,
       "hallucination": 89.0,
+      "cost_per_task": 0.18,
       "speed": 112.0,
       "has_reasoning_effort": false
     },
@@ -2707,6 +2786,7 @@
       "intelligence": 16.0,
       "coding": 20.1,
       "hallucination": 84.0,
+      "cost_per_task": 0.06,
       "speed": 50.0,
       "has_reasoning_effort": false
     },
@@ -2736,6 +2816,7 @@
       "intelligence": 15.0,
       "coding": 20.5,
       "hallucination": 81.0,
+      "cost_per_task": 0.14,
       "cost_per_1m_input": 0.4,
       "cost_per_1m_output": 2.0,
       "has_reasoning_effort": false
@@ -2745,6 +2826,7 @@
       "intelligence": 30.0,
       "coding": 46.9,
       "hallucination": 82.0,
+      "cost_per_task": 1.08,
       "speed": 128.0,
       "cost_per_1m_input": 1.5,
       "cost_per_1m_output": 7.5,
@@ -2780,6 +2862,7 @@
       "intelligence": 15.0,
       "coding": 26.3,
       "hallucination": 77.0,
+      "cost_per_task": 0.04,
       "speed": 160.0,
       "has_reasoning_effort": false
     },
@@ -2788,6 +2871,7 @@
       "intelligence": 11.0,
       "coding": 12.5,
       "hallucination": 76.0,
+      "cost_per_task": 0.12,
       "speed": 155.0,
       "has_reasoning_effort": false
     },
@@ -2843,6 +2927,7 @@
           "intelligence": 51.0,
           "coding": 71.3,
           "hallucination": 38.0,
+          "cost_per_task": 0.26,
           "speed": 119.0
         }
       }
@@ -2876,6 +2961,7 @@
       "intelligence": 38.0,
       "coding": 49.3,
       "hallucination": 29.0,
+      "cost_per_task": 0.24,
       "speed": 200.0,
       "cost_per_1m_input": 0.5,
       "cost_per_1m_output": 2.2,
@@ -2930,6 +3016,7 @@
           "intelligence": 18.0,
           "coding": 23.0,
           "hallucination": 90.0,
+          "cost_per_task": 0.25,
           "speed": 157.0
         },
         "low": {
@@ -2965,6 +3052,7 @@
       "intelligence": 14.0,
       "coding": 20.9,
       "hallucination": 77.0,
+      "cost_per_task": 0.25,
       "speed": 113.0,
       "has_reasoning_effort": true,
       "efforts": {
@@ -2972,12 +3060,14 @@
           "intelligence": 20.0,
           "coding": 25.9,
           "hallucination": 87.0,
+          "cost_per_task": 0.21,
           "speed": 124.0
         },
         "medium": {
           "intelligence": 22.0,
           "coding": 34.0,
           "hallucination": 90.0,
+          "cost_per_task": 0.17,
           "speed": 126.0
         }
       }
@@ -3014,6 +3104,7 @@
       "intelligence": 7.0,
       "coding": 14.4,
       "hallucination": 91.0,
+      "cost_per_task": 0.02,
       "speed": 109.0,
       "has_reasoning_effort": false
     },
@@ -3029,6 +3120,7 @@
       "intelligence": 25.0,
       "coding": 37.7,
       "hallucination": 87.0,
+      "cost_per_task": 0.21,
       "speed": 220.0,
       "has_reasoning_effort": false
     },
@@ -3333,6 +3425,7 @@
       "intelligence": 9.0,
       "coding": 12.1,
       "hallucination": 95.0,
+      "cost_per_task": 0.07,
       "speed": 119.0,
       "has_reasoning_effort": false
     },
@@ -3390,6 +3483,7 @@
       "intelligence": 21.0,
       "coding": 36.2,
       "hallucination": 91.0,
+      "cost_per_task": 0.33,
       "cost_per_1m_input": 0.11,
       "cost_per_1m_output": 0.8,
       "has_reasoning_effort": false
@@ -3429,6 +3523,7 @@
       "intelligence": 14.0,
       "coding": 17.4,
       "hallucination": 93.0,
+      "cost_per_task": 0.17,
       "speed": 172.0,
       "has_reasoning_effort": false
     },
@@ -3491,6 +3586,7 @@
       "intelligence": 28.0,
       "coding": 43.3,
       "hallucination": 89.0,
+      "cost_per_task": 0.18,
       "speed": 141.0,
       "cost_per_1m_input": 0.26,
       "cost_per_1m_output": 2.08,
@@ -3522,6 +3618,7 @@
       "intelligence": 32.0,
       "coding": 48.2,
       "hallucination": 89.0,
+      "cost_per_task": 0.33,
       "cost_per_1m_input": 0.385,
       "cost_per_1m_output": 2.45,
       "has_reasoning_effort": false
@@ -3539,6 +3636,7 @@
       "intelligence": 20.0,
       "coding": 23.5,
       "hallucination": 99.0,
+      "cost_per_task": 0.16,
       "speed": 69.0,
       "cost_per_1m_input": 0.1,
       "cost_per_1m_output": 0.15,
@@ -3563,6 +3661,7 @@
       "intelligence": 30.0,
       "coding": 46.6,
       "hallucination": 84.0,
+      "cost_per_task": 0.27,
       "cost_per_1m_input": 0.285,
       "cost_per_1m_output": 2.4,
       "has_reasoning_effort": false
@@ -3572,6 +3671,7 @@
       "intelligence": 24.0,
       "coding": 41.9,
       "hallucination": 93.0,
+      "cost_per_task": 0.18,
       "cost_per_1m_input": 0.14,
       "cost_per_1m_output": 1.0,
       "has_reasoning_effort": false
@@ -3589,6 +3689,7 @@
       "intelligence": 40.0,
       "coding": 54.5,
       "hallucination": 32.0,
+      "cost_per_task": 0.31,
       "cost_per_1m_input": 0.325,
       "cost_per_1m_output": 1.95,
       "has_reasoning_effort": false
@@ -3598,6 +3699,7 @@
       "intelligence": 46.0,
       "coding": 66.0,
       "hallucination": 23.0,
+      "cost_per_task": 1.06,
       "cost_per_1m_input": 1.25,
       "cost_per_1m_output": 3.75,
       "has_reasoning_effort": false
@@ -3607,6 +3709,7 @@
       "intelligence": 39.0,
       "coding": 55.9,
       "hallucination": 25.0,
+      "cost_per_task": 0.22,
       "cost_per_1m_input": 0.32,
       "cost_per_1m_output": 1.28,
       "has_reasoning_effort": false
@@ -3662,6 +3765,7 @@
       "intelligence": 31.0,
       "coding": 42.8,
       "hallucination": 84.0,
+      "cost_per_task": 0.35,
       "cost_per_1m_input": 0.075,
       "cost_per_1m_output": 0.625,
       "has_reasoning_effort": false

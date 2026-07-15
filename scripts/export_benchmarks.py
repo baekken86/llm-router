@@ -66,6 +66,12 @@ FIELDS = {
         "type": "number",
         "unit": "USD"
     },
+    "cost_per_task": {
+        "description": "Cost per AA Intelligence Index Task in USD. Lower = cheaper per task.",
+        "source": "artificialanalysis.ai",
+        "type": "number",
+        "unit": "USD"
+    },
     "has_reasoning_effort": {
         "description": "Whether the model supports configurable reasoning effort levels.",
         "type": "boolean"
@@ -76,6 +82,7 @@ BENCHMARK_INDEXES = {
     "intelligence": "Intelligence Index",
     "hallucination": "AA-Omniscience Hallucination Rate",
     "coding": "Coding Index",
+    "cost_per_task": "Cost per Intelligence Index Task",
 }
 
 REASONING_KEYWORDS = ["high", "max", "low", "medium", "xhigh", "non-reasoning"]
@@ -217,6 +224,8 @@ def main():
                 meta["hallucination"] = round(score["score"], 1)
             elif idx_name == BENCHMARK_INDEXES["coding"]:
                 meta["coding"] = round(score["score"], 1)
+            elif idx_name == BENCHMARK_INDEXES["cost_per_task"]:
+                meta["cost_per_task"] = round(score["score"], 2)
         
         if pricing:
             if pricing["throughput_tps"]:

@@ -428,3 +428,267 @@ func CopyRequestHeaders(dst *http.Request, src *http.Request) {
 		}
 	}
 }
+
+func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	requestID := r.Header.Get("X-Request-ID")
+	if requestID == "" {
+		requestID = fmt.Sprintf("req_%d", time.Now().UnixNano())
+	}
+
+	var anthReq AnthropicRequest
+	if err := json.NewDecoder(r.Body).Decode(&anthReq); err != nil {
+		http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"invalid request body"}}`, http.StatusBadRequest)
+		return
+	}
+
+	vm, err := e.vmService.GetByName(r.Context(), anthReq.Model)
+	if err != nil {
+		http.Error(w, `{"type":"error","error":{"type":"api_error","message":"internal error"}}`, http.StatusInternalServerError)
+		return
+	}
+	if vm == nil {
+		http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"not_found_error","message":"model not found: %s"}}`, anthReq.Model), http.StatusNotFound)
+		return
+	}
+
+	resolvedModels, err := e.vmService.ResolveModels(r.Context(), vm)
+	if err != nil {
+		http.Error(w, `{"type":"error","error":{"type":"api_error","message":"failed to resolve models"}}`, http.StatusInternalServerError)
+		return
+	}
+
+	if len(resolvedModels) == 0 {
+		http.Error(w, `{"type":"error","error":{"type":"not_found_error","message":"no matching models found"}}`, http.StatusNotFound)
+		return
+	}
+
+	openReq := AnthropicRequestToOpenAI(anthReq)
+
+	var retryOnStatus []int
+	if len(vm.RetryOnStatus) > 0 {
+		json.Unmarshal(vm.RetryOnStatus, &retryOnStatus)
+	}
+
+	var failures []map[string]interface{}
+
+	for i, rm := range resolvedModels {
+		apiKey, err := e.providerService.DecryptAPIKey(rm.Provider.APIKeyEncrypted)
+		if err != nil {
+			continue
+		}
+
+		for retry := 0; retry <= vm.MaxRetries; retry++ {
+			if retry > 0 {
+				time.Sleep(time.Duration(retry) * time.Second)
+			}
+
+			openResp, err := e.sendRequest(r, rm, apiKey, openReq)
+			if err == nil {
+				anthResp := OpenAIResponseToAnthropic(*openResp, rm.Model.Name)
+
+				e.logRequest(RequestLog{
+					Timestamp:    start,
+					RequestID:    requestID,
+					VirtualModel: anthReq.Model,
+					ProviderName: rm.Provider.Name,
+					ModelName:    rm.Model.Name,
+					StatusCode:   http.StatusOK,
+					Latency:      time.Since(start),
+					InputTokens:  openResp.Usage.PromptTokens,
+					OutputTokens: openResp.Usage.CompletionTokens,
+					CachedTokens: func() int {
+						if openResp.Usage.PromptTokensDetails != nil {
+							return openResp.Usage.PromptTokensDetails.CachedTokens
+						}
+						return 0
+					}(),
+					FallbackCount: i,
+					RetryCount:    retry,
+				})
+
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Request-ID", requestID)
+				json.NewEncoder(w).Encode(anthResp)
+				return
+			}
+
+			providerErr, ok := err.(*ProviderError)
+			if !ok {
+				providerErr = &ProviderError{StatusCode: 500, Message: err.Error()}
+			}
+
+			e.logRequest(RequestLog{
+				Timestamp:    start,
+				RequestID:    requestID,
+				VirtualModel: anthReq.Model,
+				ProviderName: rm.Provider.Name,
+				ModelName:    rm.Model.Name,
+				StatusCode:   providerErr.StatusCode,
+				Latency:      time.Since(start),
+				ErrorMessage: providerErr.Message,
+				FallbackCount: i,
+				RetryCount:    retry,
+			})
+
+			if !shouldRetry(providerErr.StatusCode, retryOnStatus) {
+				break
+			}
+		}
+
+		failures = append(failures, map[string]interface{}{
+			"model":    rm.Model.Name,
+			"provider": rm.Provider.Name,
+			"status":   500,
+			"message":  "request failed after retries",
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadGateway)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"type": "error",
+		"error": map[string]interface{}{
+			"type":    "api_error",
+			"message": "all models failed",
+		},
+		"failures": failures,
+	})
+}
+
+func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	requestID := r.Header.Get("X-Request-ID")
+	if requestID == "" {
+		requestID = fmt.Sprintf("req_%d", time.Now().UnixNano())
+	}
+
+	var anthReq AnthropicRequest
+	if err := json.NewDecoder(r.Body).Decode(&anthReq); err != nil {
+		http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"invalid request body"}}`, http.StatusBadRequest)
+		return
+	}
+
+	vm, err := e.vmService.GetByName(r.Context(), anthReq.Model)
+	if err != nil || vm == nil {
+		http.Error(w, `{"type":"error","error":{"type":"not_found_error","message":"model not found"}}`, http.StatusNotFound)
+		return
+	}
+
+	resolvedModels, err := e.vmService.ResolveModels(r.Context(), vm)
+	if err != nil || len(resolvedModels) == 0 {
+		http.Error(w, `{"type":"error","error":{"type":"not_found_error","message":"no matching models found"}}`, http.StatusNotFound)
+		return
+	}
+
+	openReq := AnthropicRequestToOpenAI(anthReq)
+	openReq.Stream = true
+
+	var retryOnStatus []int
+	if len(vm.RetryOnStatus) > 0 {
+		json.Unmarshal(vm.RetryOnStatus, &retryOnStatus)
+	}
+
+	for i, rm := range resolvedModels {
+		apiKey, err := e.providerService.DecryptAPIKey(rm.Provider.APIKeyEncrypted)
+		if err != nil {
+			continue
+		}
+
+		for retry := 0; retry <= vm.MaxRetries; retry++ {
+			if retry > 0 {
+				time.Sleep(time.Duration(retry) * time.Second)
+			}
+
+			if rm.Provider.APIType == models.APITypeAnthropic {
+				anthReq.Model = rm.Model.Name
+				streamBody, _, err := e.anthropicClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, anthReq)
+				if err == nil {
+					e.logRequest(RequestLog{
+						Timestamp:    start,
+						RequestID:    requestID,
+						VirtualModel: anthReq.Model,
+						ProviderName: rm.Provider.Name,
+						ModelName:    rm.Model.Name,
+						StatusCode:   http.StatusOK,
+						Latency:      time.Since(start),
+						FallbackCount: i,
+						RetryCount:    retry,
+					})
+
+					w.Header().Set("Content-Type", "text/event-stream")
+					w.Header().Set("Cache-Control", "no-cache")
+					w.Header().Set("Connection", "keep-alive")
+
+					flusher, ok := w.(http.Flusher)
+					if !ok {
+						http.Error(w, "streaming not supported", http.StatusInternalServerError)
+						return
+					}
+
+					e.streamAnthropicPassthrough(w, flusher, streamBody)
+					return
+				}
+			} else {
+				openReq.Model = rm.Model.Name
+				streamBody, _, err := e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, openReq)
+				if err == nil {
+					e.logRequest(RequestLog{
+						Timestamp:    start,
+						RequestID:    requestID,
+						VirtualModel: anthReq.Model,
+						ProviderName: rm.Provider.Name,
+						ModelName:    rm.Model.Name,
+						StatusCode:   http.StatusOK,
+						Latency:      time.Since(start),
+						FallbackCount: i,
+						RetryCount:    retry,
+					})
+
+					w.Header().Set("Content-Type", "text/event-stream")
+					w.Header().Set("Cache-Control", "no-cache")
+					w.Header().Set("Connection", "keep-alive")
+
+					flusher, ok := w.(http.Flusher)
+					if !ok {
+						http.Error(w, "streaming not supported", http.StatusInternalServerError)
+						return
+					}
+
+					e.streamOpenAIToAnthropic(w, flusher, streamBody, rm.Model.Name, requestID)
+					return
+				}
+			}
+		}
+	}
+
+	http.Error(w, `{"type":"error","error":{"type":"api_error","message":"all models failed"}}`, http.StatusBadGateway)
+}
+
+func (e *Engine) streamAnthropicPassthrough(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser) {
+	defer body.Close()
+	buf := make([]byte, 4096)
+	for {
+		n, err := body.Read(buf)
+		if n > 0 {
+			w.Write(buf[:n])
+			flusher.Flush()
+		}
+		if err != nil {
+			break
+		}
+	}
+}
+
+func (e *Engine) streamOpenAIToAnthropic(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser, model string, requestID string) {
+	chunks := ParseSSEStream(body)
+
+	for chunk := range chunks {
+		events := OpenAIStreamToAnthropicEvent(chunk, requestID)
+		for _, event := range events {
+			data, _ := json.Marshal(event)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, data)
+			flusher.Flush()
+		}
+	}
+}

@@ -114,6 +114,29 @@ Client (OpenAI SDK) → /v1/chat/completions → Routing Engine → Provider A (
 
 Silent failover: if the best model fails, the next one in the sorted list is tried transparently.
 
+## Claude Code Integration
+
+llm-router accepts both OpenAI and Anthropic API formats. Use it as drop-in replacement for Claude Code:
+
+```bash
+# Start proxy
+./llm-router proxy --port 8080 --db ./data/router.db
+
+# Configure Claude Code
+export ANTHROPIC_BASE_URL=http://localhost:8080/v1
+export ANTHROPIC_API_KEY=lmr_dein-proxy-key
+
+# Or edit ~/.claude/config.json:
+# {
+#   "anthropic_api_base": "http://localhost:8080/v1",
+#   "anthropic_api_key": "lmr_dein-proxy-key"
+# }
+```
+
+Claude Code sends Anthropic-format requests → llm-router translates and routes to any provider (OpenAI, Anthropic, etc.) → translates response back.
+
+**Works with any tool that supports custom Anthropic/OpenAI endpoints:** Claude Code, Cursor, Codex, Cline, etc.
+
 ## Metadata Filter Operators
 
 | Op | Example | Description |
@@ -180,10 +203,12 @@ curl -X POST "http://localhost:8080/api/v1/import/csv?mode=merge" \
 
 ### Proxy (Bearer: proxy key)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/v1/chat/completions` | Chat completion (streaming supported) |
-| `GET` | `/v1/models` | List virtual models |
+| Method | Path | Format | Description |
+|--------|------|--------|-------------|
+| `POST` | `/v1/chat/completions` | OpenAI | Chat completion (streaming) |
+| `POST` | `/v1/messages` | Anthropic | Messages (non-streaming) |
+| `POST` | `/v1/messages/stream` | Anthropic | Messages (streaming) |
+| `GET` | `/v1/models` | OpenAI | List virtual models |
 
 ## Provider Types
 

@@ -143,6 +143,8 @@ func runProxy(args []string) {
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middlewareAuth(keyService))
 		r.Post("/chat/completions", engine.HandleChatCompletion)
+		r.Post("/messages", engine.HandleAnthropicMessages)
+		r.Post("/messages/stream", engine.HandleAnthropicMessagesStream)
 		r.Get("/models", handleListModels(vmService))
 	})
 

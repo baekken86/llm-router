@@ -219,3 +219,225 @@ func FormatCost(cost float64) string {
 	}
 	return fmt.Sprintf("$%.2f", cost)
 }
+
+func AnthropicRequestToOpenAI(req AnthropicRequest) ChatCompletionRequest {
+	openReq := ChatCompletionRequest{
+		Model: req.Model,
+	}
+
+	if req.MaxTokens > 0 {
+		openReq.MaxTokens = &req.MaxTokens
+	}
+
+	if req.System != "" {
+		openReq.Messages = append(openReq.Messages, Message{
+			Role:    "system",
+			Content: req.System,
+		})
+	}
+
+	for _, msg := range req.Messages {
+		openMsg := Message{
+			Role: msg.Role,
+		}
+
+		switch content := msg.Content.(type) {
+		case string:
+			openMsg.Content = content
+		case []interface{}:
+			var parts []string
+			var toolCalls []ToolCall
+			for _, block := range content {
+				b, ok := block.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				switch b["type"] {
+				case "text":
+					if text, ok := b["text"].(string); ok {
+						parts = append(parts, text)
+					}
+				case "tool_result":
+					if toolUseID, ok := b["tool_use_id"].(string); ok {
+						resultContent := ""
+						if c, ok := b["content"].(string); ok {
+							resultContent = c
+						}
+						openMsg.Role = "tool"
+						openMsg.ToolCallID = toolUseID
+						openMsg.Content = resultContent
+					}
+				case "tool_use":
+					tc := ToolCall{
+						ID:   b["id"].(string),
+						Type: "function",
+					}
+					if name, ok := b["name"].(string); ok {
+						tc.Function.Name = name
+					}
+					if input, ok := b["input"]; ok {
+						inputJSON, _ := json.Marshal(input)
+						tc.Function.Arguments = string(inputJSON)
+					}
+					toolCalls = append(toolCalls, tc)
+				}
+			}
+			if len(parts) > 0 {
+				openMsg.Content = strings.Join(parts, "")
+			}
+			if len(toolCalls) > 0 {
+				openMsg.ToolCalls = toolCalls
+				if openMsg.Role == "assistant" {
+					openMsg.Content = nil
+				}
+			}
+		default:
+			openMsg.Content = content
+		}
+
+		openReq.Messages = append(openReq.Messages, openMsg)
+	}
+
+	for _, tool := range req.Tools {
+		openReq.Tools = append(openReq.Tools, Tool{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        tool.Name,
+				Description: tool.Description,
+				Parameters:  tool.InputSchema,
+			},
+		})
+	}
+
+	return openReq
+}
+
+func OpenAIResponseToAnthropic(resp ChatCompletionResponse, model string) AnthropicResponse {
+	anthResp := AnthropicResponse{
+		ID:    resp.ID,
+		Type:  "message",
+		Role:  "assistant",
+		Model: model,
+		Usage: AnthropicUsage{
+			InputTokens:  resp.Usage.PromptTokens,
+			OutputTokens: resp.Usage.CompletionTokens,
+		},
+	}
+
+	if resp.Usage.PromptTokensDetails != nil {
+		anthResp.Usage.CacheReadInputTokens = resp.Usage.PromptTokensDetails.CachedTokens
+	}
+
+	if len(resp.Choices) > 0 {
+		choice := resp.Choices[0]
+
+		if choice.Message.Content != nil {
+			if content, ok := choice.Message.Content.(string); ok && content != "" {
+				anthResp.Content = append(anthResp.Content, AnthropicContent{
+					Type: "text",
+					Text: content,
+				})
+			}
+		}
+
+		for _, tc := range choice.Message.ToolCalls {
+			inputJSON := json.RawMessage(tc.Function.Arguments)
+			anthResp.Content = append(anthResp.Content, AnthropicContent{
+				Type:  "tool_use",
+				ID:    tc.ID,
+				Name:  tc.Function.Name,
+				Input: inputJSON,
+			})
+		}
+
+		anthResp.StopReason = reverseMapStopReason(choice.FinishReason)
+	}
+
+	return anthResp
+}
+
+func reverseMapStopReason(reason string) string {
+	switch reason {
+	case "stop":
+		return "end_turn"
+	case "length":
+		return "max_tokens"
+	case "tool_calls":
+		return "tool_use"
+	default:
+		return "end_turn"
+	}
+}
+
+func OpenAIStreamToAnthropicEvent(chunk StreamChunk, requestID string) []AnthropicStreamEvent {
+	var events []AnthropicStreamEvent
+
+	if len(chunk.Choices) == 0 {
+		return events
+	}
+
+	choice := chunk.Choices[0]
+
+	if choice.Delta.Role == "assistant" {
+		events = append(events, AnthropicStreamEvent{
+			Type: "message_start",
+			Message: mustMarshal(AnthropicResponse{
+				ID:      requestID,
+				Type:    "message",
+				Role:    "assistant",
+				Model:   chunk.Model,
+				Content: []AnthropicContent{},
+			}),
+		})
+		events = append(events, AnthropicStreamEvent{
+			Type:  "content_block_start",
+			Index: 0,
+			Delta: mustMarshal(map[string]interface{}{
+				"type": "text",
+				"text": "",
+			}),
+		})
+	}
+
+	if choice.Delta.Content != "" {
+		events = append(events, AnthropicStreamEvent{
+			Type:  "content_block_delta",
+			Index: 0,
+			Delta: mustMarshal(map[string]interface{}{
+				"type":         "text_delta",
+				"text":         choice.Delta.Content,
+			}),
+		})
+	}
+
+	if choice.FinishReason != nil {
+		events = append(events, AnthropicStreamEvent{
+			Type:  "content_block_stop",
+			Index: 0,
+		})
+
+		deltaData := map[string]interface{}{
+			"stop_reason": reverseMapStopReason(*choice.FinishReason),
+		}
+		if chunk.Usage != nil {
+			deltaData["usage"] = AnthropicUsage{
+				InputTokens:  chunk.Usage.PromptTokens,
+				OutputTokens: chunk.Usage.CompletionTokens,
+			}
+		}
+		events = append(events, AnthropicStreamEvent{
+			Type:  "message_delta",
+			Delta: mustMarshal(deltaData),
+		})
+		events = append(events, AnthropicStreamEvent{
+			Type: "message_stop",
+		})
+	}
+
+	return events
+}
+
+func mustMarshal(v interface{}) json.RawMessage {
+	data, _ := json.Marshal(v)
+	return data
+}

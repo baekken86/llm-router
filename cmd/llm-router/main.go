@@ -22,6 +22,7 @@ import (
 	"github.com/chris/llm-router/internal/proxy"
 	"github.com/chris/llm-router/internal/repository"
 	"github.com/chris/llm-router/internal/service"
+	"github.com/chris/llm-router/internal/tui"
 )
 
 func main() {
@@ -30,6 +31,7 @@ func main() {
 	encryptKey := flag.String("encryption-key", "", "32-byte hex encryption key for API keys (auto-generated if empty)")
 	importFile := flag.String("import", "", "CSV file to import metadata from")
 	importMode := flag.String("import-mode", "merge", "Import mode: merge or replace")
+	noTUI := flag.Bool("no-tui", false, "Disable terminal UI (log to stdout only)")
 	flag.Parse()
 
 	if envPort := os.Getenv("LLM_ROUTER_PORT"); envPort != "" {
@@ -117,6 +119,10 @@ func main() {
 			os.Exit(1)
 		}
 	}()
+
+	if !*noTUI {
+		go tui.Run(logChan)
+	}
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

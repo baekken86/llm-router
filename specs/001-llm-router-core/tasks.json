@@ -175,7 +175,7 @@
       "id": "S001T016",
       "title": "TUI Framework Setup (bubbletea, Layout)",
       "description": "",
-      "status": "active",
+      "status": "done",
       "priority": 6,
       "depends_on": [
         "S001T014"
@@ -186,7 +186,7 @@
       "id": "S001T017",
       "title": "Live Request Log View",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 6,
       "depends_on": [
         "S001T016"
@@ -197,7 +197,7 @@
       "id": "S001T018",
       "title": "Statistik-Panel (Counts, Latenz, Tokens)",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 6,
       "depends_on": [
         "S001T016"

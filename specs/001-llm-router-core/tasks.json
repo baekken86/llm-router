@@ -80,7 +80,7 @@
       "id": "S001T008",
       "title": "KeyService (Proxy-Key CRUD, Hash)",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 3,
       "depends_on": [
         "S001T004"

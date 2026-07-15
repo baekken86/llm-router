@@ -61,6 +61,7 @@ type ModelDef struct {
 	CostType           *string                     `json:"cost_type,omitempty"`
 	CostPer1mInput     *float64                    `json:"cost_per_1m_input,omitempty"`
 	CostPer1mOutput    *float64                    `json:"cost_per_1m_output,omitempty"`
+	CostPerTask        *float64                    `json:"cost_per_task,omitempty"`
 	Efforts            map[string]map[string]interface{} `json:"efforts,omitempty"`
 	Intel              *float64                    `json:"intelligence,omitempty"`
 	Speed              *float64                    `json:"speed,omitempty"`
@@ -110,6 +111,9 @@ func (s *importService) ImportJSON(ctx context.Context, reader io.Reader, mode I
 		}
 		if model.CostPer1mOutput != nil {
 			baseTags["cost_per_1m_output"] = fmt.Sprintf("%.2f", *model.CostPer1mOutput)
+		}
+		if model.CostPerTask != nil {
+			baseTags["cost_per_task"] = fmt.Sprintf("%.2f", *model.CostPerTask)
 		}
 
 		if model.HasReasoningEffort && len(model.Efforts) > 0 {

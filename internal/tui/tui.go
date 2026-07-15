@@ -24,11 +24,13 @@ type Tab int
 const (
 	TabLog Tab = iota
 	TabStats
+	TabVM
 )
 
 type Model struct {
 	logView    LogViewModel
 	stats      StatsModel
+	vmView     VMViewModel
 	tab        Tab
 	width      int
 	height     int
@@ -41,6 +43,7 @@ func New(logChan <-chan proxy.RequestLog) Model {
 	return Model{
 		logView: NewLogViewModel(500),
 		stats:   NewStatsModel(),
+		vmView:  NewVMViewModel(),
 		tab:     TabLog,
 		logChan: logChan,
 	}
@@ -50,6 +53,7 @@ func NewRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog) Model {
 	return Model{
 		logView:   NewLogViewModel(500),
 		stats:     NewStatsModel(),
+		vmView:    NewVMViewModel(),
 		tab:       TabLog,
 		logChan:   logChan,
 		apiClient: apiClient,
@@ -63,6 +67,7 @@ func (m Model) Init() tea.Cmd {
 	}
 	if m.apiClient != nil {
 		cmds = append(cmds, m.refreshStats())
+		cmds = append(cmds, FetchVMData(m.apiClient))
 	}
 	return tea.Batch(cmds...)
 }
@@ -98,6 +103,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		m.logView.SetSize(msg.Width, msg.Height-4)
 		m.stats.SetSize(msg.Width, msg.Height-4)
+		m.vmView.SetSize(msg.Width, msg.Height-4)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -105,28 +111,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "tab":
-			if m.tab == TabLog {
+			switch m.tab {
+			case TabLog:
 				m.tab = TabStats
-			} else {
+			case TabStats:
+				m.tab = TabVM
+			case TabVM:
 				m.tab = TabLog
+			}
+			if m.tab == TabVM && m.apiClient != nil {
+				return m, FetchVMData(m.apiClient)
 			}
 			return m, nil
 		case "r":
 			if m.tab == TabStats {
 				m.stats, _ = m.stats.Update(StatsResetMsg{})
+			} else if m.tab == TabVM && m.apiClient != nil {
+				return m, FetchVMData(m.apiClient)
 			}
 			return m, nil
 		case "up", "k":
 			if m.tab == TabLog {
 				m.logView.ScrollUp()
+			} else if m.tab == TabVM {
+				m.vmView, _ = m.vmView.Update(msg)
 			}
 			return m, nil
 		case "down", "j":
 			if m.tab == TabLog {
 				m.logView.ScrollDown()
+			} else if m.tab == TabVM {
+				m.vmView, _ = m.vmView.Update(msg)
 			}
 			return m, nil
 		}
+
+	case VMViewMsg:
+		m.vmView, _ = m.vmView.Update(msg)
+		return m, nil
 
 	case LogMsg:
 		m.logView.AddEntry(msg.Log)
@@ -158,6 +180,8 @@ func (m Model) View() string {
 		b.WriteString(m.logView.View())
 	case TabStats:
 		b.WriteString(m.stats.View())
+	case TabVM:
+		b.WriteString(m.vmView.View())
 	}
 
 	b.WriteString(m.renderFooter())
@@ -168,11 +192,14 @@ func (m Model) View() string {
 func (m Model) renderHeader() string {
 	logTab := TabInactiveStyle.Render(" Log ")
 	statsTab := TabInactiveStyle.Render(" Stats ")
+	vmTab := TabInactiveStyle.Render(" Models ")
 
 	if m.tab == TabLog {
 		logTab = TabActiveStyle.Render(" Log ")
-	} else {
+	} else if m.tab == TabStats {
 		statsTab = TabActiveStyle.Render(" Stats ")
+	} else if m.tab == TabVM {
+		vmTab = TabActiveStyle.Render(" Models ")
 	}
 
 	title := TitleStyle.Render("llm-router")
@@ -182,7 +209,7 @@ func (m Model) renderHeader() string {
 		mode = MutedStyle.Render(" [remote]")
 	}
 
-	return fmt.Sprintf("%s%s  %s %s", title, mode, logTab, statsTab)
+	return fmt.Sprintf("%s%s  %s %s %s", title, mode, logTab, statsTab, vmTab)
 }
 
 func (m Model) renderFooter() string {

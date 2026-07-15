@@ -228,6 +228,7 @@ curl -X POST "http://localhost:8080/api/v1/import/csv?mode=merge" \
 | `PUT` | `/api/v1/models/:id/tags` | Set model tags |
 | `POST` | `/api/v1/virtual-models` | Create virtual model |
 | `GET` | `/api/v1/virtual-models` | List virtual models |
+| `GET` | `/api/v1/virtual-models/:id/resolved` | Show resolved models (filter + sort) |
 | `POST` | `/api/v1/keys` | Create proxy key |
 | `POST` | `/api/v1/import/csv` | Import CSV metadata |
 | `GET` | `/api/v1/stats` | Get aggregated statistics |

@@ -79,7 +79,7 @@ func runTag(args []string) {
 		return
 	}
 
-	if err := tagRepo.Set(ctx, targetModel.ID, tagMap); err != nil {
+	if err := tagRepo.Set(ctx, targetModel.ID, "default", tagMap); err != nil {
 		logger.Error("failed to set tags", "error", err)
 		os.Exit(1)
 	}

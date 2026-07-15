@@ -159,7 +159,7 @@ func (s *modelService) SetTags(ctx context.Context, modelID int64, tags map[stri
 		return fmt.Errorf("model not found: %d", modelID)
 	}
 
-	return s.tagRepo.Set(ctx, modelID, tags)
+	return s.tagRepo.Set(ctx, modelID, "default", tags)
 }
 
 func (s *modelService) GetTags(ctx context.Context, modelID int64) ([]models.Tag, error) {

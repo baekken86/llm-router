@@ -49,8 +49,8 @@ func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode Im
 		return nil, fmt.Errorf("read CSV header: %w", err)
 	}
 
-	if len(header) < 3 {
-		return nil, fmt.Errorf("CSV must have at least 3 columns: model_name, key, value")
+	if len(header) < 4 {
+		return nil, fmt.Errorf("CSV must have at least 4 columns: model_name, reasoning_effort, key, value")
 	}
 
 	modelNameIdx := findColumn(header, "model_name")
@@ -58,8 +58,11 @@ func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode Im
 	valueIdx := findColumn(header, "value")
 
 	if modelNameIdx < 0 || keyIdx < 0 || valueIdx < 0 {
-		return nil, fmt.Errorf("CSV must have columns: model_name, key, value")
+		return nil, fmt.Errorf("CSV must have columns: model_name, key, value (reasoning_effort optional)")
 	}
+
+	effortIdx := findColumn(header, "reasoning_effort")
+	hasEffortColumn := effortIdx >= 0
 
 	allModels, err := s.modelRepo.ListAll(ctx)
 	if err != nil {
@@ -72,7 +75,7 @@ func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode Im
 	}
 
 	result := &ImportResult{}
-	modelTags := make(map[int64]map[string]string)
+	modelTags := make(map[string]map[string]string) // key: "modelID:effort"
 
 	for {
 		row, err := csvReader.Read()
@@ -82,11 +85,14 @@ func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode Im
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("row %d: %v", result.TotalRows+1, err))
 			result.TotalRows++
-			result.Errors = append(result.Errors, fmt.Sprintf("row %d: parse error: %v", result.TotalRows, err))
 			continue
 		}
 
-		if len(row) <= max(modelNameIdx, max(keyIdx, valueIdx)) {
+		requiredCols := max(modelNameIdx, max(keyIdx, valueIdx))
+		if hasEffortColumn {
+			requiredCols = max(requiredCols, effortIdx)
+		}
+		if len(row) <= requiredCols {
 			result.Errors = append(result.Errors, fmt.Sprintf("row %d: not enough columns", result.TotalRows+1))
 			result.TotalRows++
 			continue
@@ -96,6 +102,14 @@ func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode Im
 		key := strings.TrimSpace(row[keyIdx])
 		value := strings.TrimSpace(row[valueIdx])
 
+		effort := "default"
+		if hasEffortColumn && effortIdx < len(row) {
+			effort = strings.TrimSpace(row[effortIdx])
+			if effort == "" {
+				effort = "default"
+			}
+		}
+
 		modelID, exists := modelMap[strings.ToLower(modelName)]
 		if !exists {
 			result.Skipped++
@@ -103,20 +117,32 @@ func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode Im
 			continue
 		}
 
-		if _, ok := modelTags[modelID]; !ok {
-			modelTags[modelID] = make(map[string]string)
-			result.MatchedModels = append(result.MatchedModels, modelName)
+		tagKey := fmt.Sprintf("%d:%s", modelID, effort)
+		if _, ok := modelTags[tagKey]; !ok {
+			modelTags[tagKey] = make(map[string]string)
+			if _, exists := modelTags[fmt.Sprintf("%d:default", modelID)]; !exists {
+				result.MatchedModels = append(result.MatchedModels, modelName)
+			}
 		}
 
-		modelTags[modelID][key] = value
+		modelTags[tagKey][key] = value
 		result.TotalRows++
 	}
 
-	for modelID, tags := range modelTags {
+	for tagKey, tags := range modelTags {
+		parts := strings.SplitN(tagKey, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		var modelID int64
+		fmt.Sscanf(parts[0], "%d", &modelID)
+		effort := parts[1]
+
 		if mode == ImportModeMerge {
-			existing, err := s.tagRepo.GetByModel(ctx, modelID)
+			existing, err := s.tagRepo.GetByModelEffort(ctx, modelID, effort)
 			if err != nil {
-				result.Errors = append(result.Errors, fmt.Sprintf("model %d: %v", modelID, err))
+				result.Errors = append(result.Errors, fmt.Sprintf("model %d effort %s: %v", modelID, effort, err))
 				continue
 			}
 			for _, t := range existing {
@@ -126,8 +152,8 @@ func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode Im
 			}
 		}
 
-		if err := s.tagRepo.Set(ctx, modelID, tags); err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("model %d: %v", modelID, err))
+		if err := s.tagRepo.Set(ctx, modelID, effort, tags); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("model %d effort %s: %v", modelID, effort, err))
 			continue
 		}
 		result.Imported++

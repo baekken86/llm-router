@@ -11,11 +11,12 @@ type Model struct {
 }
 
 type Tag struct {
-	ID        int64     `json:"id"`
-	ModelID   int64     `json:"model_id"`
-	Key       string    `json:"key"`
-	Value     string    `json:"value"`
-	CreatedAt time.Time `json:"created_at"`
+	ID               int64     `json:"id"`
+	ModelID          int64     `json:"model_id"`
+	ReasoningEffort  string    `json:"reasoning_effort"`
+	Key              string    `json:"key"`
+	Value            string    `json:"value"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type SetTagsRequest struct {

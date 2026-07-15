@@ -52,8 +52,7 @@ func runConnect(args []string) {
 	if connected {
 		logger.Info("already connected",
 			"provider", *providerName,
-			"email", token.Email,
-			"account_id", token.AccountID,
+			"expires", token.ExpiresAt.Format("2006-01-02 15:04"),
 		)
 		return
 	}
@@ -107,11 +106,10 @@ func runManual(ctx context.Context, oauthService service.OAuthService, authURL, 
 	}
 
 	fmt.Println()
-	fmt.Println("✓ Connected successfully!")
-	fmt.Printf("  Account: %s\n", token.AccountID)
-	fmt.Printf("  Email:   %s\n", token.Email)
+	fmt.Println("✓ Connected!")
+	fmt.Printf("  Token expires: %s\n", token.ExpiresAt.Format("2006-01-02 15:04"))
 	fmt.Println()
-	fmt.Println("You can now use Claude Code models in your virtual models.")
+	fmt.Println("Use models: cc/claude-opus-4-6, cc/claude-sonnet-4-6, cc/claude-haiku-4-5")
 }
 
 func extractCodeAndState(rawURL string) (code, state string) {

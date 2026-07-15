@@ -38,9 +38,13 @@ func runSetup(args []string) {
 }
 
 func setupClaudeCode(ctx context.Context, providerRepo repository.ProviderRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, logger *slog.Logger) {
-	_, err := providerRepo.GetByName(ctx, "claude-code")
-	if err == nil {
-		logger.Info("claude-code provider already exists")
+	existing, err := providerRepo.GetByName(ctx, "claude-code")
+	if err != nil {
+		logger.Error("failed to check claude-code provider", "error", err)
+		return
+	}
+	if existing != nil {
+		logger.Info("claude-code provider already exists", "id", existing.ID)
 		return
 	}
 

@@ -79,6 +79,7 @@ func runSetup(args []string) {
 	modelRepo := repository.NewModelRepository(database)
 	tagRepo := repository.NewTagRepository(database)
 	oauthRepo := repository.NewOAuthRepository(database)
+	globalRepo := repository.NewGlobalMetadataRepository(database)
 
 	ctx := context.Background()
 
@@ -139,9 +140,10 @@ func runSetup(args []string) {
 
 	if providerCfg.auth == "oauth" {
 		handleOAuthSetup(ctx, provider, oauthRepo, providerRepo, providerService, logger)
+		createPredefinedModels(ctx, modelRepo, tagRepo, globalRepo, provider, providerCfg.name, logger)
+	} else {
+		discoverModels(ctx, modelService, provider, logger)
 	}
-
-	discoverModels(ctx, modelService, provider, logger)
 }
 
 func handleOAuthSetup(ctx context.Context, provider *models.Provider, oauthRepo repository.OAuthRepository, providerRepo repository.ProviderRepository, providerService service.ProviderService, logger *slog.Logger) {
@@ -214,8 +216,50 @@ func discoverModels(ctx context.Context, modelService service.ModelService, prov
 	for _, m := range models {
 		fmt.Printf("  - %s\n", m.Name)
 	}
+}
 
-	importDefaultCSV(ctx, modelService, logger)
+func createPredefinedModels(ctx context.Context, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, globalRepo repository.GlobalMetadataRepository, provider *models.Provider, providerName string, logger *slog.Logger) {
+	predefined := map[string][]string{
+		"claude-code": {
+			"claude-opus-4-6",
+			"claude-sonnet-4-6",
+			"claude-haiku-4-5",
+			"claude-sonnet-5",
+			"claude-opus-4-7",
+			"claude-opus-4-8",
+			"claude-fable-5",
+		},
+	}
+
+	modelNames, exists := predefined[providerName]
+	if !exists {
+		return
+	}
+
+	fmt.Printf("\nCreating predefined models for %s...\n", providerName)
+
+	created := 0
+	for _, name := range modelNames {
+		m := &models.Model{
+			ProviderID: provider.ID,
+			Name:       name,
+		}
+		if err := modelRepo.Create(ctx, m); err != nil {
+			continue
+		}
+
+		metadata, err := globalRepo.GetByModel(ctx, name)
+		if err == nil && len(metadata) > 0 {
+			for effort, tags := range metadata {
+				tagRepo.Set(ctx, m.ID, effort, tags)
+			}
+		}
+
+		created++
+		fmt.Printf("  + %s\n", name)
+	}
+
+	fmt.Printf("✓ Created %d predefined models\n", created)
 }
 
 func importDefaultCSV(ctx context.Context, modelService service.ModelService, logger *slog.Logger) {

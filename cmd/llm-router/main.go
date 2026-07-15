@@ -37,6 +37,9 @@ func main() {
 		case "import":
 			runImportCmd(os.Args[2:])
 			return
+		case "setup":
+			runSetup(os.Args[2:])
+			return
 		case "help", "--help", "-h":
 			printUsage()
 			return
@@ -54,6 +57,7 @@ Usage:
   llm-router proxy [flags]        Start proxy server
   llm-router admin [flags]        Connect to running proxy as admin viewer
   llm-router import [flags]       Import CSV metadata
+  llm-router setup [flags]        Initialize Claude Code + default models
   llm-router help                 Show this help
 
 Proxy flags:

@@ -30,15 +30,22 @@ Sort:   [{"key":"intel","direction":"desc"}]
 ```bash
 go build -o llm-router ./cmd/llm-router
 
-# Start proxy with TUI (single-instance mode)
+# 1. Setup: initialize Claude Code + default models with tags
+./llm-router setup --db ./data/router.db
+
+# 2. Start proxy
 ./llm-router proxy --port 8080 --db ./data/router.db
 
-# Or start proxy without TUI (daemon mode)
-./llm-router proxy --port 8080 --db ./data/router.db --no-tui
-
-# In another terminal: admin dashboard
-./llm-router admin --connect http://localhost:8080 --key <admin-key>
+# 3. Connect Claude Code
+export ANTHROPIC_BASE_URL=http://localhost:8080/v1
+claude
 ```
+
+The `setup` command creates:
+- **claude-code** provider with pre-tagged Claude models (opus, sonnet, haiku)
+- Default models with intelligence, speed, cost metadata
+
+All models are taggable via API or CSV import.
 
 ## Multi-Instance
 
@@ -64,6 +71,7 @@ llm-router [flags]              Start proxy (default, same as 'proxy')
 llm-router proxy [flags]        Start proxy server
 llm-router admin [flags]        Connect to running proxy as admin viewer
 llm-router import [flags]       Import CSV metadata
+llm-router setup [flags]        Initialize Claude Code + default models
 llm-router help                 Show help
 ```
 

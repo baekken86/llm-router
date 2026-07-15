@@ -102,7 +102,7 @@
       "id": "S001T010",
       "title": "HTTP Handlers + Router (alle CRUD-Endpoints)",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 4,
       "depends_on": [
         "S001T005",

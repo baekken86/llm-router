@@ -175,7 +175,7 @@
       "id": "S001T016",
       "title": "TUI Framework Setup (bubbletea, Layout)",
       "description": "",
-      "status": "pending",
+      "status": "active",
       "priority": 6,
       "depends_on": [
         "S001T014"

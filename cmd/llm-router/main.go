@@ -28,6 +28,8 @@ func main() {
 	port := flag.Int("port", 8080, "HTTP server port")
 	dbPath := flag.String("db", "./data/llm-router.db", "SQLite database path")
 	encryptKey := flag.String("encryption-key", "", "32-byte hex encryption key for API keys (auto-generated if empty)")
+	importFile := flag.String("import", "", "CSV file to import metadata from")
+	importMode := flag.String("import-mode", "merge", "Import mode: merge or replace")
 	flag.Parse()
 
 	if envPort := os.Getenv("LLM_ROUTER_PORT"); envPort != "" {
@@ -70,16 +72,23 @@ func main() {
 	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService)
 	vmService := service.NewVirtualModelService(vmRepo, modelRepo, tagRepo, providerRepo)
 	keyService := service.NewKeyService(keyRepo)
+	importService := service.NewImportService(modelRepo, tagRepo)
 
 	logChan := make(chan proxy.RequestLog, 100)
 	engine := proxy.NewEngine(vmService, providerService, logger, logChan)
+
+	if *importFile != "" {
+		runImport(importService, *importFile, service.ImportMode(*importMode), logger)
+		return
+	}
 
 	providerHandler := handlers.NewProviderHandler(providerService, modelService)
 	modelHandler := handlers.NewModelHandler(modelService)
 	vmHandler := handlers.NewVirtualModelHandler(vmService)
 	keyHandler := handlers.NewKeyHandler(keyService)
+	importHandler := handlers.NewImportHandler(importService)
 
-	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, keyService)
+	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, keyService)
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middlewareAuth(keyService))
@@ -195,5 +204,35 @@ func handleListModels(vmService service.VirtualModelService) http.HandlerFunc {
 			json.NewEncoder(w).Encode(models)
 		}
 		fmt.Fprintf(w, `}`)
+	}
+}
+
+func runImport(importService service.ImportService, filePath string, mode service.ImportMode, logger *slog.Logger) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		logger.Error("failed to open import file", "error", err, "file", filePath)
+		os.Exit(1)
+	}
+	defer f.Close()
+
+	logger.Info("importing CSV", "file", filePath, "mode", mode)
+
+	result, err := importService.ImportCSV(context.Background(), f, mode)
+	if err != nil {
+		logger.Error("import failed", "error", err)
+		os.Exit(1)
+	}
+
+	logger.Info("import completed",
+		"total_rows", result.TotalRows,
+		"imported", result.Imported,
+		"skipped", result.Skipped,
+		"matched_models", len(result.MatchedModels),
+	)
+
+	if len(result.Errors) > 0 {
+		for _, e := range result.Errors {
+			logger.Warn("import warning", "detail", e)
+		}
 	}
 }

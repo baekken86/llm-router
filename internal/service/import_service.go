@@ -49,20 +49,25 @@ func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode Im
 		return nil, fmt.Errorf("read CSV header: %w", err)
 	}
 
-	if len(header) < 4 {
-		return nil, fmt.Errorf("CSV must have at least 4 columns: model_name, reasoning_effort, key, value")
-	}
-
 	modelNameIdx := findColumn(header, "model_name")
-	keyIdx := findColumn(header, "key")
-	valueIdx := findColumn(header, "value")
+	effortIdx := findColumn(header, "reasoning_effort")
 
-	if modelNameIdx < 0 || keyIdx < 0 || valueIdx < 0 {
-		return nil, fmt.Errorf("CSV must have columns: model_name, key, value (reasoning_effort optional)")
+	if modelNameIdx < 0 {
+		return nil, fmt.Errorf("CSV must have 'model_name' column")
 	}
 
-	effortIdx := findColumn(header, "reasoning_effort")
-	hasEffortColumn := effortIdx >= 0
+	metadataColumns := make(map[int]string)
+	for i, col := range header {
+		col = strings.TrimSpace(col)
+		if i == modelNameIdx || i == effortIdx || col == "" {
+			continue
+		}
+		metadataColumns[i] = col
+	}
+
+	if len(metadataColumns) == 0 {
+		return nil, fmt.Errorf("CSV must have at least one metadata column")
+	}
 
 	allModels, err := s.modelRepo.ListAll(ctx)
 	if err != nil {
@@ -75,7 +80,7 @@ func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode Im
 	}
 
 	result := &ImportResult{}
-	modelTags := make(map[string]map[string]string) // key: "modelID:effort" or "modelID:"
+	modelTags := make(map[string]map[string]string) // key: "modelID:effort"
 
 	for {
 		row, err := csvReader.Read()
@@ -88,22 +93,10 @@ func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode Im
 			continue
 		}
 
-		requiredCols := max(modelNameIdx, max(keyIdx, valueIdx))
-		if hasEffortColumn {
-			requiredCols = max(requiredCols, effortIdx)
-		}
-		if len(row) <= requiredCols {
-			result.Errors = append(result.Errors, fmt.Sprintf("row %d: not enough columns", result.TotalRows+1))
-			result.TotalRows++
-			continue
-		}
-
 		modelName := strings.TrimSpace(row[modelNameIdx])
-		key := strings.TrimSpace(row[keyIdx])
-		value := strings.TrimSpace(row[valueIdx])
 
 		effort := ""
-		if hasEffortColumn && effortIdx < len(row) {
+		if effortIdx >= 0 && effortIdx < len(row) {
 			effort = strings.TrimSpace(row[effortIdx])
 		}
 
@@ -117,12 +110,18 @@ func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode Im
 		tagKey := fmt.Sprintf("%d:%s", modelID, effort)
 		if _, ok := modelTags[tagKey]; !ok {
 			modelTags[tagKey] = make(map[string]string)
-			if _, exists := modelTags[fmt.Sprintf("%d:default", modelID)]; !exists {
-				result.MatchedModels = append(result.MatchedModels, modelName)
+			result.MatchedModels = append(result.MatchedModels, modelName)
+		}
+
+		for colIdx, colName := range metadataColumns {
+			if colIdx < len(row) {
+				value := strings.TrimSpace(row[colIdx])
+				if value != "" {
+					modelTags[tagKey][colName] = value
+				}
 			}
 		}
 
-		modelTags[tagKey][key] = value
 		result.TotalRows++
 	}
 

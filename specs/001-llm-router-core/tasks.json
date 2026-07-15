@@ -164,7 +164,7 @@
       "id": "S001T015",
       "title": "Integrationstests (End-to-End Proxy-Flow)",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 7,
       "depends_on": [
         "S001T014"

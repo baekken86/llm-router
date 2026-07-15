@@ -208,7 +208,7 @@
       "id": "S001T019",
       "title": "CSV Metadata Import (API + CLI)",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 7,
       "depends_on": [
         "S001T006"

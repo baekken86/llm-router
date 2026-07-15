@@ -16,6 +16,7 @@ func NewRouter(
 	modelHandler *handlers.ModelHandler,
 	vmHandler *handlers.VirtualModelHandler,
 	keyHandler *handlers.KeyHandler,
+	importHandler *handlers.ImportHandler,
 	keyService service.KeyService,
 ) chi.Router {
 	r := chi.NewRouter()
@@ -40,6 +41,10 @@ func NewRouter(
 
 		r.Route("/keys", func(r chi.Router) {
 			r.Mount("/", keyHandler.Routes())
+		})
+
+		r.Route("/import", func(r chi.Router) {
+			r.Mount("/", importHandler.Routes())
 		})
 	})
 

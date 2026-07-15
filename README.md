@@ -30,24 +30,66 @@ Sort:   [{"key":"intel","direction":"desc"}]
 ```bash
 go build -o llm-router ./cmd/llm-router
 
-# Start (first run generates admin key + encryption key)
-./llm-router --port 8080 --db ./data/router.db
+# Start proxy with TUI (single-instance mode)
+./llm-router proxy --port 8080 --db ./data/router.db
 
-# Add a provider
-curl -X POST http://localhost:8080/api/v1/providers \
-  -H "Authorization: Bearer <admin-key>" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"openai","api_type":"openai","base_url":"https://api.openai.com","api_key":"sk-..."}'
+# Or start proxy without TUI (daemon mode)
+./llm-router proxy --port 8080 --db ./data/router.db --no-tui
 
-# Discover models
-curl -X POST http://localhost:8080/api/v1/providers/1/discover \
-  -H "Authorization: Bearer <admin-key>"
+# In another terminal: admin dashboard
+./llm-router admin --connect http://localhost:8080 --key <admin-key>
+```
 
-# Tag models
-curl -X PUT http://localhost:8080/api/v1/models/1/tags \
-  -H "Authorization: Bearer <admin-key>" \
-  -H "Content-Type: application/json" \
-  -d '{"tags":{"cost-type":"api-creds","intel":"85","hallucination":"12"}}'
+## Multi-Instance
+
+Run proxy and admin dashboard separately:
+
+```bash
+# Terminal 1: Proxy (no TUI, just HTTP server)
+./llm-router proxy --port 8080 --db ./data/router.db --no-tui
+
+# Terminal 2: Admin dashboard (connects to proxy via HTTP)
+./llm-router admin --connect http://localhost:8080 --key lmr_...
+
+# Terminal 3: Another admin (multiple viewers supported)
+./llm-router admin --connect http://localhost:8080 --key lmr_...
+```
+
+Admin connects via HTTP — no direct DB access needed. Can run on different machines.
+
+## CLI Commands
+
+```
+llm-router [flags]              Start proxy (default, same as 'proxy')
+llm-router proxy [flags]        Start proxy server
+llm-router admin [flags]        Connect to running proxy as admin viewer
+llm-router import [flags]       Import CSV metadata
+llm-router help                 Show help
+```
+
+### Proxy flags
+
+| Flag | Env | Default | Description |
+|------|-----|---------|-------------|
+| `--port` | `LLM_ROUTER_PORT` | `8080` | HTTP port |
+| `--db` | `LLM_ROUTER_DB` | `./data/llm-router.db` | SQLite path |
+| `--encryption-key` | `LLM_ROUTER_ENCRYPTION_KEY` | auto-generated | 32-byte hex key |
+| `--no-tui` | | `false` | Disable terminal UI |
+
+### Admin flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--connect` | `http://localhost:8080` | Proxy URL |
+| `--key` | | Proxy API key (required) |
+
+### Import flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--file` | | CSV file path (required) |
+| `--mode` | `merge` | `merge` or `replace` |
+| `--db` | `./data/llm-router.db` | SQLite path |
 
 # Create virtual model
 curl -X POST http://localhost:8080/api/v1/virtual-models \
@@ -71,16 +113,6 @@ Client (OpenAI SDK) → /v1/chat/completions → Routing Engine → Provider A (
 ```
 
 Silent failover: if the best model fails, the next one in the sorted list is tried transparently.
-
-## Configuration
-
-| Flag | Env | Default | Description |
-|------|-----|---------|-------------|
-| `--port` | `LLM_ROUTER_PORT` | `8080` | HTTP port |
-| `--db` | `LLM_ROUTER_DB` | `./data/llm-router.db` | SQLite path |
-| `--encryption-key` | `LLM_ROUTER_ENCRYPTION_KEY` | auto-generated | 32-byte hex key |
-| `--import` | | | CSV file to import |
-| `--import-mode` | | `merge` | `merge` or `replace` |
 
 ## Metadata Filter Operators
 
@@ -119,7 +151,7 @@ claude-3.5-sonnet,intelligence,88.1
 
 ```bash
 # CLI import
-./llm-router --import data.csv --import-mode merge
+./llm-router import --file data.csv --mode merge
 
 # API import
 curl -X POST "http://localhost:8080/api/v1/import/csv?mode=merge" \
@@ -142,6 +174,9 @@ curl -X POST "http://localhost:8080/api/v1/import/csv?mode=merge" \
 | `GET` | `/api/v1/virtual-models` | List virtual models |
 | `POST` | `/api/v1/keys` | Create proxy key |
 | `POST` | `/api/v1/import/csv` | Import CSV metadata |
+| `GET` | `/api/v1/stats` | Get aggregated statistics |
+| `GET` | `/api/v1/stats/logs` | Get recent request logs |
+| `GET` | `/api/v1/stats/logs/stream` | SSE stream of live logs |
 
 ### Proxy (Bearer: proxy key)
 

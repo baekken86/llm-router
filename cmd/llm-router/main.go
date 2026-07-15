@@ -26,13 +26,59 @@ import (
 )
 
 func main() {
-	port := flag.Int("port", 8080, "HTTP server port")
-	dbPath := flag.String("db", "./data/llm-router.db", "SQLite database path")
-	encryptKey := flag.String("encryption-key", "", "32-byte hex encryption key for API keys (auto-generated if empty)")
-	importFile := flag.String("import", "", "CSV file to import metadata from")
-	importMode := flag.String("import-mode", "merge", "Import mode: merge or replace")
-	noTUI := flag.Bool("no-tui", false, "Disable terminal UI (log to stdout only)")
-	flag.Parse()
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "admin":
+			runAdmin(os.Args[2:])
+			return
+		case "proxy":
+			runProxy(os.Args[2:])
+			return
+		case "import":
+			runImportCmd(os.Args[2:])
+			return
+		case "help", "--help", "-h":
+			printUsage()
+			return
+		}
+	}
+
+	runProxy(os.Args[1:])
+}
+
+func printUsage() {
+	fmt.Println(`llm-router - OpenAI-compatible LLM proxy with virtual models
+
+Usage:
+  llm-router [flags]              Start proxy (default)
+  llm-router proxy [flags]        Start proxy server
+  llm-router admin [flags]        Connect to running proxy as admin viewer
+  llm-router import [flags]       Import CSV metadata
+  llm-router help                 Show this help
+
+Proxy flags:
+  --port int                      HTTP port (default 8080, env LLM_ROUTER_PORT)
+  --db string                     SQLite path (default ./data/llm-router.db, env LLM_ROUTER_DB)
+  --encryption-key string         32-byte hex key (env LLM_ROUTER_ENCRYPTION_KEY)
+  --no-tui                        Disable terminal UI
+
+Admin flags:
+  --connect string                Proxy URL (default http://localhost:8080)
+  --key string                    Proxy API key (required)
+
+Import flags:
+  --file string                   CSV file path (required)
+  --mode string                   merge or replace (default merge)
+  --db string                     SQLite path (default ./data/llm-router.db)`)
+}
+
+func runProxy(args []string) {
+	fs := flag.NewFlagSet("proxy", flag.ExitOnError)
+	port := fs.Int("port", 8080, "HTTP server port")
+	dbPath := fs.String("db", "./data/llm-router.db", "SQLite database path")
+	encryptKey := fs.String("encryption-key", "", "32-byte hex encryption key")
+	noTUI := fs.Bool("no-tui", false, "Disable terminal UI")
+	fs.Parse(args)
 
 	if envPort := os.Getenv("LLM_ROUTER_PORT"); envPort != "" {
 		fmt.Sscanf(envPort, "%d", port)
@@ -74,23 +120,25 @@ func main() {
 	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService)
 	vmService := service.NewVirtualModelService(vmRepo, modelRepo, tagRepo, providerRepo)
 	keyService := service.NewKeyService(keyRepo)
-	importService := service.NewImportService(modelRepo, tagRepo)
 
+	statsHandler := handlers.NewStatsHandler()
 	logChan := make(chan proxy.RequestLog, 100)
-	engine := proxy.NewEngine(vmService, providerService, logger, logChan)
 
-	if *importFile != "" {
-		runImport(importService, *importFile, service.ImportMode(*importMode), logger)
-		return
-	}
+	go func() {
+		for log := range logChan {
+			statsHandler.RecordLog(log)
+		}
+	}()
+
+	engine := proxy.NewEngine(vmService, providerService, logger, logChan)
 
 	providerHandler := handlers.NewProviderHandler(providerService, modelService)
 	modelHandler := handlers.NewModelHandler(modelService)
 	vmHandler := handlers.NewVirtualModelHandler(vmService)
 	keyHandler := handlers.NewKeyHandler(keyService)
-	importHandler := handlers.NewImportHandler(importService)
+	importHandler := handlers.NewImportHandler(service.NewImportService(modelRepo, tagRepo))
 
-	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, keyService)
+	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, keyService)
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middlewareAuth(keyService))
@@ -210,35 +258,5 @@ func handleListModels(vmService service.VirtualModelService) http.HandlerFunc {
 			json.NewEncoder(w).Encode(models)
 		}
 		fmt.Fprintf(w, `}`)
-	}
-}
-
-func runImport(importService service.ImportService, filePath string, mode service.ImportMode, logger *slog.Logger) {
-	f, err := os.Open(filePath)
-	if err != nil {
-		logger.Error("failed to open import file", "error", err, "file", filePath)
-		os.Exit(1)
-	}
-	defer f.Close()
-
-	logger.Info("importing CSV", "file", filePath, "mode", mode)
-
-	result, err := importService.ImportCSV(context.Background(), f, mode)
-	if err != nil {
-		logger.Error("import failed", "error", err)
-		os.Exit(1)
-	}
-
-	logger.Info("import completed",
-		"total_rows", result.TotalRows,
-		"imported", result.Imported,
-		"skipped", result.Skipped,
-		"matched_models", len(result.MatchedModels),
-	)
-
-	if len(result.Errors) > 0 {
-		for _, e := range result.Errors {
-			logger.Warn("import warning", "detail", e)
-		}
 	}
 }

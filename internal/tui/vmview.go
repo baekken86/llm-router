@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -223,7 +224,6 @@ func FetchVMDataLocal(vmRepo repository.VirtualModelRepository, modelRepo reposi
 
 			allModels, _ := modelRepo.ListAll(ctx)
 			var resolved []ResolvedModelInfo
-			pos := 1
 
 			for _, m := range allModels {
 				tags, _ := tagRepo.GetByModel(ctx, m.ID)
@@ -247,9 +247,15 @@ func FetchVMDataLocal(vmRepo repository.VirtualModelRepository, modelRepo reposi
 					ModelName:    m.Name,
 					ProviderName: provider.Name,
 					Tags:         tagMap,
-					Position:     pos,
 				})
-				pos++
+			}
+
+			// Apply sorting
+			sortResolved(resolved, sortExpr)
+
+			// Set positions after sorting
+			for i := range resolved {
+				resolved[i].Position = i + 1
 			}
 
 			items = append(items, VirtualModelInfo{
@@ -262,6 +268,53 @@ func FetchVMDataLocal(vmRepo repository.VirtualModelRepository, modelRepo reposi
 
 		return VMViewMsg{VirtualModels: items}
 	}
+}
+
+func sortResolved(resolved []ResolvedModelInfo, sortExpr models.SortExpr) {
+	if len(sortExpr) == 0 {
+		return
+	}
+
+	sort.Slice(resolved, func(i, j int) bool {
+		tagsI := resolved[i].Tags
+		tagsJ := resolved[j].Tags
+
+		for _, s := range sortExpr {
+			valI := tagsI[s.Key]
+			valJ := tagsJ[s.Key]
+
+			if s.Direction != "" {
+				cmp := strings.Compare(valI, valJ)
+				if cmp == 0 {
+					continue
+				}
+				if s.Direction == "desc" {
+					return cmp > 0
+				}
+				return cmp < 0
+			}
+
+			if len(s.Order) > 0 {
+				idxI := indexOf(s.Order, valI)
+				idxJ := indexOf(s.Order, valJ)
+				if idxI == idxJ {
+					continue
+				}
+				return idxI < idxJ
+			}
+		}
+
+		return false
+	})
+}
+
+func indexOf(arr []string, val string) int {
+	for i, v := range arr {
+		if v == val {
+			return i
+		}
+	}
+	return len(arr)
 }
 
 func matchesFilter(tags map[string]string, filter models.FilterExpr) bool {

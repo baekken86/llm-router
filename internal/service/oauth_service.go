@@ -86,18 +86,11 @@ func (s *oauthService) HandleCallback(ctx context.Context, code, state string) (
 		return nil, fmt.Errorf("exchange code: %w", err)
 	}
 
-	accountID, email, err := s.oauth.GetUserInfo(ctx, tokenInfo.AccessToken)
-	if err != nil {
-		s.logger.Warn("failed to get user info", "error", err)
-	}
-
 	token := &models.OAuthToken{
 		ProviderID:   providerID,
 		AccessToken:  tokenInfo.AccessToken,
 		RefreshToken: tokenInfo.RefreshToken,
 		ExpiresAt:    tokenInfo.ExpiresAt,
-		AccountID:    accountID,
-		Email:        email,
 	}
 
 	if err := s.oauthRepo.Upsert(ctx, token); err != nil {
@@ -106,8 +99,7 @@ func (s *oauthService) HandleCallback(ctx context.Context, code, state string) (
 
 	s.logger.Info("OAuth connection established",
 		"provider_id", providerID,
-		"account_id", accountID,
-		"email", email,
+		"expires_at", tokenInfo.ExpiresAt,
 	)
 
 	return token, nil

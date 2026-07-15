@@ -75,7 +75,7 @@ func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode Im
 	}
 
 	result := &ImportResult{}
-	modelTags := make(map[string]map[string]string) // key: "modelID:effort"
+	modelTags := make(map[string]map[string]string) // key: "modelID:effort" or "modelID:"
 
 	for {
 		row, err := csvReader.Read()
@@ -102,12 +102,9 @@ func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode Im
 		key := strings.TrimSpace(row[keyIdx])
 		value := strings.TrimSpace(row[valueIdx])
 
-		effort := "default"
+		effort := ""
 		if hasEffortColumn && effortIdx < len(row) {
 			effort = strings.TrimSpace(row[effortIdx])
-			if effort == "" {
-				effort = "default"
-			}
 		}
 
 		modelID, exists := modelMap[strings.ToLower(modelName)]

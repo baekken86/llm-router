@@ -25,10 +25,6 @@ func NewTagRepository(db *sql.DB) TagRepository {
 }
 
 func (r *sqliteTagRepo) Set(ctx context.Context, modelID int64, effort string, tags map[string]string) error {
-	if effort == "" {
-		effort = "default"
-	}
-
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)

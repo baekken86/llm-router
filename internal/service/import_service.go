@@ -62,10 +62,12 @@ type ModelDef struct {
 	CostPer1mInput     *float64                    `json:"cost_per_1m_input,omitempty"`
 	CostPer1mOutput    *float64                    `json:"cost_per_1m_output,omitempty"`
 	Efforts            map[string]map[string]interface{} `json:"efforts,omitempty"`
-	Intel              *int                        `json:"intel,omitempty"`
-	Speed              *int                        `json:"speed,omitempty"`
-	Reasoning          *int                        `json:"reasoning,omitempty"`
-	Hallucination      *int                        `json:"hallucination,omitempty"`
+	Intel              *float64                    `json:"intelligence,omitempty"`
+	Speed              *float64                    `json:"speed,omitempty"`
+	Reasoning          *float64                    `json:"reasoning,omitempty"`
+	Hallucination      *float64                    `json:"hallucination,omitempty"`
+	Coding             *float64                    `json:"coding,omitempty"`
+	Latency            *float64                    `json:"latency,omitempty"`
 }
 
 func (s *importService) ImportJSON(ctx context.Context, reader io.Reader, mode ImportMode) (*ImportResult, error) {
@@ -134,16 +136,22 @@ func (s *importService) ImportJSON(ctx context.Context, reader io.Reader, mode I
 			}
 		} else {
 			if model.Intel != nil {
-				baseTags["intel"] = fmt.Sprintf("%d", *model.Intel)
+				baseTags["intelligence"] = fmt.Sprintf("%g", *model.Intel)
 			}
 			if model.Speed != nil {
-				baseTags["speed"] = fmt.Sprintf("%d", *model.Speed)
+				baseTags["speed"] = fmt.Sprintf("%g", *model.Speed)
 			}
 			if model.Reasoning != nil {
-				baseTags["reasoning"] = fmt.Sprintf("%d", *model.Reasoning)
+				baseTags["reasoning"] = fmt.Sprintf("%g", *model.Reasoning)
 			}
 			if model.Hallucination != nil {
-				baseTags["hallucination"] = fmt.Sprintf("%d", *model.Hallucination)
+				baseTags["hallucination"] = fmt.Sprintf("%g", *model.Hallucination)
+			}
+			if model.Coding != nil {
+				baseTags["coding"] = fmt.Sprintf("%g", *model.Coding)
+			}
+			if model.Latency != nil {
+				baseTags["latency"] = fmt.Sprintf("%g", *model.Latency)
 			}
 
 			if mode == ImportModeMerge {

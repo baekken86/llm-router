@@ -34,6 +34,9 @@ func main() {
 		case "proxy":
 			runProxy(os.Args[2:])
 			return
+		case "connect":
+			runConnect(os.Args[2:])
+			return
 		case "import":
 			runImportCmd(os.Args[2:])
 			return
@@ -56,6 +59,7 @@ Usage:
   llm-router [flags]              Start proxy (default)
   llm-router proxy [flags]        Start proxy server
   llm-router admin [flags]        Connect to running proxy as admin viewer
+  llm-router connect [flags]      Connect to Claude Code via OAuth
   llm-router import [flags]       Import CSV metadata
   llm-router setup [flags]        Initialize Claude Code + default models
   llm-router help                 Show this help
@@ -65,6 +69,10 @@ Proxy flags:
   --db string                     SQLite path (default ./data/llm-router.db, env LLM_ROUTER_DB)
   --encryption-key string         32-byte hex key (env LLM_ROUTER_ENCRYPTION_KEY)
   --no-tui                        Disable terminal UI
+
+Connect flags:
+  --db string                     SQLite path (default ./data/llm-router.db)
+  --provider string               Provider name (default claude-code)
 
 Admin flags:
   --connect string                Proxy URL (default http://localhost:8080)

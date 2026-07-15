@@ -32,3 +32,15 @@ type UpdateProviderRequest struct {
 	BaseURL *string  `json:"base_url,omitempty"`
 	APIKey  *string  `json:"api_key,omitempty"`
 }
+
+type OAuthToken struct {
+	ID           int64     `json:"id"`
+	ProviderID   int64     `json:"provider_id"`
+	AccessToken  string    `json:"-"`
+	RefreshToken string    `json:"-"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	AccountID    string    `json:"account_id,omitempty"`
+	Email        string    `json:"email,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}

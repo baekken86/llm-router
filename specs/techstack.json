@@ -1,0 +1,38 @@
+{
+  "title": "LLM Router Tech Stack",
+  "status": "active",
+  "created": "2026-07-15",
+  "items": [
+    {
+      "category": "Language",
+      "name": "Go",
+      "version": "1.22+",
+      "detail": "Systems language, single binary output"
+    },
+    {
+      "category": "Database",
+      "name": "SQLite",
+      "detail": "Embedded, via modernc.org/sqlite (pure Go, no CGO)"
+    },
+    {
+      "category": "HTTP Router",
+      "name": "chi",
+      "detail": "Lightweight, idiomatic Go router"
+    },
+    {
+      "category": "Migration",
+      "name": "golang-migrate",
+      "detail": "Database migration tool for SQLite"
+    },
+    {
+      "category": "TUI",
+      "name": "bubbletea",
+      "detail": "Go TUI framework von charmbracelet, Elm-architecture based"
+    },
+    {
+      "category": "TUI",
+      "name": "lipgloss",
+      "detail": "TUI Styling von charmbracelet"
+    }
+  ]
+}

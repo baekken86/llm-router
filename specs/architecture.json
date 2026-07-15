@@ -1,0 +1,100 @@
+{
+  "title": "LLM Router Architecture",
+  "status": "active",
+  "created": "2026-07-15",
+  "nodes": [
+    {
+      "id": "A1",
+      "title": "API Layer",
+      "content": "HTTP handlers, middleware, route definitions",
+      "children": [
+        {
+          "id": "S1",
+          "title": "Handlers",
+          "content": "Provider, Model, VirtualModel, Key, Proxy endpoints",
+          "children": []
+        },
+        {
+          "id": "S2",
+          "title": "Middleware",
+          "content": "API key auth, logging, error handling",
+          "children": []
+        },
+        {
+          "id": "S3",
+          "title": "Router",
+          "content": "chi route groups, CORS",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "A2",
+      "title": "Service Layer",
+      "content": "Business logic for providers, models, virtual models",
+      "children": [
+        {
+          "id": "S4",
+          "title": "ProviderService",
+          "content": "CRUD for providers, API key encryption",
+          "children": []
+        },
+        {
+          "id": "S5",
+          "title": "ModelService",
+          "content": "Model discovery, tag management",
+          "children": []
+        },
+        {
+          "id": "S6",
+          "title": "VirtualModelService",
+          "content": "Virtual model CRUD, filter/sort validation, model resolution",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "A3",
+      "title": "Repository Layer",
+      "content": "Database access, SQLite queries",
+      "children": []
+    },
+    {
+      "id": "A4",
+      "title": "Proxy Engine",
+      "content": "Routing, fallback, format translation, streaming",
+      "children": [
+        {
+          "id": "S7",
+          "title": "RoutingEngine",
+          "content": "Filter evaluation, sort, fallback chain execution",
+          "children": []
+        },
+        {
+          "id": "S8",
+          "title": "FormatTranslator",
+          "content": "OpenAI <-> Anthropic request/response translation",
+          "children": []
+        },
+        {
+          "id": "S9",
+          "title": "ProviderClients",
+          "content": "OpenAI-compatible and Anthropic HTTP clients",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "A5",
+      "title": "Configuration",
+      "content": "CLI flags, env vars, startup",
+      "children": []
+    },
+    {
+      "id": "A6",
+      "title": "TUI Layer",
+      "content": "Terminal-UI mit Live-Log und Statistiken",
+      "children": []
+    }
+  ]
+}

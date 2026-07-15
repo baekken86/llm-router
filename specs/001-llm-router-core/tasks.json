@@ -1,0 +1,208 @@
+{
+  "spec": "001",
+  "tasks": [
+    {
+      "id": "S001T001",
+      "title": "Go-Modul + Verzeichnisstruktur",
+      "description": "",
+      "status": "done",
+      "priority": 1,
+      "depends_on": [],
+      "owns": []
+    },
+    {
+      "id": "S001T002",
+      "title": "SQLite + Migrationen (6 Tabellen)",
+      "description": "",
+      "status": "pending",
+      "priority": 1,
+      "depends_on": [
+        "S001T001"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T003",
+      "title": "Go-Structs (Provider, Model, Tag, VirtualModel, ProxyKey)",
+      "description": "",
+      "status": "pending",
+      "priority": 2,
+      "depends_on": [
+        "S001T002"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T004",
+      "title": "Repository Layer (SQLite-Implementierungen)",
+      "description": "",
+      "status": "pending",
+      "priority": 2,
+      "depends_on": [
+        "S001T003"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T005",
+      "title": "ProviderService (CRUD, API-Key-Verschlüsselung)",
+      "description": "",
+      "status": "pending",
+      "priority": 3,
+      "depends_on": [
+        "S001T004"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T006",
+      "title": "ModelService (Discovery, Tag-Management)",
+      "description": "",
+      "status": "pending",
+      "priority": 3,
+      "depends_on": [
+        "S001T004"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T007",
+      "title": "VirtualModelService (CRUD, Filter/Sort-Validation, Resolution)",
+      "description": "",
+      "status": "pending",
+      "priority": 3,
+      "depends_on": [
+        "S001T004"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T008",
+      "title": "KeyService (Proxy-Key CRUD, Hash)",
+      "description": "",
+      "status": "pending",
+      "priority": 3,
+      "depends_on": [
+        "S001T004"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T009",
+      "title": "Middleware (API-Key Auth, Logging, Error Handling)",
+      "description": "",
+      "status": "pending",
+      "priority": 4,
+      "depends_on": [
+        "S001T005"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T010",
+      "title": "HTTP Handlers + Router (alle CRUD-Endpoints)",
+      "description": "",
+      "status": "pending",
+      "priority": 4,
+      "depends_on": [
+        "S001T005",
+        "S001T006",
+        "S001T007",
+        "S001T008",
+        "S001T009"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T011",
+      "title": "OpenAI-kompatibler HTTP-Client",
+      "description": "",
+      "status": "pending",
+      "priority": 5,
+      "depends_on": [
+        "S001T004"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T012",
+      "title": "Anthropic HTTP-Client + Format Translator",
+      "description": "",
+      "status": "pending",
+      "priority": 5,
+      "depends_on": [
+        "S001T004"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T013",
+      "title": "Routing Engine (Filter-Eval, Sort, Fallback, Streaming)",
+      "description": "",
+      "status": "pending",
+      "priority": 5,
+      "depends_on": [
+        "S001T007",
+        "S001T011",
+        "S001T012"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T014",
+      "title": "main.go (CLI-Flags, Graceful Shutdown, DB-Init)",
+      "description": "",
+      "status": "pending",
+      "priority": 6,
+      "depends_on": [
+        "S001T010",
+        "S001T013"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T015",
+      "title": "Integrationstests (End-to-End Proxy-Flow)",
+      "description": "",
+      "status": "pending",
+      "priority": 7,
+      "depends_on": [
+        "S001T014"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T016",
+      "title": "TUI Framework Setup (bubbletea, Layout)",
+      "description": "",
+      "status": "pending",
+      "priority": 6,
+      "depends_on": [
+        "S001T014"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T017",
+      "title": "Live Request Log View",
+      "description": "",
+      "status": "pending",
+      "priority": 6,
+      "depends_on": [
+        "S001T016"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T018",
+      "title": "Statistik-Panel (Counts, Latenz, Tokens)",
+      "description": "",
+      "status": "pending",
+      "priority": 6,
+      "depends_on": [
+        "S001T016"
+      ],
+      "owns": []
+    }
+  ]
+}

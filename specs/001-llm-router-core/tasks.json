@@ -152,7 +152,7 @@
       "id": "S001T014",
       "title": "main.go (CLI-Flags, Graceful Shutdown, DB-Init)",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 6,
       "depends_on": [
         "S001T010",
@@ -201,6 +201,17 @@
       "priority": 6,
       "depends_on": [
         "S001T016"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S001T019",
+      "title": "CSV Metadata Import (API + CLI)",
+      "description": "",
+      "status": "pending",
+      "priority": 7,
+      "depends_on": [
+        "S001T006"
       ],
       "owns": []
     }

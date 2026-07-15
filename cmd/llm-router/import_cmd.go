@@ -14,14 +14,14 @@ import (
 
 func runImportCmd(args []string) {
 	fs := flag.NewFlagSet("import", flag.ExitOnError)
-	filePath := fs.String("file", "", "CSV file path (required)")
+	filePath := fs.String("file", "", "JSON file path (required)")
 	mode := fs.String("mode", "merge", "Import mode: merge or replace")
 	dbPath := fs.String("db", "./data/llm-router.db", "SQLite database path")
 	fs.Parse(args)
 
 	if *filePath == "" {
 		fmt.Fprintln(os.Stderr, "Error: --file is required")
-		fmt.Fprintln(os.Stderr, "Usage: llm-router import --file data.csv --mode merge")
+		fmt.Fprintln(os.Stderr, "Usage: llm-router import --file models.json --mode merge")
 		os.Exit(1)
 	}
 
@@ -45,16 +45,16 @@ func runImportCmd(args []string) {
 	}
 	defer f.Close()
 
-	logger.Info("importing CSV", "file", *filePath, "mode", *mode)
+	logger.Info("importing metadata", "file", *filePath, "mode", *mode)
 
-	result, err := importService.ImportCSV(context.Background(), f, service.ImportMode(*mode))
+	result, err := importService.ImportJSON(context.Background(), f, service.ImportMode(*mode))
 	if err != nil {
 		logger.Error("import failed", "error", err)
 		os.Exit(1)
 	}
 
 	logger.Info("import completed",
-		"total_rows", result.TotalRows,
+		"total_models", result.TotalRows,
 		"imported", result.Imported,
 		"skipped", result.Skipped,
 		"matched_models", len(result.MatchedModels),

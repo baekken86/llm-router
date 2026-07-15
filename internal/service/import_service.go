@@ -2,7 +2,7 @@ package service
 
 import (
 	"context"
-	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -18,15 +18,15 @@ const (
 )
 
 type ImportResult struct {
-	TotalRows   int      `json:"total_rows"`
-	Imported    int      `json:"imported"`
-	Skipped     int      `json:"skipped"`
-	Errors      []string `json:"errors,omitempty"`
+	TotalRows     int      `json:"total_rows"`
+	Imported      int      `json:"imported"`
+	Skipped       int      `json:"skipped"`
+	Errors        []string `json:"errors,omitempty"`
 	MatchedModels []string `json:"matched_models,omitempty"`
 }
 
 type ImportService interface {
-	ImportCSV(ctx context.Context, reader io.Reader, mode ImportMode) (*ImportResult, error)
+	ImportJSON(ctx context.Context, reader io.Reader, mode ImportMode) (*ImportResult, error)
 }
 
 type importService struct {
@@ -41,32 +41,37 @@ func NewImportService(modelRepo repository.ModelRepository, tagRepo repository.T
 	}
 }
 
-func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode ImportMode) (*ImportResult, error) {
-	csvReader := csv.NewReader(reader)
+type ModelsFile struct {
+	Fields map[string]FieldDef `json:"fields"`
+	Models []ModelDef          `json:"models"`
+}
 
-	header, err := csvReader.Read()
-	if err != nil {
-		return nil, fmt.Errorf("read CSV header: %w", err)
-	}
+type FieldDef struct {
+	Description string   `json:"description"`
+	Type        string   `json:"type"`
+	Min         *float64 `json:"min,omitempty"`
+	Max         *float64 `json:"max,omitempty"`
+	Values      []string `json:"values,omitempty"`
+}
 
-	modelNameIdx := findColumn(header, "model_name")
-	effortIdx := findColumn(header, "reasoning_effort")
+type ModelDef struct {
+	Name               string                      `json:"name"`
+	HasReasoningEffort bool                        `json:"has_reasoning_effort"`
+	ContextWindow      *int                        `json:"context_window,omitempty"`
+	CostType           *string                     `json:"cost_type,omitempty"`
+	CostPer1mInput     *float64                    `json:"cost_per_1m_input,omitempty"`
+	CostPer1mOutput    *float64                    `json:"cost_per_1m_output,omitempty"`
+	Efforts            map[string]map[string]interface{} `json:"efforts,omitempty"`
+	Intel              *int                        `json:"intel,omitempty"`
+	Speed              *int                        `json:"speed,omitempty"`
+	Reasoning          *int                        `json:"reasoning,omitempty"`
+	Hallucination      *int                        `json:"hallucination,omitempty"`
+}
 
-	if modelNameIdx < 0 {
-		return nil, fmt.Errorf("CSV must have 'model_name' column")
-	}
-
-	metadataColumns := make(map[int]string)
-	for i, col := range header {
-		col = strings.TrimSpace(col)
-		if i == modelNameIdx || i == effortIdx || col == "" {
-			continue
-		}
-		metadataColumns[i] = col
-	}
-
-	if len(metadataColumns) == 0 {
-		return nil, fmt.Errorf("CSV must have at least one metadata column")
+func (s *importService) ImportJSON(ctx context.Context, reader io.Reader, mode ImportMode) (*ImportResult, error) {
+	var file ModelsFile
+	if err := json.NewDecoder(reader).Decode(&file); err != nil {
+		return nil, fmt.Errorf("decode JSON: %w", err)
 	}
 
 	allModels, err := s.modelRepo.ListAll(ctx)
@@ -80,96 +85,91 @@ func (s *importService) ImportCSV(ctx context.Context, reader io.Reader, mode Im
 	}
 
 	result := &ImportResult{}
-	modelTags := make(map[string]map[string]string) // key: "modelID:effort"
 
-	for {
-		row, err := csvReader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("row %d: %v", result.TotalRows+1, err))
-			result.TotalRows++
-			continue
-		}
-
-		modelName := strings.TrimSpace(row[modelNameIdx])
-
-		effort := ""
-		if effortIdx >= 0 && effortIdx < len(row) {
-			effort = strings.TrimSpace(row[effortIdx])
-		}
-
-		modelID, exists := modelMap[strings.ToLower(modelName)]
+	for _, model := range file.Models {
+		modelID, exists := modelMap[strings.ToLower(model.Name)]
 		if !exists {
 			result.Skipped++
-			result.TotalRows++
 			continue
 		}
 
-		tagKey := fmt.Sprintf("%d:%s", modelID, effort)
-		if _, ok := modelTags[tagKey]; !ok {
-			modelTags[tagKey] = make(map[string]string)
-			result.MatchedModels = append(result.MatchedModels, modelName)
+		result.MatchedModels = append(result.MatchedModels, model.Name)
+
+		baseTags := make(map[string]string)
+		baseTags["has_reasoning_effort"] = fmt.Sprintf("%v", model.HasReasoningEffort)
+		if model.ContextWindow != nil {
+			baseTags["context_window"] = fmt.Sprintf("%d", *model.ContextWindow)
+		}
+		if model.CostType != nil {
+			baseTags["cost_type"] = *model.CostType
+		}
+		if model.CostPer1mInput != nil {
+			baseTags["cost_per_1m_input"] = fmt.Sprintf("%.2f", *model.CostPer1mInput)
+		}
+		if model.CostPer1mOutput != nil {
+			baseTags["cost_per_1m_output"] = fmt.Sprintf("%.2f", *model.CostPer1mOutput)
 		}
 
-		for colIdx, colName := range metadataColumns {
-			if colIdx < len(row) {
-				value := strings.TrimSpace(row[colIdx])
-				if value != "" {
-					modelTags[tagKey][colName] = value
+		if model.HasReasoningEffort && len(model.Efforts) > 0 {
+			for effort, tags := range model.Efforts {
+				effortTags := copyMap(baseTags)
+				for k, v := range tags {
+					effortTags[k] = fmt.Sprintf("%v", v)
+				}
+
+				if mode == ImportModeMerge {
+					existing, _ := s.tagRepo.GetByModelEffort(ctx, modelID, effort)
+					for _, t := range existing {
+						if _, exists := effortTags[t.Key]; !exists {
+							effortTags[t.Key] = t.Value
+						}
+					}
+				}
+
+				if err := s.tagRepo.Set(ctx, modelID, effort, effortTags); err != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("%s effort %s: %v", model.Name, effort, err))
+					continue
+				}
+				result.Imported++
+			}
+		} else {
+			if model.Intel != nil {
+				baseTags["intel"] = fmt.Sprintf("%d", *model.Intel)
+			}
+			if model.Speed != nil {
+				baseTags["speed"] = fmt.Sprintf("%d", *model.Speed)
+			}
+			if model.Reasoning != nil {
+				baseTags["reasoning"] = fmt.Sprintf("%d", *model.Reasoning)
+			}
+			if model.Hallucination != nil {
+				baseTags["hallucination"] = fmt.Sprintf("%d", *model.Hallucination)
+			}
+
+			if mode == ImportModeMerge {
+				existing, _ := s.tagRepo.GetByModelEffort(ctx, modelID, "")
+				for _, t := range existing {
+					if _, exists := baseTags[t.Key]; !exists {
+						baseTags[t.Key] = t.Value
+					}
 				}
 			}
-		}
 
-		result.TotalRows++
-	}
-
-	for tagKey, tags := range modelTags {
-		parts := strings.SplitN(tagKey, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		var modelID int64
-		fmt.Sscanf(parts[0], "%d", &modelID)
-		effort := parts[1]
-
-		if mode == ImportModeMerge {
-			existing, err := s.tagRepo.GetByModelEffort(ctx, modelID, effort)
-			if err != nil {
-				result.Errors = append(result.Errors, fmt.Sprintf("model %d effort %s: %v", modelID, effort, err))
+			if err := s.tagRepo.Set(ctx, modelID, "", baseTags); err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", model.Name, err))
 				continue
 			}
-			for _, t := range existing {
-				if _, exists := tags[t.Key]; !exists {
-					tags[t.Key] = t.Value
-				}
-			}
+			result.Imported++
 		}
-
-		if err := s.tagRepo.Set(ctx, modelID, effort, tags); err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("model %d effort %s: %v", modelID, effort, err))
-			continue
-		}
-		result.Imported++
 	}
 
 	return result, nil
 }
 
-func findColumn(header []string, name string) int {
-	for i, h := range header {
-		if strings.EqualFold(strings.TrimSpace(h), name) {
-			return i
-		}
+func copyMap(m map[string]string) map[string]string {
+	result := make(map[string]string)
+	for k, v := range m {
+		result[k] = v
 	}
-	return -1
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+	return result
 }

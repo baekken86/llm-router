@@ -73,7 +73,6 @@ Proxy flags:
 Connect flags:
   --db string                     SQLite path (default ./data/llm-router.db)
   --provider string               Provider name (default claude-code)
-  --callback-addr string          Callback server address (e.g. '0.0.0.0:9090'). Empty = manual mode
 
 Admin flags:
   --connect string                Proxy URL (default http://localhost:8080)

@@ -25,7 +25,7 @@
       "id": "S001T003",
       "title": "Go-Structs (Provider, Model, Tag, VirtualModel, ProxyKey)",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 2,
       "depends_on": [
         "S001T002"

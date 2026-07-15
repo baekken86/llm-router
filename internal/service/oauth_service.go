@@ -21,6 +21,7 @@ type OAuthService interface {
 	Disconnect(ctx context.Context, providerID int64) error
 	IsConnected(ctx context.Context, providerID int64) (bool, *models.OAuthToken, error)
 	StartCallbackServer(ctx context.Context, state string, providerID int64) (*models.OAuthToken, error)
+	StartCallbackServerOnAddr(ctx context.Context, state string, providerID int64, addr string) (*models.OAuthToken, error)
 }
 
 type oauthService struct {
@@ -161,6 +162,10 @@ func (s *oauthService) IsConnected(ctx context.Context, providerID int64) (bool,
 }
 
 func (s *oauthService) StartCallbackServer(ctx context.Context, state string, providerID int64) (*models.OAuthToken, error) {
+	return s.StartCallbackServerOnAddr(ctx, state, providerID, ":8080")
+}
+
+func (s *oauthService) StartCallbackServerOnAddr(ctx context.Context, state string, providerID int64, addr string) (*models.OAuthToken, error) {
 	tokenCh := make(chan *models.OAuthToken, 1)
 	errCh := make(chan error, 1)
 
@@ -202,13 +207,14 @@ p { color: #666; }
 	})
 
 	server := &http.Server{
-		Addr:    ":8080",
+		Addr:    addr,
 		Handler: mux,
 	}
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.logger.Error("callback server error", "error", err)
+			errCh <- err
 		}
 	}()
 

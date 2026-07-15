@@ -58,7 +58,7 @@
       "id": "S001T006",
       "title": "ModelService (Discovery, Tag-Management)",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 3,
       "depends_on": [
         "S001T004"

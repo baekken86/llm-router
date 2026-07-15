@@ -2,9 +2,12 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,9 +22,10 @@ const (
 )
 
 type AnthropicOAuth struct {
-	clientID    string
-	redirectURI string
-	httpClient  *http.Client
+	clientID     string
+	redirectURI  string
+	httpClient   *http.Client
+	codeVerifier string
 }
 
 type AnthropicTokenResponse struct {
@@ -59,12 +63,17 @@ func (a *AnthropicOAuth) SetRedirectURI(uri string) {
 }
 
 func (a *AnthropicOAuth) GetAuthorizationURL(state string) string {
+	a.codeVerifier = generateCodeVerifier()
+	codeChallenge := generateCodeChallenge(a.codeVerifier)
+
 	params := url.Values{
-		"response_type": {"code"},
-		"client_id":     {a.clientID},
-		"redirect_uri":  {a.redirectURI},
-		"state":         {state},
-		"scope":         {"user:inference user:profile"},
+		"response_type":         {"code"},
+		"client_id":             {a.clientID},
+		"redirect_uri":          {a.redirectURI},
+		"state":                 {state},
+		"scope":                 {"user:inference user:profile"},
+		"code_challenge":        {codeChallenge},
+		"code_challenge_method": {"S256"},
 	}
 	return AnthropicAuthURL + "?" + params.Encode()
 }
@@ -75,6 +84,7 @@ func (a *AnthropicOAuth) ExchangeCode(ctx context.Context, code string) (*Anthro
 		"code":          {code},
 		"redirect_uri":  {a.redirectURI},
 		"client_id":     {a.clientID},
+		"code_verifier": {a.codeVerifier},
 	}
 
 	return a.doTokenRequest(ctx, data)
@@ -161,4 +171,18 @@ func (a *AnthropicOAuth) GetUserInfo(ctx context.Context, accessToken string) (a
 func (a *AnthropicOAuth) ValidateToken(ctx context.Context, accessToken string) bool {
 	_, _, err := a.GetUserInfo(ctx, accessToken)
 	return err == nil
+}
+
+func generateCodeVerifier() string {
+	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+	b := make([]byte, 64)
+	for i := range b {
+		b[i] = charset[rand.Intn(len(charset))]
+	}
+	return string(b)
+}
+
+func generateCodeChallenge(verifier string) string {
+	h := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(h[:])
 }

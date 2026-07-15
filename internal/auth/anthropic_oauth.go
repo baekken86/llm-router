@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	AnthropicAuthURL  = "https://console.anthropic.com/oauth/authorize"
-	AnthropicTokenURL = "https://console.anthropic.com/oauth/token"
-	AnthropicClientID = "9d1c27c1-43be-4399-86c4-6252263f29b3"
+	AnthropicAuthURL  = "https://claude.ai/oauth/authorize"
+	AnthropicTokenURL = "https://api.anthropic.com/v1/oauth/token"
+	AnthropicClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	DefaultRedirectURI = "http://localhost:8080/v1/oauth/callback"
 )
 
@@ -71,7 +71,7 @@ func (a *AnthropicOAuth) GetAuthorizationURL(state string) string {
 		"client_id":             {a.clientID},
 		"redirect_uri":          {a.redirectURI},
 		"state":                 {state},
-		"scope":                 {"user:inference user:profile"},
+		"scope":                 {"org:create_api_key user:profile user:inference"},
 		"code_challenge":        {codeChallenge},
 		"code_challenge_method": {"S256"},
 	}
@@ -79,34 +79,50 @@ func (a *AnthropicOAuth) GetAuthorizationURL(state string) string {
 }
 
 func (a *AnthropicOAuth) ExchangeCode(ctx context.Context, code string) (*AnthropicTokenInfo, error) {
-	data := url.Values{
-		"grant_type":    {"authorization_code"},
-		"code":          {code},
-		"redirect_uri":  {a.redirectURI},
-		"client_id":     {a.clientID},
-		"code_verifier": {a.codeVerifier},
+	authCode := code
+	codeState := ""
+	if strings.Contains(code, "#") {
+		parts := strings.SplitN(code, "#", 2)
+		authCode = parts[0]
+		codeState = parts[1]
 	}
 
-	return a.doTokenRequest(ctx, data)
+	body := map[string]string{
+		"code":          authCode,
+		"grant_type":    "authorization_code",
+		"client_id":     a.clientID,
+		"redirect_uri":  a.redirectURI,
+		"code_verifier": a.codeVerifier,
+	}
+	if codeState != "" {
+		body["state"] = codeState
+	}
+
+	return a.doTokenRequestJSON(ctx, body)
 }
 
 func (a *AnthropicOAuth) RefreshToken(ctx context.Context, refreshToken string) (*AnthropicTokenInfo, error) {
-	data := url.Values{
-		"grant_type":    {"refresh_token"},
-		"refresh_token": {refreshToken},
-		"client_id":     {a.clientID},
+	body := map[string]string{
+		"grant_type":    "refresh_token",
+		"refresh_token": refreshToken,
+		"client_id":     a.clientID,
 	}
 
-	return a.doTokenRequest(ctx, data)
+	return a.doTokenRequestJSON(ctx, body)
 }
 
-func (a *AnthropicOAuth) doTokenRequest(ctx context.Context, data url.Values) (*AnthropicTokenInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", AnthropicTokenURL, strings.NewReader(data.Encode()))
+func (a *AnthropicOAuth) doTokenRequestJSON(ctx context.Context, body map[string]string) (*AnthropicTokenInfo, error) {
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal body: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", AnthropicTokenURL, strings.NewReader(string(jsonBody)))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := a.httpClient.Do(req)
@@ -115,17 +131,17 @@ func (a *AnthropicOAuth) doTokenRequest(ctx context.Context, data url.Values) (*
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token request failed: %d %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("token request failed: %d %s", resp.StatusCode, string(respBody))
 	}
 
 	var tokenResp AnthropicTokenResponse
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
+	if err := json.Unmarshal(respBody, &tokenResp); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 

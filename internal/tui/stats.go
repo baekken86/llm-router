@@ -272,6 +272,41 @@ func (m *StatsModel) SetSize(w, h int) {
 	m.height = h
 }
 
+func (m *StatsModel) LoadFromAPI(resp *StatsResponse) {
+	m.global.Requests = resp.TotalRequests
+	m.global.Successes = resp.Successes
+	m.global.Failures = resp.Failures
+	m.global.InputTokens = resp.InputTokens
+	m.global.OutputTokens = resp.OutputTokens
+	m.global.CachedTokens = resp.CachedTokens
+
+	m.byVM = make(map[string]*ModelStats)
+	for name, stat := range resp.ByVirtualModel {
+		m.byVM[name] = &ModelStats{
+			Requests:     stat.Requests,
+			Successes:    stat.Successes,
+			Failures:     stat.Failures,
+			InputTokens:  stat.InputTokens,
+			OutputTokens: stat.OutputTokens,
+			CachedTokens: stat.CachedTokens,
+			ErrorByStatus: make(map[int]int),
+		}
+	}
+
+	m.byModel = make(map[string]*ModelStats)
+	for key, stat := range resp.ByProvider {
+		m.byModel[key] = &ModelStats{
+			Requests:     stat.Requests,
+			Successes:    stat.Successes,
+			Failures:     stat.Failures,
+			InputTokens:  stat.InputTokens,
+			OutputTokens: stat.OutputTokens,
+			CachedTokens: stat.CachedTokens,
+			ErrorByStatus: make(map[int]int),
+		}
+	}
+}
+
 func formatNumber(n int) string {
 	if n >= 1000000 {
 		return fmt.Sprintf("%.1fM", float64(n)/1000000)

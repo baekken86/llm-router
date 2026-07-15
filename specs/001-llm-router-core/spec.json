@@ -1,7 +1,7 @@
 {
   "id": "001",
   "title": "LLM Router Core",
-  "status": "ready",
+  "status": "complete",
   "created": "2026-07-15",
   "completed": null,
   "branch": "spec/001-llm-router-core",
@@ -55,6 +55,12 @@
       "id": "S8",
       "title": "Metadata Import (CSV)",
       "content": "Metadaten aus externen Quellen können per CSV importiert werden und als Tags auf Modelle angewandt werden.\n\nCSV-Format:\nmodel_name,key,value\ngpt-4o,intelligence,85.2\ngpt-4o,speed,78.5\ngpt-4o,cost_per_1m_input,2.50\ngpt-4o,cost_per_1m_output,10.00\ngpt-4o,hallucination,12\ngpt-4o,context_window,128000\nclaude-3.5-sonnet,intelligence,88.1\n...\n\nImport-Modi:\n- replace: Alle bestehenden Tags des Modells werden ersetzt\n- merge: Bestehende Tags bleiben, neue werden hinzugefügt, gleiche Keys werden überschrieben\n\nAPI-Endpoint:\nPOST /api/v1/import/csv?mode=merge\nContent-Type: text/csv\nBody: CSV-Daten\n\nCLI-Import:\nllm-router import --file data.csv --mode merge\n\nMatching:\n- Modelle werden per name gematcht (case-insensitive)\n- Nicht gefundene Modelle werden übersprungen mit Warnung im Log\n- Mehrere CSV-Dateien können nacheinander importiert werden\n\nQuellen (Beispiele aus ~/git/llm-benchmarks):\n- Intelligence Index (AA Intelligence Index v4.1)\n- Speed (tokens/sec throughput)\n- Kosten (per 1M tokens input/output)\n- Hallucination Score\n- Context Window Size\n- Reasoning Capability",
+      "children": []
+    },
+    {
+      "id": "S9",
+      "title": "Multi-Instance Architecture",
+      "content": "Das Binary unterstützt zwei Modi:\n\n1. Proxy-Modus (Standard):\n   ./llm-router proxy --port 8080 --db ./data/router.db [--no-tui]\n   - HTTP-Server für API + Proxy\n   - Optional TUI im selben Terminal\n   - Exposed /api/v1/stats (aggregierte Statistiken als JSON)\n   - Exposed /api/v1/logs/stream (SSE Endpoint für Live-Logs)\n\n2. Admin-Modus:\n   ./llm-router admin --connect http://localhost:8080 --key lmr_...\n   - Verbindet sich laufenden Proxy via HTTP\n   - Zeigt TUI mit Live-Log + Statistiken\n   - Read-only: keine Admin-Operationen (dafür REST API nutzen)\n   - Kann auf anderem Server/Terminal laufen\n\nKommunikation:\n- Admin → Proxy via HTTP (keine direkte DB-Verbindung nötig)\n- Proxy streamed Logs via SSE an Admin-Clients\n- Stats werden per REST abgefragt (GET /api/v1/stats)\n- Mehrere Admin-Instanzen können gleichzeitig verbunden sein\n\nStart-Beispiele:\n  # Terminal 1: Proxy starten\n  ./llm-router proxy --port 8080 --db ./data/router.db --no-tui\n\n  # Terminal 2: Admin Dashboard\n  ./llm-router admin --connect http://localhost:8080 --key lmr_...\n\n  # Oder TUI direkt im Proxy (single-instance mode)\n  ./llm-router --port 8080 --db ./data/router.db",
       "children": []
     }
   ]

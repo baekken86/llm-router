@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -14,6 +15,10 @@ type LogMsg struct {
 	Log proxy.RequestLog
 }
 
+type StatsRefreshMsg struct {
+	Stats *StatsResponse
+}
+
 type Tab int
 
 const (
@@ -22,13 +27,14 @@ const (
 )
 
 type Model struct {
-	logView LogViewModel
-	stats   StatsModel
-	tab     Tab
-	width   int
-	height  int
-	ready   bool
-	logChan <-chan proxy.RequestLog
+	logView    LogViewModel
+	stats      StatsModel
+	tab        Tab
+	width      int
+	height     int
+	ready      bool
+	logChan    <-chan proxy.RequestLog
+	apiClient  *APIClient
 }
 
 func New(logChan <-chan proxy.RequestLog) Model {
@@ -40,11 +46,25 @@ func New(logChan <-chan proxy.RequestLog) Model {
 	}
 }
 
+func NewRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog) Model {
+	return Model{
+		logView:   NewLogViewModel(500),
+		stats:     NewStatsModel(),
+		tab:       TabLog,
+		logChan:   logChan,
+		apiClient: apiClient,
+	}
+}
+
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		m.waitForLog(),
 		tea.EnterAltScreen,
-	)
+	}
+	if m.apiClient != nil {
+		cmds = append(cmds, m.refreshStats())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m Model) waitForLog() tea.Cmd {
@@ -55,6 +75,19 @@ func (m Model) waitForLog() tea.Cmd {
 		}
 		return LogMsg{Log: log}
 	}
+}
+
+func (m Model) refreshStats() tea.Cmd {
+	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+		if m.apiClient == nil {
+			return nil
+		}
+		stats, err := m.apiClient.GetStats()
+		if err != nil {
+			return nil
+		}
+		return StatsRefreshMsg{Stats: stats}
+	})
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -99,6 +132,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logView.AddEntry(msg.Log)
 		m.stats, _ = m.stats.Update(StatsUpdateMsg{Log: msg.Log})
 		return m, m.waitForLog()
+
+	case StatsRefreshMsg:
+		if msg.Stats != nil {
+			m.stats.LoadFromAPI(msg.Stats)
+			return m, m.refreshStats()
+		}
 	}
 
 	return m, nil
@@ -138,7 +177,12 @@ func (m Model) renderHeader() string {
 
 	title := TitleStyle.Render("llm-router")
 
-	return fmt.Sprintf("%s  %s %s", title, logTab, statsTab)
+	mode := ""
+	if m.apiClient != nil {
+		mode = MutedStyle.Render(" [remote]")
+	}
+
+	return fmt.Sprintf("%s%s  %s %s", title, mode, logTab, statsTab)
 }
 
 func (m Model) renderFooter() string {
@@ -148,6 +192,13 @@ func (m Model) renderFooter() string {
 
 func Run(logChan <-chan proxy.RequestLog) {
 	p := tea.NewProgram(New(logChan), tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		fmt.Printf("TUI error: %v\n", err)
+	}
+}
+
+func RunRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog) {
+	p := tea.NewProgram(NewRemote(apiClient, logChan), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("TUI error: %v\n", err)
 	}

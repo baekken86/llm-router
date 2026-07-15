@@ -121,17 +121,20 @@ func formatTagsCompact(tags map[string]string) string {
 	}
 
 	parts := []string{}
-	if v, ok := tags["intel"]; ok {
-		parts = append(parts, fmt.Sprintf("intel=%s", v))
+	if v, ok := tags["intelligence"]; ok {
+		parts = append(parts, fmt.Sprintf("int=%s", v))
+	}
+	if v, ok := tags["coding"]; ok {
+		parts = append(parts, fmt.Sprintf("code=%s", v))
 	}
 	if v, ok := tags["speed"]; ok {
-		parts = append(parts, fmt.Sprintf("speed=%s", v))
+		parts = append(parts, fmt.Sprintf("spd=%s", v))
 	}
-	if v, ok := tags["cost-type"]; ok {
-		parts = append(parts, fmt.Sprintf("cost=%s", v))
+	if v, ok := tags["cost_per_1m_input"]; ok {
+		parts = append(parts, fmt.Sprintf("$/1M=%s", v))
 	}
 	if v, ok := tags["hallucination"]; ok {
-		parts = append(parts, fmt.Sprintf("hallu=%s", v))
+		parts = append(parts, fmt.Sprintf("hall=%s", v))
 	}
 
 	return "[" + strings.Join(parts, ", ") + "]"

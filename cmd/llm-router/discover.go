@@ -35,6 +35,7 @@ func runDiscover(args []string) {
 	providerRepo := repository.NewProviderRepository(database)
 	modelRepo := repository.NewModelRepository(database)
 	tagRepo := repository.NewTagRepository(database)
+	globalRepo := repository.NewGlobalMetadataRepository(database)
 
 	ctx := context.Background()
 
@@ -55,11 +56,27 @@ func runDiscover(args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("\n✓ Found %d models:\n", len(models))
+	fmt.Printf("\n✓ Found %d models\n", len(models))
+
+	autoTagged := 0
 	for _, m := range models {
-		fmt.Printf("  - %s\n", m.Name)
+		metadata, err := globalRepo.GetByModel(ctx, m.Name)
+		if err != nil || len(metadata) == 0 {
+			continue
+		}
+
+		for effort, tags := range metadata {
+			if err := tagRepo.Set(ctx, m.ID, effort, tags); err != nil {
+				logger.Warn("failed to auto-tag", "model", m.Name, "error", err)
+				continue
+			}
+			autoTagged++
+		}
 	}
 
-	fmt.Println("\nYou can now tag these models with metadata:")
-	fmt.Printf("  llm-router tag --db %s --model <model-name> --set intel=85 --set speed=80\n", *dbPath)
+	if autoTagged > 0 {
+		fmt.Printf("✓ Auto-tagged %d models from global metadata\n", autoTagged)
+	} else {
+		fmt.Println("\nNo global metadata found. Run 'llm-router init' first to import benchmark data.")
+	}
 }

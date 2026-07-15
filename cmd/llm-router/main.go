@@ -34,6 +34,9 @@ func main() {
 		case "admin":
 			runAdmin(os.Args[2:])
 			return
+		case "init":
+			runInit(os.Args[2:])
+			return
 		case "setup":
 			runSetup(os.Args[2:])
 			return

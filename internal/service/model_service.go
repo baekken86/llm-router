@@ -56,9 +56,14 @@ func (s *modelService) Discover(ctx context.Context, providerID int64) ([]models
 		return nil, fmt.Errorf("provider not found: %d", providerID)
 	}
 
-	apiKey, err := s.provService.DecryptAPIKey(provider.APIKeyEncrypted)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt api key: %w", err)
+	var apiKey string
+	if provider.APIKeyEncrypted == "oauth" {
+		apiKey = "oauth"
+	} else {
+		apiKey, err = s.provService.DecryptAPIKey(provider.APIKeyEncrypted)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt api key: %w", err)
+		}
 	}
 
 	modelNames, err := fetchModels(provider.BaseURL, apiKey, provider.APIType)

@@ -110,11 +110,13 @@ func runSetup(args []string) {
 
 		if providerCfg.auth == "oauth" {
 			handleOAuthSetup(ctx, existing, oauthRepo, providerRepo, providerService, logger)
-		} else if *apiKey != "" {
-			updateProviderKey(ctx, providerService, existing, *apiKey, logger)
+			createPredefinedModels(ctx, modelRepo, tagRepo, globalRepo, existing, providerCfg.name, logger)
+		} else {
+			if *apiKey != "" {
+				updateProviderKey(ctx, providerService, existing, *apiKey, logger)
+			}
+			discoverModels(ctx, modelService, existing, logger)
 		}
-
-		discoverModels(ctx, modelService, existing, logger)
 		return
 	}
 

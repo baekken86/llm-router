@@ -14,7 +14,7 @@
       "id": "S001T002",
       "title": "SQLite + Migrationen (6 Tabellen)",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 1,
       "depends_on": [
         "S001T001"

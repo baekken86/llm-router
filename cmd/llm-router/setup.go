@@ -219,27 +219,27 @@ func discoverModels(ctx context.Context, modelService service.ModelService, prov
 }
 
 func importDefaultCSV(ctx context.Context, modelService service.ModelService, logger *slog.Logger) {
-	csvPath := "data/models.csv"
-	if _, err := os.Stat(csvPath); os.IsNotExist(err) {
-		csvPath = "../data/models.csv"
-		if _, err := os.Stat(csvPath); os.IsNotExist(err) {
+	jsonPath := "data/models.json"
+	if _, err := os.Stat(jsonPath); os.IsNotExist(err) {
+		jsonPath = "../data/models.json"
+		if _, err := os.Stat(jsonPath); os.IsNotExist(err) {
 			return
 		}
 	}
 
-	fmt.Printf("\nImporting default metadata from %s...\n", csvPath)
+	fmt.Printf("\nImporting default metadata from %s...\n", jsonPath)
 
-	f, err := os.Open(csvPath)
+	f, err := os.Open(jsonPath)
 	if err != nil {
-		logger.Warn("could not open default CSV", "error", err)
+		logger.Warn("could not open default JSON", "error", err)
 		return
 	}
 	defer f.Close()
 
 	importService := service.NewImportService(nil, nil)
-	result, err := importService.ImportCSV(ctx, f, service.ImportModeMerge)
+	result, err := importService.ImportJSON(ctx, f, service.ImportModeMerge)
 	if err != nil {
-		logger.Warn("could not import default CSV", "error", err)
+		logger.Warn("could not import default JSON", "error", err)
 		return
 	}
 

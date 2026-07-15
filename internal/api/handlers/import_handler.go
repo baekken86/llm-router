@@ -17,11 +17,11 @@ func NewImportHandler(is service.ImportService) *ImportHandler {
 
 func (h *ImportHandler) Routes() chi.Router {
 	r := chi.NewRouter()
-	r.Post("/csv", h.ImportCSV)
+	r.Post("/", h.ImportJSON)
 	return r
 }
 
-func (h *ImportHandler) ImportCSV(w http.ResponseWriter, r *http.Request) {
+func (h *ImportHandler) ImportJSON(w http.ResponseWriter, r *http.Request) {
 	mode := r.URL.Query().Get("mode")
 	if mode == "" {
 		mode = "merge"
@@ -32,7 +32,7 @@ func (h *ImportHandler) ImportCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.importService.ImportCSV(r.Context(), r.Body, service.ImportMode(mode))
+	result, err := h.importService.ImportJSON(r.Context(), r.Body, service.ImportMode(mode))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

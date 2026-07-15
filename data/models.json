@@ -1,0 +1,301 @@
+{
+  "fields": {
+    "intel": {
+      "description": "Intelligence score (0-100). Higher = smarter.",
+      "type": "number",
+      "min": 0,
+      "max": 100
+    },
+    "speed": {
+      "description": "Response speed (0-100). Higher = faster.",
+      "type": "number",
+      "min": 0,
+      "max": 100
+    },
+    "reasoning": {
+      "description": "Reasoning capability (0-100). Higher = better reasoning.",
+      "type": "number",
+      "min": 0,
+      "max": 100
+    },
+    "hallucination": {
+      "description": "Hallucination rate (0-100). Lower = less hallucination.",
+      "type": "number",
+      "min": 0,
+      "max": 100
+    },
+    "context_window": {
+      "description": "Maximum context window in tokens.",
+      "type": "number"
+    },
+    "cost_type": {
+      "description": "How the model is billed.",
+      "type": "string",
+      "values": ["subscription", "api-creds", "free"]
+    },
+    "cost_per_1m_input": {
+      "description": "Cost per 1M input tokens in USD.",
+      "type": "number"
+    },
+    "cost_per_1m_output": {
+      "description": "Cost per 1M output tokens in USD.",
+      "type": "number"
+    },
+    "has_reasoning_effort": {
+      "description": "Whether the model supports configurable reasoning effort levels.",
+      "type": "boolean"
+    }
+  },
+  "models": [
+    {
+      "name": "claude-opus-4-6",
+      "has_reasoning_effort": true,
+      "context_window": 200000,
+      "cost_type": "subscription",
+      "cost_per_1m_input": 15.00,
+      "cost_per_1m_output": 75.00,
+      "efforts": {
+        "high": {
+          "intel": 98,
+          "speed": 40,
+          "reasoning": 99
+        },
+        "medium": {
+          "intel": 95,
+          "speed": 60,
+          "reasoning": 95,
+          "hallucination": 8
+        },
+        "low": {
+          "intel": 90,
+          "speed": 80,
+          "reasoning": 85
+        }
+      }
+    },
+    {
+      "name": "claude-sonnet-4-6",
+      "has_reasoning_effort": true,
+      "context_window": 200000,
+      "cost_type": "subscription",
+      "cost_per_1m_input": 3.00,
+      "cost_per_1m_output": 15.00,
+      "efforts": {
+        "high": {
+          "intel": 92,
+          "speed": 60,
+          "reasoning": 95
+        },
+        "medium": {
+          "intel": 88,
+          "speed": 85,
+          "reasoning": 88,
+          "hallucination": 10
+        },
+        "low": {
+          "intel": 83,
+          "speed": 95,
+          "reasoning": 78
+        }
+      }
+    },
+    {
+      "name": "claude-haiku-4-5",
+      "has_reasoning_effort": false,
+      "context_window": 200000,
+      "cost_type": "subscription",
+      "cost_per_1m_input": 0.25,
+      "cost_per_1m_output": 1.25,
+      "intel": 75,
+      "speed": 95,
+      "reasoning": 70,
+      "hallucination": 15
+    },
+    {
+      "name": "o3",
+      "has_reasoning_effort": true,
+      "context_window": 200000,
+      "cost_type": "api-creds",
+      "cost_per_1m_input": 10.00,
+      "cost_per_1m_output": 40.00,
+      "efforts": {
+        "high": {
+          "intel": 96,
+          "speed": 30,
+          "reasoning": 99
+        },
+        "medium": {
+          "intel": 92,
+          "speed": 50,
+          "reasoning": 95,
+          "hallucination": 8
+        },
+        "low": {
+          "intel": 85,
+          "speed": 70,
+          "reasoning": 85
+        }
+      }
+    },
+    {
+      "name": "o3-mini",
+      "has_reasoning_effort": true,
+      "context_window": 200000,
+      "cost_type": "api-creds",
+      "cost_per_1m_input": 1.10,
+      "cost_per_1m_output": 4.40,
+      "efforts": {
+        "high": {
+          "intel": 90,
+          "speed": 50,
+          "reasoning": 95
+        },
+        "medium": {
+          "intel": 85,
+          "speed": 70,
+          "reasoning": 90,
+          "hallucination": 10
+        },
+        "low": {
+          "intel": 80,
+          "speed": 85,
+          "reasoning": 82
+        }
+      }
+    },
+    {
+      "name": "o4-mini",
+      "has_reasoning_effort": true,
+      "context_window": 200000,
+      "cost_type": "api-creds",
+      "cost_per_1m_input": 1.10,
+      "cost_per_1m_output": 4.40,
+      "efforts": {
+        "high": {
+          "intel": 88,
+          "speed": 55,
+          "reasoning": 93
+        },
+        "medium": {
+          "intel": 83,
+          "speed": 75,
+          "reasoning": 88,
+          "hallucination": 11
+        },
+        "low": {
+          "intel": 78,
+          "speed": 90,
+          "reasoning": 80
+        }
+      }
+    },
+    {
+      "name": "gpt-4o",
+      "has_reasoning_effort": false,
+      "context_window": 128000,
+      "cost_type": "api-creds",
+      "cost_per_1m_input": 2.50,
+      "cost_per_1m_output": 10.00,
+      "intel": 85,
+      "speed": 80,
+      "reasoning": 80,
+      "hallucination": 12
+    },
+    {
+      "name": "gpt-4o-mini",
+      "has_reasoning_effort": false,
+      "context_window": 128000,
+      "cost_type": "api-creds",
+      "cost_per_1m_input": 0.15,
+      "cost_per_1m_output": 0.60,
+      "intel": 80,
+      "speed": 90,
+      "reasoning": 75,
+      "hallucination": 14
+    },
+    {
+      "name": "deepseek-v4-pro",
+      "has_reasoning_effort": false,
+      "context_window": 128000,
+      "cost_type": "subscription",
+      "cost_per_1m_input": 1.74,
+      "cost_per_1m_output": 3.48,
+      "intel": 86,
+      "speed": 75,
+      "reasoning": 88,
+      "hallucination": 10
+    },
+    {
+      "name": "deepseek-v4-flash",
+      "has_reasoning_effort": false,
+      "context_window": 128000,
+      "cost_type": "subscription",
+      "cost_per_1m_input": 0.14,
+      "cost_per_1m_output": 0.28,
+      "intel": 80,
+      "speed": 95,
+      "reasoning": 78,
+      "hallucination": 14
+    },
+    {
+      "name": "glm-5.2",
+      "has_reasoning_effort": false,
+      "context_window": 128000,
+      "cost_type": "subscription",
+      "cost_per_1m_input": 1.40,
+      "cost_per_1m_output": 4.40,
+      "intel": 85,
+      "speed": 80,
+      "reasoning": 82,
+      "hallucination": 12
+    },
+    {
+      "name": "kimi-k2.7-code",
+      "has_reasoning_effort": false,
+      "context_window": 128000,
+      "cost_type": "subscription",
+      "cost_per_1m_input": 0.95,
+      "cost_per_1m_output": 4.00,
+      "intel": 84,
+      "speed": 85,
+      "reasoning": 85,
+      "hallucination": 11
+    },
+    {
+      "name": "mimo-v2.5",
+      "has_reasoning_effort": false,
+      "context_window": 128000,
+      "cost_type": "subscription",
+      "cost_per_1m_input": 0.14,
+      "cost_per_1m_output": 0.28,
+      "intel": 78,
+      "speed": 92,
+      "reasoning": 72,
+      "hallucination": 15
+    },
+    {
+      "name": "minimax-m3",
+      "has_reasoning_effort": false,
+      "context_window": 128000,
+      "cost_type": "subscription",
+      "cost_per_1m_input": 0.30,
+      "cost_per_1m_output": 1.20,
+      "intel": 81,
+      "speed": 85,
+      "reasoning": 78,
+      "hallucination": 13
+    },
+    {
+      "name": "qwen3.7-max",
+      "has_reasoning_effort": false,
+      "context_window": 128000,
+      "cost_type": "subscription",
+      "cost_per_1m_input": 2.50,
+      "cost_per_1m_output": 7.50,
+      "intel": 84,
+      "speed": 80,
+      "reasoning": 85,
+      "hallucination": 11
+    }
+  ]
+}

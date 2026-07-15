@@ -2,6 +2,29 @@
 
 OpenAI-compatible LLM proxy with dynamic virtual models, provider failover, and metadata-based routing.
 
+## Why llm-router?
+
+Most LLM proxies (OpenRouter, LiteLLM, etc.) route by model name. You configure `gpt-4o` → OpenAI, `claude-3` → Anthropic. Static.
+
+llm-router is different: **models are tagged with metadata, and virtual models select dynamically based on filters and sorting.**
+
+| Feature | OpenRouter / LiteLLM | llm-router |
+|---------|---------------------|------------|
+| Routing | Static model → provider mapping | Dynamic: filter by metadata, sort by priority |
+| Virtual models | No | Yes: `"smart-free"` = best free model with intel≥50 |
+| Model tagging | No | Arbitrary key-value: `intel=85`, `hallucination=12`, `cost-type=free` |
+| Metadata import | No | CSV import from benchmarks (intelligence, speed, cost) |
+| Failover | Basic retry | Silent failover through sorted model list |
+| Token tracking | Basic | Cached tokens, reasoning tokens, headroom, cost estimation |
+| UI | Web dashboard | Built-in TUI with live log + stats |
+
+**Example:** Create a virtual model `smart-cheap` that always picks the cheapest model with intelligence≥70. No code changes needed when new models are added — just tag them.
+
+```
+Filter: {"and":[{"key":"intel","op":"gte","value":"70"},{"key":"cost-type","op":"eq","value":"free"}]}
+Sort:   [{"key":"intel","direction":"desc"}]
+```
+
 ## Quick Start
 
 ```bash

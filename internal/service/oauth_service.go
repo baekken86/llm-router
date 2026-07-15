@@ -16,6 +16,7 @@ import (
 
 type OAuthService interface {
 	StartAuthFlow(ctx context.Context, providerID int64) (authURL string, state string, err error)
+	StartAuthFlowWithCallback(ctx context.Context, providerID int64, callbackAddr string) (authURL string, state string, err error)
 	HandleCallback(ctx context.Context, code, state string) (*models.OAuthToken, error)
 	GetValidToken(ctx context.Context, providerID int64) (string, error)
 	Disconnect(ctx context.Context, providerID int64) error
@@ -64,6 +65,13 @@ func (s *oauthService) StartAuthFlow(ctx context.Context, providerID int64) (aut
 	authURL = s.oauth.GetAuthorizationURL(state)
 
 	return authURL, state, nil
+}
+
+func (s *oauthService) StartAuthFlowWithCallback(ctx context.Context, providerID int64, callbackAddr string) (authURL, state string, err error) {
+	redirectURI := fmt.Sprintf("http://%s/v1/oauth/callback", callbackAddr)
+	s.oauth.SetRedirectURI(redirectURI)
+
+	return s.StartAuthFlow(ctx, providerID)
 }
 
 func (s *oauthService) HandleCallback(ctx context.Context, code, state string) (*models.OAuthToken, error) {

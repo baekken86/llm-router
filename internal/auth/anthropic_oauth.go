@@ -54,6 +54,10 @@ func NewAnthropicOAuth(clientID, redirectURI string) *AnthropicOAuth {
 	}
 }
 
+func (a *AnthropicOAuth) SetRedirectURI(uri string) {
+	a.redirectURI = uri
+}
+
 func (a *AnthropicOAuth) GetAuthorizationURL(state string) string {
 	params := url.Values{
 		"response_type": {"code"},

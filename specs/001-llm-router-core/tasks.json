@@ -91,7 +91,7 @@
       "id": "S001T009",
       "title": "Middleware (API-Key Auth, Logging, Error Handling)",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 4,
       "depends_on": [
         "S001T005"

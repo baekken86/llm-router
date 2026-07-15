@@ -28,20 +28,26 @@ import (
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "admin":
-			runAdmin(os.Args[2:])
-			return
 		case "proxy":
 			runProxy(os.Args[2:])
 			return
-		case "connect":
-			runConnect(os.Args[2:])
-			return
-		case "import":
-			runImportCmd(os.Args[2:])
+		case "admin":
+			runAdmin(os.Args[2:])
 			return
 		case "setup":
 			runSetup(os.Args[2:])
+			return
+		case "add-provider":
+			runAddProvider(os.Args[2:])
+			return
+		case "discover":
+			runDiscover(os.Args[2:])
+			return
+		case "tag":
+			runTag(os.Args[2:])
+			return
+		case "import":
+			runImportCmd(os.Args[2:])
 			return
 		case "help", "--help", "-h":
 			printUsage()
@@ -58,11 +64,26 @@ func printUsage() {
 Usage:
   llm-router [flags]              Start proxy (default)
   llm-router proxy [flags]        Start proxy server
+  llm-router setup                Setup a provider (OAuth or API key)
+  llm-router add-provider         Add a custom provider
+  llm-router discover             Discover models from a provider
+  llm-router tag                  Set metadata tags on models
   llm-router admin [flags]        Connect to running proxy as admin viewer
-  llm-router connect [flags]      Connect to Claude Code via OAuth
   llm-router import [flags]       Import CSV metadata
-  llm-router setup [flags]        Initialize Claude Code + default models
   llm-router help                 Show this help
+
+Examples:
+  # Setup Claude Code (OAuth)
+  llm-router setup --provider claude-code
+
+  # Setup OpenCode Go (API key)
+  llm-router setup --provider opencode-go --key sk-...
+
+  # Setup custom provider
+  llm-router setup --provider my-api --url https://api.example.com/v1 --key sk-...
+
+  # Start proxy
+  llm-router proxy --port 8080 --db ./data/router.db
 
 Proxy flags:
   --port int                      HTTP port (default 8080, env LLM_ROUTER_PORT)
@@ -70,13 +91,24 @@ Proxy flags:
   --encryption-key string         32-byte hex key (env LLM_ROUTER_ENCRYPTION_KEY)
   --no-tui                        Disable terminal UI
 
-Connect flags:
-  --db string                     SQLite path (default ./data/llm-router.db)
-  --provider string               Provider name (default claude-code)
+Setup flags:
+  --provider string               Provider name (required)
+  --key string                    API key (required for API key providers)
+  --url string                    Custom base URL (optional)
 
 Admin flags:
   --connect string                Proxy URL (default http://localhost:8080)
   --key string                    Proxy API key (required)
+
+Add-provider flags:
+  --name string                   Provider name (required)
+  --type string                   API type: openai or anthropic (auto-detected)
+  --url string                    Base URL (required)
+  --key string                    API key (required)
+
+Tag flags:
+  --model string                  Model name (required)
+  --set string                    Tag in format key=value (repeatable)
 
 Import flags:
   --file string                   CSV file path (required)

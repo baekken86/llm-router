@@ -128,7 +128,7 @@
       "id": "S001T012",
       "title": "Anthropic HTTP-Client + Format Translator",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 5,
       "depends_on": [
         "S001T004"

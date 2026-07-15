@@ -135,7 +135,9 @@ func formatTagsCompact(tags map[string]string) string {
 	if v, ok := tags["speed"]; ok {
 		parts = append(parts, fmt.Sprintf("spd=%s", v))
 	}
-	if v, ok := tags["cost_per_1m_input"]; ok {
+	if v, ok := tags["cost_per_task"]; ok {
+		parts = append(parts, fmt.Sprintf("$/task=%s", v))
+	} else if v, ok := tags["cost_per_1m_input"]; ok {
 		parts = append(parts, fmt.Sprintf("$/1M=%s", v))
 	}
 	if v, ok := tags["hallucination"]; ok {

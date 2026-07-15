@@ -168,7 +168,7 @@
       "name": "claude-4-sonnet",
       "intelligence": 25.0,
       "coding": 37.6,
-      "hallucination": 41.0,
+      "hallucination": 28.5,
       "has_reasoning_effort": false
     },
     {
@@ -181,7 +181,7 @@
       "name": "claude-4.5-haiku",
       "intelligence": 24.0,
       "coding": 43.9,
-      "hallucination": 26.0,
+      "hallucination": 26.2,
       "cost_per_task": 0.24,
       "speed": 91.0,
       "has_reasoning_effort": false
@@ -391,7 +391,7 @@
       "name": "command-a+",
       "intelligence": 23.0,
       "coding": 27.8,
-      "hallucination": 14.0,
+      "hallucination": 14.1,
       "speed": 191.0,
       "has_reasoning_effort": false
     },
@@ -1107,7 +1107,7 @@
       "cost_per_1m_output": 3.036,
       "intelligence": 35.0,
       "coding": 55.8,
-      "hallucination": 63.0,
+      "hallucination": 29.4,
       "cost_per_task": 0.23,
       "speed": 79.0,
       "has_reasoning_effort": false
@@ -1125,7 +1125,7 @@
         "max": {
           "intelligence": 51.0,
           "coding": 68.8,
-          "hallucination": 28.0,
+          "hallucination": 28.1,
           "cost_per_task": 0.37,
           "speed": 174.0
         }
@@ -1946,7 +1946,7 @@
       "efforts": {
         "high": {
           "intelligence": 23.0,
-          "hallucination": 25.0,
+          "hallucination": 25.4,
           "speed": 67.0
         }
       }
@@ -1977,13 +1977,13 @@
     {
       "name": "grok-4.20-0309",
       "intelligence": 22.0,
-      "hallucination": 93.0,
+      "hallucination": 21.9,
       "has_reasoning_effort": false
     },
     {
       "name": "grok-4.20-0309-v2",
       "intelligence": 22.0,
-      "hallucination": 97.0,
+      "hallucination": 16.7,
       "speed": 127.0,
       "has_reasoning_effort": false
     },
@@ -2004,7 +2004,7 @@
         },
         "low": {
           "intelligence": 35.0,
-          "hallucination": 16.0,
+          "hallucination": 16.5,
           "cost_per_1m_input": 1.25,
           "cost_per_1m_output": 2.5
         },
@@ -2093,6 +2093,13 @@
       "has_reasoning_effort": false
     },
     {
+      "name": "hy3",
+      "hallucination": 73.0,
+      "cost_per_1m_input": 0.14,
+      "cost_per_1m_output": 0.58,
+      "has_reasoning_effort": false
+    },
+    {
       "name": "hy3-preview",
       "intelligence": 26.0,
       "hallucination": 87.0,
@@ -2111,6 +2118,11 @@
       "coding": 23.2,
       "hallucination": 82.0,
       "cost_per_task": 0.02,
+      "has_reasoning_effort": false
+    },
+    {
+      "name": "inkling",
+      "hallucination": 63.0,
       "has_reasoning_effort": false
     },
     {
@@ -2535,6 +2547,11 @@
       "has_reasoning_effort": false
     },
     {
+      "name": "longcat-2.0",
+      "hallucination": 75.0,
+      "has_reasoning_effort": false
+    },
+    {
       "name": "longcat-flash-lite",
       "intelligence": 17.0,
       "hallucination": 96.0,
@@ -2619,7 +2636,7 @@
     {
       "name": "mimo-v2-pro",
       "intelligence": 40.0,
-      "hallucination": 30.0,
+      "hallucination": 29.9,
       "has_reasoning_effort": false
     },
     {
@@ -2638,8 +2655,8 @@
       "name": "mimo-v2.5-pro",
       "intelligence": 42.2,
       "coding": 60.2,
-      "hallucination": 89.0,
       "cost_per_task": 0.03,
+      "hallucination": 24.5,
       "speed": 58.0,
       "latency": 2.04,
       "cost_per_1m_input": 0.435,
@@ -2657,7 +2674,7 @@
     {
       "name": "minicpm5-1b",
       "intelligence": 12.0,
-      "hallucination": 19.0,
+      "hallucination": 18.7,
       "has_reasoning_effort": false
     },
     {
@@ -2708,7 +2725,7 @@
       "cost_per_1m_output": 1.2,
       "intelligence": 44.0,
       "coding": 58.6,
-      "hallucination": 16.0,
+      "hallucination": 16.1,
       "cost_per_task": 0.12,
       "speed": 94.0,
       "has_reasoning_effort": false
@@ -2960,7 +2977,7 @@
       "name": "nemotron-3-ultra",
       "intelligence": 38.0,
       "coding": 49.3,
-      "hallucination": 29.0,
+      "hallucination": 28.5,
       "cost_per_task": 0.24,
       "speed": 200.0,
       "cost_per_1m_input": 0.5,
@@ -3698,7 +3715,7 @@
       "name": "qwen3.7-max",
       "intelligence": 46.0,
       "coding": 66.0,
-      "hallucination": 23.0,
+      "hallucination": 22.9,
       "cost_per_task": 1.06,
       "cost_per_1m_input": 1.25,
       "cost_per_1m_output": 3.75,
@@ -3708,7 +3725,7 @@
       "name": "qwen3.7-plus",
       "intelligence": 39.0,
       "coding": 55.9,
-      "hallucination": 25.0,
+      "hallucination": 25.5,
       "cost_per_task": 0.22,
       "cost_per_1m_input": 0.32,
       "cost_per_1m_output": 1.28,

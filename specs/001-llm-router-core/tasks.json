@@ -47,7 +47,7 @@
       "id": "S001T005",
       "title": "ProviderService (CRUD, API-Key-Verschlüsselung)",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 3,
       "depends_on": [
         "S001T004"

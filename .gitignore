@@ -1,0 +1,26 @@
+# Binary
+/llm-router
+*.exe
+
+# Data
+data/
+*.db
+*.db-journal
+*.db-wal
+
+# Go
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local

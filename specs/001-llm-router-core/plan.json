@@ -1,0 +1,52 @@
+{
+  "spec": "001",
+  "status": "draft",
+  "created": "2026-07-15",
+  "tags": [],
+  "description": "Go-Binary mit SQLite, REST API, OpenAI-kompatibler Proxy mit Anthropic-Translation, Model-Metadata-Tagging, virtuelle Modelle mit Filter/Sort",
+  "summary": "LLM Router Core Implementation",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Project Setup + Database",
+      "description": "Go-Modul, Verzeichnisstruktur, .gitignore, SQLite-Verbindung, Migrationen für alle 6 Tabellen",
+      "tasks": ["T001", "T002"]
+    },
+    {
+      "id": "P2",
+      "title": "Models + Repository Layer",
+      "description": "Go-Structs für alle Entitäten, Repository-Interfaces und SQLite-Implementierungen",
+      "tasks": ["T003", "T004"]
+    },
+    {
+      "id": "P3",
+      "title": "Service Layer",
+      "description": "ProviderService, ModelService (Discovery + Tags), VirtualModelService (Filter/Sort/Resolution), KeyService",
+      "tasks": ["T005", "T006", "T007", "T008"]
+    },
+    {
+      "id": "P4",
+      "title": "API Layer",
+      "description": "Middleware (API-Key Auth), Handlers (alle CRUD-Endpoints), Router-Setup mit chi",
+      "tasks": ["T009", "T010"]
+    },
+    {
+      "id": "P5",
+      "title": "Proxy Engine",
+      "description": "Routing Engine (Filter-Eval, Sort, Fallback), OpenAI-Client, Anthropic-Client, Format Translator, Streaming",
+      "tasks": ["T011", "T012", "T013"]
+    },
+    {
+      "id": "P6",
+      "title": "CLI + Integration",
+      "description": "main.go mit CLI-Flags, Graceful Shutdown, Integrationstests",
+      "tasks": ["T014", "T015"]
+    },
+    {
+      "id": "P7",
+      "title": "Terminal UI (TUI)",
+      "description": "bubbletea-basierte TUI mit Live-Request-Log und Statistik-Panel",
+      "tasks": ["T016", "T017", "T018"]
+    }
+  ]
+}

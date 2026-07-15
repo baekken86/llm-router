@@ -1,0 +1,55 @@
+{
+  "id": "001",
+  "title": "LLM Router Core",
+  "status": "ready",
+  "created": "2026-07-15",
+  "completed": null,
+  "branch": "spec/001-llm-router-core",
+  "prs": [],
+  "tags": [],
+  "description": "OpenAI-kompatibler LLM-Proxy mit Provider-Management, Model-Metadata-Tagging und dynamischen virtuellen Modellen",
+  "sections": [
+    {
+      "id": "S1",
+      "title": "Architektur-Übersicht",
+      "content": "Ein Go-Binary mit embedded SQLite. REST API für Management, OpenAI-kompatibler Proxy-Endpoint für Clients.\n\nClient (OpenAI SDK) → POST /v1/chat/completions → [Proxy Engine] → Provider A (OpenAI)\n                     (model: \"my-virtual\")                          → Provider B (Anthropic)\n                                                                      → Provider C (OpenAI-kompatibel)\nAdmin → REST API (CRUD) → Proxy Engine\n\nTech-Stack: Go 1.22+, chi Router, SQLite (modernc.org/sqlite, pure Go), golang-migrate.\nKein separates Frontend (Phase 1).",
+      "children": []
+    },
+    {
+      "id": "S2",
+      "title": "Datenmodell",
+      "content": "6 Tabellen:\n\nproviders: id, name, api_type (openai|anthropic), base_url, api_key_encrypted, created_at, updated_at\nmodels: id, provider_id (FK providers), name; UNIQUE(provider_id, name)\nmodel_tags: id, model_id (FK models), key, value; UNIQUE(model_id, key)\nproxy_keys: id, key_hash, description, created_at\nvirtual_models: id, name, filter_expr (JSON), sort_expr (JSON), max_retries (Default: 1), retry_on_status (JSON Array, Default: [429,500,502,503,504]), created_at, updated_at\n\nFilter-Format (JSON):\n{\"and\": [{\"key\": \"cost-type\", \"op\": \"eq\", \"value\": \"free\"}, {\"key\": \"intel\", \"op\": \"gte\", \"value\": \"50\"}]}\n\nUnterstützte Filter-Operatoren: eq, neq, gt, gte, lt, lte, in, contains\n\nSort-Format (JSON):\n[{\"key\": \"intel\", \"direction\": \"desc\"}, {\"key\": \"cost-type\", \"order\": [\"subscription\", \"free\", \"api-creds\"]}]\n\nSort-Typen: direction (asc|desc) für numerische/string-Werte, order (explizite Reihenfolge) für kategorische Werte.",
+      "children": []
+    },
+    {
+      "id": "S3",
+      "title": "API-Design",
+      "content": "Management-API (Bearer Token Auth via Proxy-Key):\nPOST   /api/v1/providers              → Provider anlegen\nGET    /api/v1/providers              → Alle Provider listen\nGET    /api/v1/providers/:id          → Einzelner Provider\nPUT    /api/v1/providers/:id          → Provider updaten\nDELETE /api/v1/providers/:id          → Provider löschen\nPOST   /api/v1/providers/:id/discover → Modelle vom Provider abrufen (GET /v1/models)\n\nPUT    /api/v1/models/:id/tags        → Tags eines Modells setzen (ersetzt alle)\n\nPOST   /api/v1/virtual-models         → Virtuelles Modell erstellen\nGET    /api/v1/virtual-models         → Alle virtuellen Modelle\nGET    /api/v1/virtual-models/:id     → Einzelnes (inkl. aufgelöster Modelliste)\nPUT    /api/v1/virtual-models/:id     → Updaten\nDELETE /api/v1/virtual-models/:id     → Löschen\n\nPOST   /api/v1/keys                   → Proxy-Key erstellen (Rückgabe: plaintext key, nur einmalig)\nGET    /api/v1/keys                   → Alle Keys (ohne plaintext)\nDELETE /api/v1/keys/:id               → Key löschen\n\nProxy-API (Proxy-Key Auth, OpenAI-kompatibel):\nPOST /v1/chat/completions             → Chat-Completion, model=virtual-model-name\nGET  /v1/models                        → Listet alle virtuellen Modelle als OpenAI-Model-Liste",
+      "children": []
+    },
+    {
+      "id": "S4",
+      "title": "Proxy Routing Engine",
+      "content": "Flow für POST /v1/chat/completions mit model=\"my-vm\":\n\n1. API-Key validieren (Bearer Token → proxy_keys.key_hash vergleichen)\n2. Virtuelles Modell \"my-vm\" aus DB laden\n3. Alle realen Modelle laden, die den Filter-Kriterien entsprechen\n4. Nach Sort-Kriterien sortieren (höchste Priorität zuerst)\n5. Für jedes Modell der Reihe nach:\n   a. Provider-Config laden (base_url, api_key, api_type)\n   b. Request senden:\n      - OpenAI-Provider: Request 1:1 durchreichen\n      - Anthropic-Provider: OpenAI→Anthropic Translation (Messages, Params)\n   c. Bei Erfolg: Response zurückgeben (bei Anthropic: Anthropic→OpenAI Translation)\n   d. Bei Fehler (429, 5xx, Timeout): Retry (konfigurierbar, max 1-3), dann nächstes Modell\n6. Wenn alle Modelle fehlschlagen: 502 Bad Gateway mit Fehlerdetails\n\nStreaming (SSE): Wird unterstützt und 1:1 durchgereicht. Bei Anthropic-Provider wird das Anthropic-SSE-Format in OpenAI-SSE-Format übersetzt.\n\nRetry-Konfiguration pro virtuellem Modell:\n- max_retries: Anzahl Retries pro Modell (Default: 1)\n- retry_on_status: HTTP-Statuscodes die Retry triggern (Default: [429, 500, 502, 503, 504])",
+      "children": []
+    },
+    {
+      "id": "S5",
+      "title": "Format Translation",
+      "content": "Der Proxy exposed NUR eine OpenAI-kompatible API. Requests an Anthropic-Provider werden automatisch übersetzt.\n\nOpenAI → Anthropic Translation:\n- messages[] → system (falls present) + messages[]\n- model → model\n- max_tokens → max_tokens\n- temperature, top_p → direkt übernehmen\n- stream → stream\n- tools/functions → tools (Anthropic Tool-Use Format)\n- response_format → wird ignoriert (Anthropic unterstützt es anders)\n\nAnthropic → OpenAI Translation (Response):\n- content[] → choices[].message.content (Text-Blöcke zusammenführen)\n- stop_reason → finish_reason (end_turn→stop, max_tokens→length, tool_use→tool_calls)\n- usage.input_tokens → usage.prompt_tokens\n- usage.output_tokens → usage.completion_tokens\n- tool_use content blocks → choices[].message.tool_calls[]\n\nAnthropic → OpenAI Translation (Streaming):\n- message_start → first SSE with role\n- content_block_start/delta/stop → choices[].delta.content\n- message_delta → final SSE with finish_reason\n- message_stop → [DONE]",
+      "children": []
+    },
+    {
+      "id": "S6",
+      "title": "CLI und Startup",
+      "content": "Start:\n  llm-router --port 8080 --db ./data/router.db\n\nOder via Env-Variablen:\n  LLM_ROUTER_PORT=8080\n  LLM_ROUTER_DB=./data/router.db\n\nBeim ersten Start:\n1. DB-Schema automatisch migrieren\n2. Admin-Proxy-Key generieren und auf stdout ausgeben (einmalig!)\n3. HTTP-Server starten\n\nGraceful Shutdown bei SIGINT/SIGTERM.",
+      "children": []
+    },
+    {
+      "id": "S7",
+      "title": "Terminal UI (TUI)",
+      "content": "Das Binary öffnet eine Terminal-UI (TUI) mit zwei Hauptansichten:\n\n1. Live Request Log (oben):\n   - Eingehende Requests: Timestamp, HTTP-Methode, Pfad, virtuelles Modell, Client-Key\n   - Routing-Entscheidung: Welches reelle Modell gewählt wurde, Provider-Name, Retry/Fallback\n   - Response: HTTP-Statuscode, Latenz, Token-Usage (prompt/completion)\n   - Provider-Fehler (immer sichtbar, nicht nur bei Fallback):\n     • 401 Unauthorized: Fehlende/ungültige API-Creds\n     • 402 Payment Required: Kein Guthaben/Credits aufgebraucht\n     • 429 Too Many Requests: Rate Limit getroffen\n     • 5xx: Server-Fehler beim Provider\n     • Timeout: Provider antwortet nicht rechtzeitig\n     • Fehlermeldung des Providers wird mitgeloggt (zB \"insufficient_quota\", \"invalid_api_key\")\n   - Retry-Logik: Retry-Count sichtbar, Fallback auf nächstes Modell\n   - Auto-Scroll, Farbcodierung (grün=2xx, gelb=429/retry, rot=4xx/5xx)\n\n2. Statistiken (unten/Panel):\n   - Requests pro virtuellem Modell (Count)\n   - Requests pro Provider/Modell (Count)\n   - Erfolgsrate (2xx vs Fehler)\n   - Fehleraufschlüsselung nach Typ (401, 402, 429, 5xx, Timeout)\n   - Durchschnittliche Latenz pro Modell\n   - Token-Verbrauch gesamt (prompt/completion)\n   - Top 5 meistgenutzte Modelle\n   - Reset-Button für Statistiken\n\nNavigation: Tab wechselt zwischen Live-Log und Stats. q/Ctrl+C beendet.\n\nTech: bubbletea (Go TUI Framework von charmbracelet) + lipgloss (Styling).",
+      "children": []
+    }
+  ]
+}

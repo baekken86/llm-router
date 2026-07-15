@@ -18,6 +18,7 @@ func NewRouter(
 	keyHandler *handlers.KeyHandler,
 	importHandler *handlers.ImportHandler,
 	statsHandler *handlers.StatsHandler,
+	oauthHandler *handlers.OAuthHandler,
 	keyService service.KeyService,
 ) chi.Router {
 	r := chi.NewRouter()
@@ -52,6 +53,12 @@ func NewRouter(
 			r.Mount("/", statsHandler.Routes())
 		})
 	})
+
+	r.Route("/v1/oauth", func(r chi.Router) {
+		r.Mount("/", oauthHandler.Routes())
+	})
+
+	r.Post("/v1/oauth/authorize", oauthHandler.AuthorizePost)
 
 	return r
 }

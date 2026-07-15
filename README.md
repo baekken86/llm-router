@@ -116,26 +116,51 @@ Silent failover: if the best model fails, the next one in the sorted list is tri
 
 ## Claude Code Integration
 
-llm-router accepts both OpenAI and Anthropic API formats. Use it as drop-in replacement for Claude Code:
+### Option 1: API Key (simple)
 
 ```bash
 # Start proxy
 ./llm-router proxy --port 8080 --db ./data/router.db
 
-# Configure Claude Code
+# Configure Claude Code with API key
 export ANTHROPIC_BASE_URL=http://localhost:8080/v1
 export ANTHROPIC_API_KEY=lmr_dein-proxy-key
+```
 
-# Or edit ~/.claude/config.json:
-# {
-#   "anthropic_api_base": "http://localhost:8080/v1",
-#   "anthropic_api_key": "lmr_dein-proxy-key"
-# }
+### Option 2: OAuth (like 9router)
+
+```bash
+# 1. Start proxy
+./llm-router proxy --port 8080 --db ./data/router.db
+
+# 2. Configure Claude Code to use your proxy
+export ANTHROPIC_BASE_URL=http://localhost:8080/v1
+
+# 3. Start Claude Code - it will open browser for auth
+claude
+# → Browser opens http://localhost:8080/v1/oauth/authorize
+# → Enter your proxy key (lmr_...)
+# → Claude Code gets OAuth token automatically
+```
+
+OAuth endpoints (compatible with Claude Code):
+- `GET /v1/oauth/authorize` — Authorization page (browser)
+- `POST /v1/oauth/token` — Token exchange
+- `POST /v1/oauth/revoke` — Token revocation
+
+### Other tools
+
+```bash
+# Cursor: Settings → Models → Advanced
+#   OpenAI API Base URL: http://localhost:8080/v1
+#   OpenAI API Key: lmr_...
+
+# Codex CLI
+export OPENAI_BASE_URL=http://localhost:8080
+export OPENAI_API_KEY=lmr_...
 ```
 
 Claude Code sends Anthropic-format requests → llm-router translates and routes to any provider (OpenAI, Anthropic, etc.) → translates response back.
-
-**Works with any tool that supports custom Anthropic/OpenAI endpoints:** Claude Code, Cursor, Codex, Cline, etc.
 
 ## Metadata Filter Operators
 
@@ -209,6 +234,15 @@ curl -X POST "http://localhost:8080/api/v1/import/csv?mode=merge" \
 | `POST` | `/v1/messages` | Anthropic | Messages (non-streaming) |
 | `POST` | `/v1/messages/stream` | Anthropic | Messages (streaming) |
 | `GET` | `/v1/models` | OpenAI | List virtual models |
+
+### OAuth (for Claude Code)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/oauth/authorize` | Authorization page (browser) |
+| `POST` | `/v1/oauth/authorize` | Submit proxy key for auth |
+| `POST` | `/v1/oauth/token` | Token exchange / refresh |
+| `POST` | `/v1/oauth/revoke` | Revoke token |
 
 ## Provider Types
 

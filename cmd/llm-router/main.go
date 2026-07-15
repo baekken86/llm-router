@@ -138,10 +138,18 @@ func runProxy(args []string) {
 	keyHandler := handlers.NewKeyHandler(keyService)
 	importHandler := handlers.NewImportHandler(service.NewImportService(modelRepo, tagRepo))
 
-	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, keyService)
+	oauthHandler := handlers.NewOAuthHandler(func(key string) int64 {
+		pk, _ := keyService.ValidateKey(context.Background(), key)
+		if pk != nil {
+			return pk.ID
+		}
+		return 0
+	})
+
+	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, keyService)
 
 	r.Route("/v1", func(r chi.Router) {
-		r.Use(middlewareAuth(keyService))
+		r.Use(middlewareAuthOrOAuth(keyService, oauthHandler))
 		r.Post("/chat/completions", engine.HandleChatCompletion)
 		r.Post("/messages", engine.HandleAnthropicMessages)
 		r.Post("/messages/stream", engine.HandleAnthropicMessagesStream)
@@ -209,7 +217,7 @@ func createAdminKeyIfEmpty(ks service.KeyService, logger *slog.Logger, ctx conte
 	return key.Key
 }
 
-func middlewareAuth(ks service.KeyService) func(http.Handler) http.Handler {
+func middlewareAuthOrOAuth(ks service.KeyService, oauth *handlers.OAuthHandler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			auth := r.Header.Get("Authorization")
@@ -218,13 +226,20 @@ func middlewareAuth(ks service.KeyService) func(http.Handler) http.Handler {
 				return
 			}
 
-			pk, err := ks.ValidateKey(r.Context(), auth[7:])
-			if err != nil || pk == nil {
-				http.Error(w, `{"error":"invalid api key"}`, http.StatusUnauthorized)
+			token := auth[7:]
+
+			pk, err := ks.ValidateKey(r.Context(), token)
+			if err == nil && pk != nil {
+				next.ServeHTTP(w, r)
 				return
 			}
 
-			next.ServeHTTP(w, r)
+			if oauth.ValidateToken(token) > 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			http.Error(w, `{"error":"invalid api key"}`, http.StatusUnauthorized)
 		})
 	}
 }

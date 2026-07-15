@@ -139,7 +139,7 @@
       "id": "S001T013",
       "title": "Routing Engine (Filter-Eval, Sort, Fallback, Streaming)",
       "description": "",
-      "status": "pending",
+      "status": "done",
       "priority": 5,
       "depends_on": [
         "S001T007",

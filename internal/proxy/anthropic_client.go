@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -21,13 +22,34 @@ func NewAnthropicClient() *AnthropicClient {
 	}
 }
 
+func setClaudeHeaders(httpReq *http.Request, apiKey, sessionId string) {
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advanced-tool-use-2025-11-20,effort-2025-11-24,structured-outputs-2025-12-15,fast-mode-2026-02-01,redact-thinking-2026-02-12,token-efficient-tools-2026-03-28")
+	httpReq.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
+	httpReq.Header.Set("User-Agent", "claude-cli/2.1.92 (external, sdk-cli)")
+	httpReq.Header.Set("X-App", "cli")
+	httpReq.Header.Set("X-Stainless-Helper-Method", "stream")
+	httpReq.Header.Set("X-Stainless-Retry-Count", "0")
+	httpReq.Header.Set("X-Stainless-Runtime-Version", "v24.14.0")
+	httpReq.Header.Set("X-Stainless-Package-Version", "0.80.0")
+	httpReq.Header.Set("X-Stainless-Runtime", "node")
+	httpReq.Header.Set("X-Stainless-Lang", "js")
+	httpReq.Header.Set("X-Stainless-Arch", "arm64")
+	httpReq.Header.Set("X-Stainless-Os", "MacOS")
+	httpReq.Header.Set("X-Stainless-Timeout", "600")
+	httpReq.Header.Set("X-Claude-Code-Session-Id", sessionId)
+}
+
 type AnthropicRequest struct {
-	Model     string            `json:"model"`
-	MaxTokens int               `json:"max_tokens"`
-	System    string            `json:"system,omitempty"`
+	Model     string             `json:"model"`
+	MaxTokens int                `json:"max_tokens"`
+	System    interface{}        `json:"system,omitempty"`
 	Messages  []AnthropicMessage `json:"messages"`
-	Stream    bool              `json:"stream,omitempty"`
-	Tools     []AnthropicTool   `json:"tools,omitempty"`
+	Stream    bool               `json:"stream,omitempty"`
+	Tools     []AnthropicTool    `json:"tools,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type AnthropicMessage struct {
@@ -37,7 +59,7 @@ type AnthropicMessage struct {
 
 type AnthropicTool struct {
 	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
+	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema"`
 }
 
@@ -55,6 +77,7 @@ type AnthropicResponse struct {
 type AnthropicContent struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`
@@ -70,27 +93,42 @@ type AnthropicUsage struct {
 }
 
 type AnthropicStreamEvent struct {
-	Type    string          `json:"type"`
-	Message json.RawMessage `json:"message,omitempty"`
-	Index   int             `json:"index,omitempty"`
-	Delta   json.RawMessage `json:"delta,omitempty"`
-	Usage   *AnthropicUsage `json:"usage,omitempty"`
+	Type         string          `json:"type"`
+	Message      json.RawMessage `json:"message,omitempty"`
+	Index        int             `json:"index,omitempty"`
+	Delta        json.RawMessage `json:"delta,omitempty"`
+	ContentBlock json.RawMessage `json:"content_block,omitempty"`
+	Usage        *AnthropicUsage `json:"usage,omitempty"`
 }
 
 func (c *AnthropicClient) ChatCompletion(baseURL, apiKey string, req AnthropicRequest) (*AnthropicResponse, error) {
-	body, err := json.Marshal(req)
+	jsonBody, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", baseURL+"/v1/messages", bytes.NewReader(body))
+	var bodyMap map[string]interface{}
+	if err := json.Unmarshal(jsonBody, &bodyMap); err != nil {
+		return nil, fmt.Errorf("unmarshal body: %w", err)
+	}
+
+	sessionId := randomUUID()
+	bodyMap = applyCloaking(bodyMap, apiKey, sessionId)
+	if strings.HasPrefix(apiKey, "sk-ant-oat") {
+		bodyMap = cloakClaudeTools(bodyMap)
+	}
+
+	body, err := json.Marshal(bodyMap)
+	if err != nil {
+		return nil, fmt.Errorf("marshal cloaked body: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", baseURL+"/messages?beta=true", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", apiKey)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	setClaudeHeaders(httpReq, apiKey, sessionId)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -117,19 +155,33 @@ func (c *AnthropicClient) ChatCompletion(baseURL, apiKey string, req AnthropicRe
 func (c *AnthropicClient) ChatCompletionStream(baseURL, apiKey string, req AnthropicRequest) (io.ReadCloser, *http.Response, error) {
 	req.Stream = true
 
-	body, err := json.Marshal(req)
+	jsonBody, err := json.Marshal(req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", baseURL+"/v1/messages", bytes.NewReader(body))
+	var bodyMap map[string]interface{}
+	if err := json.Unmarshal(jsonBody, &bodyMap); err != nil {
+		return nil, nil, fmt.Errorf("unmarshal body: %w", err)
+	}
+
+	sessionId := randomUUID()
+	bodyMap = applyCloaking(bodyMap, apiKey, sessionId)
+	if strings.HasPrefix(apiKey, "sk-ant-oat") {
+		bodyMap = cloakClaudeTools(bodyMap)
+	}
+
+	body, err := json.Marshal(bodyMap)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal cloaked body: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", baseURL+"/messages?beta=true", bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, fmt.Errorf("create request: %w", err)
 	}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", apiKey)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	setClaudeHeaders(httpReq, apiKey, sessionId)
 	httpReq.Header.Set("Accept", "text/event-stream")
 
 	resp, err := c.httpClient.Do(httpReq)
@@ -172,6 +224,9 @@ func ParseAnthropicSSEStream(reader io.ReadCloser) <-chan AnthropicStreamEvent {
 			}
 
 			ch <- event
+		}
+		if err := scanner.Err(); err != nil {
+			slog.Error("SSE scanner error", "error", err)
 		}
 	}()
 

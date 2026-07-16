@@ -30,6 +30,7 @@ type LogViewModel struct {
 	width   int
 	height  int
 	offset  int
+	scrollX int
 }
 
 func NewLogViewModel(maxSize int) LogViewModel {
@@ -80,7 +81,11 @@ func (m LogViewModel) View() string {
 	}
 
 	for _, entry := range m.entries[m.offset:end] {
-		b.WriteString(m.renderEntry(entry))
+		line := m.renderEntry(entry)
+		if m.scrollX > 0 {
+			line = trimLeftAnsi(line, m.scrollX)
+		}
+		b.WriteString(line)
 		b.WriteString("\n")
 	}
 
@@ -151,9 +156,55 @@ func (m *LogViewModel) ScrollDown() {
 	}
 }
 
+func (m *LogViewModel) ScrollLeft() {
+	m.scrollX -= 10
+	if m.scrollX < 0 {
+		m.scrollX = 0
+	}
+}
+
+func (m *LogViewModel) ScrollRight() {
+	m.scrollX += 10
+}
+
+func (m *LogViewModel) ScrollToTop() {
+	m.offset = 0
+	m.scrollX = 0
+}
+
+func (m *LogViewModel) ScrollToEnd() {
+	m.offset = len(m.entries) - (m.height - 2)
+	if m.offset < 0 {
+		m.offset = 0
+	}
+	m.scrollX = 0
+}
+
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s + strings.Repeat(" ", max-len(s))
 	}
 	return s[:max-1] + "~"
+}
+
+func trimLeftAnsi(s string, n int) string {
+	if n <= 0 {
+		return s
+	}
+	i := 0
+	vis := 0
+	for i < len(s) && vis < n {
+		if s[i] == '\x1b' {
+			for i < len(s) && s[i] != 'm' {
+				i++
+			}
+			if i < len(s) {
+				i++
+			}
+		} else {
+			i++
+			vis++
+		}
+	}
+	return s[i:]
 }

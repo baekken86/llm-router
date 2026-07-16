@@ -18,6 +18,7 @@ type SysLogViewModel struct {
 	width   int
 	height  int
 	offset  int
+	scrollX int
 }
 
 func NewSysLogViewModel(maxSize int) SysLogViewModel {
@@ -76,7 +77,11 @@ func (m SysLogViewModel) View() string {
 	}
 
 	for _, entry := range m.entries[m.offset:end] {
-		b.WriteString(m.renderEntry(entry))
+		line := m.renderEntry(entry)
+		if m.scrollX > 0 {
+			line = trimLeftAnsi(line, m.scrollX)
+		}
+		b.WriteString(line)
 		b.WriteString("\n")
 	}
 
@@ -120,4 +125,28 @@ func (m *SysLogViewModel) ScrollDown() {
 	if m.offset < len(m.entries)-1 {
 		m.offset++
 	}
+}
+
+func (m *SysLogViewModel) ScrollLeft() {
+	m.scrollX -= 10
+	if m.scrollX < 0 {
+		m.scrollX = 0
+	}
+}
+
+func (m *SysLogViewModel) ScrollRight() {
+	m.scrollX += 10
+}
+
+func (m *SysLogViewModel) ScrollToTop() {
+	m.offset = 0
+	m.scrollX = 0
+}
+
+func (m *SysLogViewModel) ScrollToEnd() {
+	m.offset = len(m.entries) - (m.height - 2)
+	if m.offset < 0 {
+		m.offset = 0
+	}
+	m.scrollX = 0
 }

@@ -102,7 +102,7 @@ func runSetup(args []string) {
 		providerCfg.baseURL = *baseURL
 	}
 
-	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, make([]byte, 32))
+	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, loadEncryptionKey())
 	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService)
 
 	existing, _ := providerRepo.GetByName(ctx, *providerName)
@@ -152,11 +152,7 @@ func runSetup(args []string) {
 func handleOAuthSetup(ctx context.Context, provider *models.Provider, oauthRepo repository.OAuthRepository, providerRepo repository.ProviderRepository, providerService service.ProviderService, logger *slog.Logger) {
 	oauthService := service.NewOAuthService(oauthRepo, providerRepo, providerService, logger)
 
-	connected, _, err := oauthService.IsConnected(ctx, provider.ID)
-	if err == nil && connected {
-		fmt.Println("✓ Already connected via OAuth")
-		return
-	}
+	oauthRepo.Delete(ctx, provider.ID)
 
 	authURL, state, err := oauthService.StartAuthFlow(ctx, provider.ID)
 	if err != nil {

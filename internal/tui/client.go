@@ -39,20 +39,21 @@ type VirtualModelResponse struct {
 }
 
 type ResolvedModelResponse struct {
-	Position     int               `json:"position"`
-	ModelID      int64             `json:"model_id"`
-	ModelName    string            `json:"model_name"`
-	ProviderID   int64             `json:"provider_id"`
-	ProviderName string            `json:"provider_name"`
-	APIType      string            `json:"api_type"`
-	Tags         map[string]string `json:"tags"`
+	Position        int               `json:"position"`
+	ModelID         int64             `json:"model_id"`
+	ModelName       string            `json:"model_name"`
+	ReasoningEffort string            `json:"reasoning_effort"`
+	ProviderID      int64             `json:"provider_id"`
+	ProviderName    string            `json:"provider_name"`
+	APIType         string            `json:"api_type"`
+	Tags            map[string]string `json:"tags"`
 }
 
 type ResolvedResponse struct {
-	VirtualModel string                 `json:"virtual_model"`
-	Filter       string                 `json:"filter"`
-	Sort         string                 `json:"sort"`
-	Models       []ResolvedModelResponse `json:"models"`
+	VirtualModel string                   `json:"virtual_model"`
+	Filter       json.RawMessage          `json:"filter"`
+	Sort         json.RawMessage          `json:"sort"`
+	Models       []ResolvedModelResponse  `json:"models"`
 }
 
 type APIClient struct {

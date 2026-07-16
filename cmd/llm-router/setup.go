@@ -76,6 +76,7 @@ func runSetup(args []string) {
 	defer database.Close()
 
 	providerRepo := repository.NewProviderRepository(database)
+	providerMetadataRepo := repository.NewProviderMetadataRepository(database)
 	modelRepo := repository.NewModelRepository(database)
 	tagRepo := repository.NewTagRepository(database)
 	oauthRepo := repository.NewOAuthRepository(database)
@@ -101,7 +102,7 @@ func runSetup(args []string) {
 		providerCfg.baseURL = *baseURL
 	}
 
-	providerService := service.NewProviderService(providerRepo, make([]byte, 32))
+	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, make([]byte, 32))
 	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService)
 
 	existing, _ := providerRepo.GetByName(ctx, *providerName)

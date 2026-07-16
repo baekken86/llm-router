@@ -33,13 +33,14 @@ func runDiscover(args []string) {
 	defer database.Close()
 
 	providerRepo := repository.NewProviderRepository(database)
+	providerMetadataRepo := repository.NewProviderMetadataRepository(database)
 	modelRepo := repository.NewModelRepository(database)
 	tagRepo := repository.NewTagRepository(database)
 	globalRepo := repository.NewGlobalMetadataRepository(database)
 
 	ctx := context.Background()
 
-	providerService := service.NewProviderService(providerRepo, make([]byte, 32))
+	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, make([]byte, 32))
 	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService)
 
 	provider, err := providerRepo.GetByName(ctx, *providerName)

@@ -14,6 +14,7 @@ type ProviderRepository interface {
 	GetByID(ctx context.Context, id int64) (*models.Provider, error)
 	GetByName(ctx context.Context, name string) (*models.Provider, error)
 	List(ctx context.Context) ([]models.Provider, error)
+	ListByMetadata(ctx context.Context, filters map[string]string) ([]models.Provider, error)
 	Update(ctx context.Context, p *models.Provider) error
 	Delete(ctx context.Context, id int64) error
 }
@@ -108,6 +109,43 @@ func (r *sqliteProviderRepo) Update(ctx context.Context, p *models.Provider) err
 	}
 	p.UpdatedAt = now
 	return nil
+}
+
+func (r *sqliteProviderRepo) ListByMetadata(ctx context.Context, filters map[string]string) ([]models.Provider, error) {
+	if len(filters) == 0 {
+		return r.List(ctx)
+	}
+
+	query := `SELECT DISTINCT p.id, p.name, p.api_type, p.base_url, p.api_key_encrypted, p.created_at, p.updated_at
+		 FROM providers p`
+	args := []interface{}{}
+
+	i := 0
+	for key, value := range filters {
+		alias := fmt.Sprintf("pm%d", i)
+		query += fmt.Sprintf(" INNER JOIN provider_metadata %s ON %s.provider_id = p.id AND %s.key = ? AND %s.value = ?",
+			alias, alias, alias, alias)
+		args = append(args, key, value)
+		i++
+	}
+
+	query += " ORDER BY p.name"
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list providers by metadata: %w", err)
+	}
+	defer rows.Close()
+
+	var providers []models.Provider
+	for rows.Next() {
+		var p models.Provider
+		if err := rows.Scan(&p.ID, &p.Name, &p.APIType, &p.BaseURL, &p.APIKeyEncrypted, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan provider: %w", err)
+		}
+		providers = append(providers, p)
+	}
+	return providers, nil
 }
 
 func (r *sqliteProviderRepo) Delete(ctx context.Context, id int64) error {

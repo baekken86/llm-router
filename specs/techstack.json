@@ -33,6 +33,23 @@
       "category": "TUI",
       "name": "lipgloss",
       "detail": "TUI Styling von charmbracelet"
+    },
+    {
+      "category": "Frontend",
+      "name": "Svelte",
+      "version": "5",
+      "detail": "Reactive UI framework, compiles to vanilla JS, embedded in Go binary via go:embed"
+    },
+    {
+      "category": "Frontend",
+      "name": "Vite",
+      "detail": "Build tool for SPA, outputs to web/dist/ for Go embedding"
+    },
+    {
+      "category": "Frontend",
+      "name": "Tailwind CSS",
+      "version": "v4",
+      "detail": "Utility-first CSS framework for styling the web UI"
     }
   ]
 }

@@ -1,0 +1,79 @@
+{
+  "id": "002",
+  "title": "Web UI for Virtual Models",
+  "status": "complete",
+  "created": "2026-07-16",
+  "completed": "2026-07-16",
+  "branch": "spec/002-web-ui-virtual-models",
+  "prs": [],
+  "tags": ["frontend", "web", "virtual-models"],
+  "description": "Embedded Svelte SPA for managing virtual models via web browser. Provides full CRUD with a visual condition builder that adapts predicates based on metadata field types.",
+  "sections": [
+    {
+      "id": "S1",
+      "title": "Overview",
+      "content": "A Svelte 5 SPA embedded in the Go binary via go:embed. Served by the existing chi router on the same port as the API. Uses the existing /api/v1/virtual-models REST endpoints for all operations.\n\nBrowser → GET / → SPA (index.html)\nBrowser → GET /api/v1/virtual-models → Go handler → SQLite\nBrowser → POST /api/v1/virtual-models → Go handler → SQLite\n\nTech: Svelte 5, Vite, Tailwind CSS v4, go:embed.",
+      "children": []
+    },
+    {
+      "id": "S2",
+      "title": "Tech Stack",
+      "content": "Frontend:\n- Svelte 5 (vanilla, NOT SvelteKit) for reactive UI components\n- Vite as build tool (outputs to web/dist/)\n- Tailwind CSS v4 for styling\n- No external UI component library (custom components)\n\nBackend Integration:\n- go:embed directive in cmd/llm-router/main.go to embed web/dist/\n- chi router serves SPA: index.html for non-API GET requests\n- Static assets served from /assets/* path\n- New endpoint: GET /api/v1/metadata/fields (returns field definitions from models.json)\n\nBuild:\n- cd web && npm install && npm run build → produces web/dist/\n- go build embeds web/dist/ into binary\n- Single binary deployment, no separate frontend server needed",
+      "children": []
+    },
+    {
+      "id": "S3",
+      "title": "SPA Architecture",
+      "content": "Directory structure:\nweb/\n  package.json\n  vite.config.js\n  svelte.config.js\n  tailwind.config.js\n  postcss.config.js\n  index.html\n  src/\n    main.js\n    App.svelte\n    lib/\n      api.js          # API client wrapping fetch calls\n      stores.js        # Svelte writable stores for state\n      fields.js        # Metadata field type definitions\n    components/\n      VirtualModelList.svelte    # List view with actions\n      VirtualModelForm.svelte    # Create/edit form wrapper\n      ConditionBuilder.svelte    # Filter condition builder\n      SortBuilder.svelte         # Sort expression builder\n      ResolvedPreview.svelte     # Shows resolved models\n      FieldSelector.svelte       # Metadata field dropdown\n      OperatorSelector.svelte    # Operator dropdown (type-aware)\n      ValueInput.svelte          # Value input (type-aware)\n      ConfirmDialog.svelte       # Delete confirmation modal\n      LoginPrompt.svelte         # Admin API key input\n      Toast.svelte               # Error/success notifications\n    app.css           # Tailwind imports\n\nState management via Svelte writable stores:\n- virtualModels: list of all VMs\n- metadataFields: field definitions from API\n- selectedVM: currently editing VM (null for create)\n- adminKey: API key from localStorage\n- toasts: notification queue",
+      "children": []
+    },
+    {
+      "id": "S4",
+      "title": "API Endpoints Used",
+      "content": "Existing endpoints (no changes needed):\nGET    /api/v1/virtual-models           → List all VMs\nGET    /api/v1/virtual-models/{id}      → Get single VM\nGET    /api/v1/virtual-models/{id}/resolved → Get resolved models\nPOST   /api/v1/virtual-models           → Create VM\nPUT    /api/v1/virtual-models/{id}      → Update VM\nDELETE /api/v1/virtual-models/{id}      → Delete VM\n\nNew endpoint (to be added):\nGET    /api/v1/metadata/fields          → Returns field definitions\n\nRequest/Response formats remain unchanged. The SPA constructs filter_expr and sort_expr JSON matching the existing schema:\n\nFilter: {\"and\": [{\"key\": \"intelligence\", \"op\": \"gte\", \"value\": 80}, ...]}\nSort: [{\"key\": \"intelligence\", \"direction\": \"desc\"}, ...]\n\nAuthentication: Bearer token in Authorization header, same as existing admin API. Token stored in localStorage after user enters it in login prompt.",
+      "children": []
+    },
+    {
+      "id": "S5",
+      "title": "Condition Builder (Core UX)",
+      "content": "The condition builder is the primary UX component. It renders a dynamic form for constructing filter_expr JSON.\n\nEach condition row has 3 parts:\n1. Field Selector - dropdown of available metadata fields, grouped by type:\n   - Numeric: intelligence, coding, speed, hallucination, reasoning, latency, cost_per_1m_input, cost_per_1m_output, cost_per_task, context_window\n   - String: cost_type\n   - Boolean: has_reasoning_effort\n\n2. Operator Selector - changes based on field type:\n   - Number fields: = (eq), != (neq), > (gt), >= (gte), < (lt), <= (lte)\n   - String with known values (cost_type): = (eq), != (neq), in\n   - String general: = (eq), != (neq), contains\n   - Boolean: = (eq), != (neq)\n\n3. Value Input - changes based on field type + operator:\n   - Number: numeric input with optional slider (min/max from field definition)\n   - String with known values: dropdown for eq/neq, multi-select chips for in\n   - String general: text input\n   - Boolean: toggle switch (true/false)\n   - in operator: multi-select chips\n\nFeatures:\n- Add condition button (+)\n- Remove condition button (x per row)\n- Visual summary: \"intelligence >= 80 AND cost_type = free\"\n- All conditions are AND-ed (matching existing filter_expr format)\n\nOutput JSON:\n{\"and\": [{\"key\": \"intelligence\", \"op\": \"gte\", \"value\": 80}, {\"key\": \"cost_type\", \"op\": \"eq\", \"value\": \"free\"}]}",
+      "children": []
+    },
+    {
+      "id": "S6",
+      "title": "Sort Builder",
+      "content": "Renders a dynamic form for constructing sort_expr JSON.\n\nEach sort criterion row has 2 modes:\n\n1. Direction mode (for numeric/string comparison):\n   - Field selector\n   - Direction toggle: ascending (asc) / descending (desc)\n   - Output: {\"key\": \"intelligence\", \"direction\": \"desc\"}\n\n2. Custom order mode (for categorical fields):\n   - Field selector (limited to string fields with known values)\n   - Drag-to-order list of known values\n   - Output: {\"key\": \"cost_type\", \"order\": [\"subscription\", \"free\", \"api-creds\"]}\n\nFeatures:\n- Add sort criterion button\n- Remove sort criterion button\n- Drag-to-reorder sort priority (first criterion = primary sort)\n- Mode toggle per row (direction vs custom order)\n\nOutput JSON (array, order matters):\n[{\"key\": \"intelligence\", \"direction\": \"desc\"}, {\"key\": \"cost_type\", \"order\": [\"subscription\", \"free\"]}]",
+      "children": []
+    },
+    {
+      "id": "S7",
+      "title": "Virtual Model Form",
+      "content": "Create/Edit form combining all components:\n\nFields:\n- Name (text input, required, must be unique)\n- Filter conditions (ConditionBuilder component)\n- Sort criteria (SortBuilder component)\n- Max retries (number input, 0-3, default 0)\n- Retry on status (multi-select: 429, 500, 502, 503, 504)\n\nBehavior:\n- On submit: constructs CreateVirtualModelRequest / UpdateVirtualModelRequest JSON\n- POST/PUT to API\n- On success: navigates back to list, shows toast\n- On error: shows error toast, highlights invalid fields\n- After save: shows ResolvedPreview for the saved VM\n\nValidation:\n- Name is required\n- At least one filter condition recommended (but empty filter is valid = matches all)\n- Filter/sort JSON validated client-side before submit",
+      "children": []
+    },
+    {
+      "id": "S8",
+      "title": "Virtual Model List",
+      "content": "Table view of all virtual models:\n\nColumns:\n- Name\n- Filter summary (human-readable: \"intelligence >= 80 AND cost_type = free\")\n- Sort summary (\"intelligence desc, cost_type: [subscription, free]\")\n- Actions (edit, delete)\n\nFeatures:\n- \"Create New Virtual Model\" button at top\n- Click row to expand inline ResolvedPreview\n- Delete button shows ConfirmDialog\n- Search/filter by name\n- Loading skeleton while fetching",
+      "children": []
+    },
+    {
+      "id": "S9",
+      "title": "Resolved Models Preview",
+      "content": "Calls GET /api/v1/virtual-models/{id}/resolved and displays:\n\n- Priority-ordered list of matching models\n- Each entry: #position provider/model [tag1=val1, tag2=val2, ...]\n- Color-coded: top priority green, fallback yellow\n- Compact tag display matching TUI format: [int=85, code=78, spd=80, $/1M=2.50, hall=12]\n- Empty state: \"No matching models found\"\n- Used in:\n  - Inline expansion in list view\n  - Preview section in create/edit form (after save)",
+      "children": []
+    },
+    {
+      "id": "S10",
+      "title": "Go Integration",
+      "content": "Files to modify:\n\n1. internal/api/handlers/metadata_handler.go (NEW)\n   - GET /api/v1/metadata/fields\n   - Reads field definitions from embedded models.json data\n   - Returns JSON with field name, type, description, min/max, known values\n\n2. internal/api/router.go (MODIFY)\n   - Mount metadata handler at /api/v1/metadata\n   - Add SPA serving after all API routes:\n     * GET requests to non-/api/ paths serve index.html\n     * GET /assets/* serves static files from embedded web/dist/\n\n3. cmd/llm-router/main.go (MODIFY)\n   - Add //go:embed web/dist directive\n   - Pass embedded FS to router\n\n4. architecture.json (MODIFY)\n   - Add A7: Web UI Layer node\n\n5. techstack.json (MODIFY)\n   - Add Svelte, Vite, Tailwind CSS entries",
+      "children": []
+    },
+    {
+      "id": "S11",
+      "title": "Predicate Type Matrix",
+      "content": "This matrix defines which operators and value inputs are available for each field type. It drives the condition builder's dynamic behavior.\n\nNUMBER fields (intelligence, coding, speed, hallucination, reasoning, latency, cost_per_1m_input, cost_per_1m_output, cost_per_task, context_window):\n  Operators: eq, neq, gt, gte, lt, lte\n  Value input: numeric input with optional slider (min/max from field def)\n\nSTRING with known values (cost_type: subscription, api-creds, free):\n  Operators: eq, neq, in\n  Value input: dropdown for eq/neq, multi-select chips for in\n\nSTRING general (any other string tag):\n  Operators: eq, neq, contains\n  Value input: text input\n\nBOOLEAN (has_reasoning_effort):\n  Operators: eq, neq\n  Value input: toggle switch (true/false)",
+      "children": []
+    }
+  ]
+}

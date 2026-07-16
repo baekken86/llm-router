@@ -219,6 +219,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.settingsView, _ = m.settingsView.Update(msg)
 			}
 			return m, nil
+		case "left", "h":
+			if m.tab == TabLog {
+				m.logView.ScrollLeft()
+			} else if m.tab == TabSyslog {
+				m.sysLogView.ScrollLeft()
+			}
+			return m, nil
+		case "right", "l":
+			if m.tab == TabLog {
+				m.logView.ScrollRight()
+			} else if m.tab == TabSyslog {
+				m.sysLogView.ScrollRight()
+			}
+			return m, nil
+		case "pgup":
+			if m.tab == TabLog {
+				m.logView.ScrollToTop()
+			} else if m.tab == TabSyslog {
+				m.sysLogView.ScrollToTop()
+			}
+			return m, nil
+		case "pgdown":
+			if m.tab == TabLog {
+				m.logView.ScrollToEnd()
+			} else if m.tab == TabSyslog {
+				m.sysLogView.ScrollToEnd()
+			}
+			return m, nil
 		case "enter", " ":
 			if m.tab == TabSettings {
 				m.settingsView, _ = m.settingsView.Update(msg)
@@ -318,7 +346,7 @@ func (m Model) renderHeader() string {
 }
 
 func (m Model) renderFooter() string {
-	help := HelpStyle.Render("tab/shift+tab: switch view  ↑/↓: scroll  r: reset stats  q: quit")
+	help := HelpStyle.Render("tab/shift+tab: switch view  ↑/↓: scroll  ←/→: horizontal scroll  pgup/pgdown: jump  r: reset stats  q: quit")
 	if m.tab == TabVM && m.vmView.detailMode {
 		help = HelpStyle.Render("↑/↓: navigate  enter: select  esc: back  tab: switch view  q: quit")
 	} else if m.tab == TabVM {

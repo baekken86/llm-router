@@ -44,7 +44,7 @@ func runSetKey(args []string) {
 		os.Exit(1)
 	}
 
-	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, make([]byte, 32))
+	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, loadEncryptionKey())
 	_, err = providerService.Update(ctx, provider.ID, models.UpdateProviderRequest{
 		APIKey: apiKey,
 	})

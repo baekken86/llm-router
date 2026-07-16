@@ -212,6 +212,7 @@ func runProxy(args []string) {
 	vmRepo := repository.NewVirtualModelRepository(database)
 	keyRepo := repository.NewProxyKeyRepository(database)
 	globalMetaRepo := repository.NewGlobalMetadataRepository(database)
+	oauthRepo := repository.NewOAuthRepository(database)
 
 	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, keyBytes)
 	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService)
@@ -227,7 +228,7 @@ func runProxy(args []string) {
 		}
 	}()
 
-	engine := proxy.NewEngine(vmService, providerService, logger, logChan)
+	engine := proxy.NewEngine(vmService, providerService, oauthRepo, logger, logChan)
 	engine.GetRTK().SetEnabled(settings.RTKEnabled)
 	engine.GetCaveman().SetEnabled(settings.CavemanEnabled)
 	engine.ApplySettings(settings.MaxRetries, settings.TimeoutSeconds, settings.MaxTokens)
@@ -260,7 +261,7 @@ func runProxy(args []string) {
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middlewareAuthOrOAuth(keyService, oauthHandler))
-		r.Post("/chat/completions", engine.HandleChatCompletion)
+		r.Post("/chat/completions", engine.HandleChatCompletionRoute)
 		r.Post("/messages", engine.HandleAnthropicMessages)
 		r.Post("/messages/stream", engine.HandleAnthropicMessagesStream)
 		r.Get("/models", handleListModels(vmService))
@@ -312,6 +313,27 @@ func generateEncryptionKey() string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+func loadEncryptionKey() []byte {
+	cfg := config.New()
+	settings := cfg.Get()
+
+	key := os.Getenv("LLM_ROUTER_ENCRYPTION_KEY")
+	if key == "" {
+		key = settings.EncryptionKey
+	}
+	if key == "" {
+		key = generateEncryptionKey()
+		fmt.Fprintf(os.Stderr, "⚠ generated encryption key (save this!): %s\n", key)
+	}
+
+	keyBytes, err := hex.DecodeString(key)
+	if err != nil || len(keyBytes) != 32 {
+		fmt.Fprintf(os.Stderr, "invalid encryption key: must be 32 bytes hex-encoded\n")
+		os.Exit(1)
+	}
+	return keyBytes
 }
 
 func generateAdminPassword() string {

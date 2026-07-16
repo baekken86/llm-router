@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/chris/llm-router/internal/models"
+	"github.com/chris/llm-router/internal/repository"
 	"github.com/chris/llm-router/internal/service"
 )
 
@@ -38,6 +41,7 @@ type RequestLog struct {
 type Engine struct {
 	vmService       service.VirtualModelService
 	providerService service.ProviderService
+	oauthRepo       repository.OAuthRepository
 	openaiClient    *OpenAIClient
 	anthropicClient *AnthropicClient
 	logger          *slog.Logger
@@ -52,12 +56,14 @@ type Engine struct {
 func NewEngine(
 	vmService service.VirtualModelService,
 	providerService service.ProviderService,
+	oauthRepo repository.OAuthRepository,
 	logger *slog.Logger,
 	logChan chan<- RequestLog,
 ) *Engine {
 	return &Engine{
 		vmService:       vmService,
 		providerService: providerService,
+		oauthRepo:       oauthRepo,
 		openaiClient:    NewOpenAIClient(),
 		anthropicClient: NewAnthropicClient(),
 		logger:          logger,
@@ -78,10 +84,41 @@ func (e *Engine) GetCaveman() *CavemanInterceptor {
 	return e.caveman
 }
 
+func (e *Engine) getAPIKey(ctx context.Context, provider models.Provider) (string, error) {
+	// Check for OAuth token first
+	oauthToken, err := e.oauthRepo.GetByProviderID(ctx, provider.ID)
+	if err == nil && oauthToken != nil && oauthToken.AccessToken != "" {
+		return oauthToken.AccessToken, nil
+	}
+	// Fall back to encrypted API key
+	return e.providerService.DecryptAPIKey(provider.APIKeyEncrypted)
+}
+
 func (e *Engine) ApplySettings(maxRetries, timeoutSeconds, maxTokens int) {
 	e.maxRetries = maxRetries
 	e.timeoutSeconds = timeoutSeconds
 	e.maxTokens = maxTokens
+}
+
+func (e *Engine) HandleChatCompletionRoute(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, `{"error":"failed to read body"}`, http.StatusBadRequest)
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+
+	var peek struct {
+		Stream bool `json:"stream"`
+	}
+	json.Unmarshal(body, &peek)
+	r.Body = io.NopCloser(bytes.NewReader(body))
+
+	if peek.Stream {
+		e.HandleChatCompletionStream(w, r)
+		return
+	}
+	e.HandleChatCompletion(w, r)
 }
 
 func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
@@ -128,82 +165,95 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal(vm.RetryOnStatus, &retryOnStatus)
 	}
 
-	for i, rm := range resolvedModels {
-		apiKey, err := e.providerService.DecryptAPIKey(rm.Provider.APIKeyEncrypted)
+	type providerRetryState struct {
+		retries int
+	}
+	providerRetries := make(map[int64]*providerRetryState)
+
+	for i := 0; i < len(resolvedModels); i++ {
+		rm := resolvedModels[i]
+		apiKey, err := e.getAPIKey(r.Context(), rm.Provider)
 		if err != nil {
-			e.logger.Error("decrypt api key", "error", err, "provider", rm.Provider.Name)
+			e.logger.Error("get api key", "error", err, "provider", rm.Provider.Name)
 			failures = append(failures, map[string]interface{}{
 				"model":    rm.Model.Name,
 				"provider": rm.Provider.Name,
 				"status":   500,
-				"message":  "internal error: failed to decrypt api key",
+				"message":  "internal error: failed to get api key",
 			})
 			continue
 		}
 
-		for retry := 0; retry <= vm.MaxRetries; retry++ {
-			if retry > 0 {
-				time.Sleep(time.Duration(retry) * time.Second)
-			}
+		prs, exists := providerRetries[rm.Provider.ID]
+		if !exists {
+			prs = &providerRetryState{}
+			providerRetries[rm.Provider.ID] = prs
+		}
 
-			resp, err := e.sendRequest(r, rm, apiKey, req)
-			if err == nil {
-				e.logRequest(RequestLog{
-					Timestamp:    start,
-					RequestID:    requestID,
-					VirtualModel: req.Model,
-					ProviderName: rm.Provider.Name,
-					ModelName:    rm.Model.Name,
-					StatusCode:   http.StatusOK,
-					Latency:      time.Since(start),
-					InputTokens:  resp.Usage.PromptTokens,
-					OutputTokens: resp.Usage.CompletionTokens,
-					CachedTokens: func() int {
-						if resp.Usage.PromptTokensDetails != nil {
-							return resp.Usage.PromptTokensDetails.CachedTokens
-						}
-						return 0
-					}(),
-					FallbackCount: i,
-					RetryCount:    retry,
-				})
+		if prs.retries > vm.MaxRetries {
+			continue
+		}
 
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("X-Request-ID", requestID)
-				w.Header().Set("X-Provider", rm.Provider.Name)
-				w.Header().Set("X-Model", rm.Model.Name)
-				json.NewEncoder(w).Encode(resp)
-				return
-			}
-
-			providerErr, ok := err.(*ProviderError)
-			if !ok {
-				providerErr = &ProviderError{StatusCode: 500, Message: err.Error()}
-			}
-
+		resp, err := e.sendRequest(r, rm, apiKey, req)
+		if err == nil {
 			e.logRequest(RequestLog{
 				Timestamp:    start,
 				RequestID:    requestID,
 				VirtualModel: req.Model,
 				ProviderName: rm.Provider.Name,
 				ModelName:    rm.Model.Name,
-				StatusCode:   providerErr.StatusCode,
+				StatusCode:   http.StatusOK,
 				Latency:      time.Since(start),
-				ErrorMessage: providerErr.Message,
+				InputTokens:  resp.Usage.PromptTokens,
+				OutputTokens: resp.Usage.CompletionTokens,
+				CachedTokens: func() int {
+					if resp.Usage.PromptTokensDetails != nil {
+						return resp.Usage.PromptTokensDetails.CachedTokens
+					}
+					return 0
+				}(),
 				FallbackCount: i,
-				RetryCount:    retry,
+				RetryCount:    prs.retries,
 			})
 
-			if !shouldRetry(providerErr.StatusCode, retryOnStatus) {
-				break
-			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Request-ID", requestID)
+			w.Header().Set("X-Provider", rm.Provider.Name)
+			w.Header().Set("X-Model", rm.Model.Name)
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+
+		providerErr, ok := err.(*ProviderError)
+		if !ok {
+			providerErr = &ProviderError{StatusCode: 500, Message: err.Error()}
+		}
+
+		e.logRequest(RequestLog{
+			Timestamp:    start,
+			RequestID:    requestID,
+			VirtualModel: req.Model,
+			ProviderName: rm.Provider.Name,
+			ModelName:    rm.Model.Name,
+			StatusCode:   providerErr.StatusCode,
+			Latency:      time.Since(start),
+			ErrorMessage: providerErr.Message,
+			FallbackCount: i,
+			RetryCount:    prs.retries,
+		})
+
+		if shouldRetry(providerErr.StatusCode, retryOnStatus) && prs.retries < vm.MaxRetries {
+			prs.retries++
+			time.Sleep(time.Duration(prs.retries) * time.Second)
+			i--
+			continue
 		}
 
 		failures = append(failures, map[string]interface{}{
 			"model":    rm.Model.Name,
 			"provider": rm.Provider.Name,
-			"status":   500,
-			"message":  "request failed after retries",
+			"status":   providerErr.StatusCode,
+			"message":  providerErr.Message,
 		})
 	}
 
@@ -265,7 +315,7 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 	}
 
 	for i, rm := range resolvedModels {
-		apiKey, err := e.providerService.DecryptAPIKey(rm.Provider.APIKeyEncrypted)
+		apiKey, err := e.getAPIKey(r.Context(), rm.Provider)
 		if err != nil {
 			continue
 		}
@@ -391,21 +441,24 @@ func (e *Engine) streamPassthrough(w http.ResponseWriter, flusher http.Flusher, 
 }
 
 func (e *Engine) streamAnthropicToOpenAI(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser, model string, requestID string) {
+	state := &ClaudeStreamState{
+		Model:             model,
+		RequestID:         requestID,
+		ServerToolIndex:   -1,
+		ToolCalls:         make(map[int]*ToolCallState),
+	}
 	events := ParseAnthropicSSEStream(body)
 
 	for event := range events {
-		chunk := AnthropicStreamToOpenAIChunk(event, model, requestID)
-		if chunk == nil {
-			continue
+		chunks := state.ProcessEvent(event)
+		for _, chunk := range chunks {
+			data, err := json.Marshal(chunk)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
 		}
-
-		data, err := json.Marshal(chunk)
-		if err != nil {
-			continue
-		}
-
-		fmt.Fprintf(w, "data: %s\n\n", data)
-		flusher.Flush()
 	}
 
 	fmt.Fprintf(w, "data: [DONE]\n\n")
@@ -562,7 +615,7 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 	var failures []map[string]interface{}
 
 	for i, rm := range resolvedModels {
-		apiKey, err := e.providerService.DecryptAPIKey(rm.Provider.APIKeyEncrypted)
+		apiKey, err := e.getAPIKey(r.Context(), rm.Provider)
 		if err != nil {
 			continue
 		}
@@ -679,7 +732,7 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 	}
 
 	for i, rm := range resolvedModels {
-		apiKey, err := e.providerService.DecryptAPIKey(rm.Provider.APIKeyEncrypted)
+		apiKey, err := e.getAPIKey(r.Context(), rm.Provider)
 		if err != nil {
 			continue
 		}

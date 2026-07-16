@@ -63,7 +63,7 @@ func runAddProvider(args []string) {
 		os.Exit(1)
 	}
 
-	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, make([]byte, 32))
+	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, loadEncryptionKey())
 	_, err = providerService.Create(ctx, models.CreateProviderRequest{
 		Name:    *name,
 		APIType: models.APIType(*apiType),

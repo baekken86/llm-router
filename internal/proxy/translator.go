@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 func OpenAIToAnthropic(req ChatCompletionRequest) AnthropicRequest {
@@ -25,6 +26,41 @@ func OpenAIToAnthropic(req ChatCompletionRequest) AnthropicRequest {
 			continue
 		}
 
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			content := []AnthropicContent{}
+			if s, ok := msg.Content.(string); ok && s != "" {
+				content = append(content, AnthropicContent{Type: "text", Text: s})
+			}
+			for _, tc := range msg.ToolCalls {
+				content = append(content, AnthropicContent{
+					Type:  "tool_use",
+					ID:    tc.ID,
+					Name:  tc.Function.Name,
+					Input: json.RawMessage(tc.Function.Arguments),
+				})
+			}
+			anthReq.Messages = append(anthReq.Messages, AnthropicMessage{
+				Role:    "assistant",
+				Content: content,
+			})
+			continue
+		}
+
+		if msg.Role == "tool" {
+			content := []AnthropicContent{
+				{
+					Type:      "tool_result",
+					ToolUseID: msg.ToolCallID,
+					Content:   fmt.Sprintf("%v", msg.Content),
+				},
+			}
+			anthReq.Messages = append(anthReq.Messages, AnthropicMessage{
+				Role:    "user",
+				Content: content,
+			})
+			continue
+		}
+
 		anthMsg := AnthropicMessage{
 			Role: msg.Role,
 		}
@@ -43,9 +79,13 @@ func OpenAIToAnthropic(req ChatCompletionRequest) AnthropicRequest {
 	}
 
 	for _, tool := range req.Tools {
+		desc := tool.Function.Description
+		if desc == "" {
+			desc = tool.Function.Name
+		}
 		anthReq.Tools = append(anthReq.Tools, AnthropicTool{
 			Name:        tool.Function.Name,
-			Description: tool.Function.Description,
+			Description: desc,
 			InputSchema: tool.Function.Parameters,
 		})
 	}
@@ -64,16 +104,19 @@ func AnthropicToOpenAI(resp *AnthropicResponse, model string) ChatCompletionResp
 	var contentParts []string
 	var toolCalls []ToolCall
 
+	var reasoningParts []string
 	for _, block := range resp.Content {
 		switch block.Type {
 		case "text":
 			contentParts = append(contentParts, block.Text)
+		case "thinking":
+			reasoningParts = append(reasoningParts, block.Thinking)
 		case "tool_use":
 			tc := ToolCall{
 				ID:   block.ID,
 				Type: "function",
 			}
-			tc.Function.Name = block.Name
+			tc.Function.Name = decloakToolName(block.Name)
 			tc.Function.Arguments = string(block.Input)
 			toolCalls = append(toolCalls, tc)
 		}
@@ -122,63 +165,198 @@ func mapStopReason(reason string) string {
 	}
 }
 
-func AnthropicStreamToOpenAIChunk(event AnthropicStreamEvent, model string, requestID string) *StreamChunk {
+type ClaudeStreamState struct {
+	Model             string
+	RequestID         string
+	MessageID         string
+	InThinkingBlock   bool
+	CurrentBlockIndex int
+	ServerToolIndex   int
+	TextBlockStarted  bool
+	ToolCallIndex     int
+	ToolCalls         map[int]*ToolCallState
+	Usage             *Usage
+	FinishReasonSent  bool
+}
+
+type ToolCallState struct {
+	Index     int
+	ID        string
+	Name      string
+	Arguments string
+}
+
+func (s *ClaudeStreamState) createChunk(delta StreamDelta, finishReason *string, usage *Usage) *StreamChunk {
+	chunk := &StreamChunk{
+		ID:      fmt.Sprintf("chatcmpl-%s", s.MessageID),
+		Object:  "chat.completion.chunk",
+		Created: time.Now().Unix(),
+		Model:   s.Model,
+		Choices: []StreamChoice{{Index: 0, Delta: delta, FinishReason: finishReason}},
+	}
+	if usage != nil {
+		chunk.Usage = usage
+	}
+	return chunk
+}
+
+func (s *ClaudeStreamState) ProcessEvent(event AnthropicStreamEvent) []*StreamChunk {
+	var results []*StreamChunk
+
 	switch event.Type {
 	case "message_start":
-		return &StreamChunk{
-			ID:      requestID,
-			Object:  "chat.completion.chunk",
-			Model:   model,
-			Choices: []StreamChoice{{Index: 0, Delta: StreamDelta{Role: "assistant"}}},
+		var msg struct {
+			ID    string `json:"id"`
+			Model string `json:"model"`
+			Usage *struct {
+				InputTokens           int `json:"input_tokens"`
+				CacheReadInputTokens  int `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			} `json:"usage"`
+		}
+		if err := json.Unmarshal(event.Message, &msg); err == nil {
+			s.MessageID = msg.ID
+			if msg.Model != "" {
+				s.Model = msg.Model
+			}
+			if msg.Usage != nil {
+				promptTokens := msg.Usage.InputTokens + msg.Usage.CacheReadInputTokens + msg.Usage.CacheCreationInputTokens
+				s.Usage = &Usage{
+					PromptTokens: promptTokens,
+					CompletionTokens: 0,
+					TotalTokens: promptTokens,
+					PromptTokensDetails: &PromptTokensDetails{
+						CachedTokens: msg.Usage.CacheReadInputTokens,
+					},
+				}
+			}
+		}
+		results = append(results, s.createChunk(StreamDelta{Role: "assistant"}, nil, nil))
+
+	case "content_block_start":
+		rawBlock := event.ContentBlock
+		if rawBlock == nil {
+			rawBlock = event.Delta
+		}
+		var block struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		if rawBlock != nil {
+			json.Unmarshal(rawBlock, &block)
+		}
+
+		switch block.Type {
+		case "thinking":
+			s.InThinkingBlock = true
+			s.CurrentBlockIndex = event.Index
+			results = append(results, s.createChunk(StreamDelta{Content: ""}, nil, nil))
+		case "tool_use":
+			tc := &ToolCallState{
+				Index: s.ToolCallIndex,
+				ID:    block.ID,
+				Name:  decloakToolName(block.Name),
+			}
+			s.ToolCallIndex++
+			s.ToolCalls[event.Index] = tc
+			results = append(results, s.createChunk(StreamDelta{
+				ToolCalls: []StreamToolCall{{
+					Index: tc.Index,
+					ID:    tc.ID,
+					Type:  "function",
+					Function: struct {
+						Name      string `json:"name,omitempty"`
+						Arguments string `json:"arguments"`
+					}{Name: tc.Name, Arguments: ""},
+				}},
+			}, nil, nil))
+		case "text":
+			s.TextBlockStarted = true
 		}
 
 	case "content_block_delta":
+		if event.Index == s.ServerToolIndex {
+			break
+		}
 		var delta struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type         string `json:"type"`
+			Text         string `json:"text"`
+			Thinking     string `json:"thinking"`
+			PartialJSON  string `json:"partial_json"`
 		}
 		if err := json.Unmarshal(event.Delta, &delta); err != nil {
-			return nil
+			break
 		}
-		if delta.Type == "text_delta" {
-			return &StreamChunk{
-				ID:      requestID,
-				Object:  "chat.completion.chunk",
-				Model:   model,
-				Choices: []StreamChoice{{Index: 0, Delta: StreamDelta{Content: delta.Text}}},
+
+		switch delta.Type {
+		case "text_delta":
+			if delta.Text != "" {
+				results = append(results, s.createChunk(StreamDelta{Content: delta.Text}, nil, nil))
+			}
+		case "thinking_delta":
+			results = append(results, s.createChunk(StreamDelta{ReasoningContent: delta.Thinking}, nil, nil))
+		case "input_json_delta":
+			if tc, ok := s.ToolCalls[event.Index]; ok {
+				tc.Arguments += delta.PartialJSON
+				results = append(results, s.createChunk(StreamDelta{
+					ToolCalls: []StreamToolCall{{
+						Index: tc.Index,
+						ID:    tc.ID,
+						Function: struct {
+							Name      string `json:"name,omitempty"`
+							Arguments string `json:"arguments"`
+						}{Arguments: delta.PartialJSON},
+					}},
+				}, nil, nil))
 			}
 		}
 
+	case "content_block_stop":
+		if event.Index == s.ServerToolIndex {
+			s.ServerToolIndex = -1
+			break
+		}
+		if s.InThinkingBlock && event.Index == s.CurrentBlockIndex {
+			results = append(results, s.createChunk(StreamDelta{Content: ""}, nil, nil))
+			s.InThinkingBlock = false
+		}
+		s.TextBlockStarted = false
+
 	case "message_delta":
-		var delta struct {
-			StopReason string `json:"stop_reason"`
+		if event.Usage != nil {
+			prev := s.Usage
+			outputTokens := event.Usage.OutputTokens
+			if prev != nil {
+				prev.CompletionTokens = outputTokens
+				prev.TotalTokens = prev.PromptTokens + outputTokens
+			}
 		}
-		if err := json.Unmarshal(event.Delta, &delta); err != nil {
-			return nil
+		if event.Delta != nil {
+			var delta struct {
+				StopReason string `json:"stop_reason"`
+			}
+			if err := json.Unmarshal(event.Delta, &delta); err == nil && delta.StopReason != "" {
+				finishReason := mapStopReason(delta.StopReason)
+				chunk := s.createChunk(StreamDelta{}, &finishReason, s.Usage)
+				results = append(results, chunk)
+				s.FinishReasonSent = true
+			}
 		}
-		finishReason := mapStopReason(delta.StopReason)
-		return &StreamChunk{
-			ID:      requestID,
-			Object:  "chat.completion.chunk",
-			Model:   model,
-			Choices: []StreamChoice{{Index: 0, Delta: StreamDelta{}, FinishReason: &finishReason}},
-			Usage: func() *Usage {
-				if event.Usage != nil {
-					return &Usage{
-						PromptTokens:     event.Usage.InputTokens,
-						CompletionTokens: event.Usage.OutputTokens,
-						TotalTokens:      event.Usage.InputTokens + event.Usage.OutputTokens,
-						PromptTokensDetails: &PromptTokensDetails{
-							CachedTokens: event.Usage.CacheReadInputTokens,
-						},
-					}
-				}
-				return nil
-			}(),
+
+	case "message_stop":
+		if !s.FinishReasonSent {
+			finishReason := "stop"
+			if len(s.ToolCalls) > 0 {
+				finishReason = "tool_calls"
+			}
+			chunk := s.createChunk(StreamDelta{}, &finishReason, s.Usage)
+			results = append(results, chunk)
+			s.FinishReasonSent = true
 		}
 	}
 
-	return nil
+	return results
 }
 
 func ExtractTokenUsage(resp *ChatCompletionResponse) (input, output, cached, reasoning int) {

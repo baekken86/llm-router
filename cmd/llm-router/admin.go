@@ -44,5 +44,9 @@ func runAdmin(args []string) {
 	}()
 
 	cfg := config.New()
-	tui.RunRemote(client, logChan, cfg)
+	tuiQuit := make(chan struct{})
+	go func() {
+		tui.RunRemote(client, logChan, cfg, tuiQuit)
+	}()
+	<-tuiQuit
 }

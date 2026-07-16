@@ -273,16 +273,18 @@ func (m Model) renderFooter() string {
 	return lipgloss.Place(m.width, 1, lipgloss.Left, lipgloss.Bottom, help)
 }
 
-func Run(logChan <-chan proxy.RequestLog, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, cfg *config.Config) {
+func Run(logChan <-chan proxy.RequestLog, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, cfg *config.Config, quit chan<- struct{}) {
 	p := tea.NewProgram(New(logChan, vmRepo, modelRepo, tagRepo, providerRepo, cfg), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("TUI error: %v\n", err)
 	}
+	close(quit)
 }
 
-func RunRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog, cfg *config.Config) {
+func RunRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog, cfg *config.Config, quit chan<- struct{}) {
 	p := tea.NewProgram(NewRemote(apiClient, logChan, cfg), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("TUI error: %v\n", err)
 	}
+	close(quit)
 }

@@ -190,6 +190,7 @@ func (m VMViewModel) viewRawModels() string {
 			}
 		}
 	}
+	sort.Strings(tagKeys)
 
 	// Build a flat list with provider info for cursor tracking
 	type rawEntry struct {
@@ -452,13 +453,18 @@ func computeColumns(sortExprJSON, filterExprJSON json.RawMessage, resolvedModels
 	}
 
 	// Remaining tags
+	var remainingKeys []string
 	for _, m := range resolvedModels {
 		for k := range m.Tags {
 			if !seen[k] {
 				seen[k] = true
-				cols = append(cols, tableCol{Key: k, Abbrev: abbrevKey(k)})
+				remainingKeys = append(remainingKeys, k)
 			}
 		}
+	}
+	sort.Strings(remainingKeys)
+	for _, k := range remainingKeys {
+		cols = append(cols, tableCol{Key: k, Abbrev: abbrevKey(k)})
 	}
 
 	return cols

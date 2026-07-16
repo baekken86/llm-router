@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/chris/llm-router/internal/config"
 	"github.com/chris/llm-router/internal/proxy"
 	"github.com/chris/llm-router/internal/repository"
 )
@@ -26,46 +27,53 @@ const (
 	TabLog Tab = iota
 	TabStats
 	TabVM
+	TabSettings
 )
 
 type Model struct {
-	logView    LogViewModel
-	stats      StatsModel
-	vmView     VMViewModel
-	tab        Tab
-	width      int
-	height     int
-	ready      bool
-	logChan    <-chan proxy.RequestLog
-	apiClient  *APIClient
-	vmRepo     repository.VirtualModelRepository
-	modelRepo  repository.ModelRepository
-	tagRepo    repository.TagRepository
+	logView      LogViewModel
+	stats        StatsModel
+	vmView       VMViewModel
+	settingsView SettingsModel
+	tab          Tab
+	width        int
+	height       int
+	ready        bool
+	logChan      <-chan proxy.RequestLog
+	apiClient    *APIClient
+	vmRepo       repository.VirtualModelRepository
+	modelRepo    repository.ModelRepository
+	tagRepo      repository.TagRepository
 	providerRepo repository.ProviderRepository
+	config       *config.Config
 }
 
-func New(logChan <-chan proxy.RequestLog, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository) Model {
+func New(logChan <-chan proxy.RequestLog, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, cfg *config.Config) Model {
 	return Model{
 		logView:      NewLogViewModel(500),
 		stats:        NewStatsModel(),
 		vmView:       NewVMViewModel(),
+		settingsView: NewSettingsModel(cfg),
 		tab:          TabLog,
 		logChan:      logChan,
 		vmRepo:       vmRepo,
 		modelRepo:    modelRepo,
 		tagRepo:      tagRepo,
 		providerRepo: providerRepo,
+		config:       cfg,
 	}
 }
 
-func NewRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog) Model {
+func NewRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog, cfg *config.Config) Model {
 	return Model{
-		logView:   NewLogViewModel(500),
-		stats:     NewStatsModel(),
-		vmView:    NewVMViewModel(),
-		tab:       TabLog,
-		logChan:   logChan,
-		apiClient: apiClient,
+		logView:      NewLogViewModel(500),
+		stats:        NewStatsModel(),
+		vmView:       NewVMViewModel(),
+		settingsView: NewSettingsModel(cfg),
+		tab:          TabLog,
+		logChan:      logChan,
+		apiClient:    apiClient,
+		config:       cfg,
 	}
 }
 
@@ -128,16 +136,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case TabStats:
 				m.tab = TabVM
 			case TabVM:
+				m.tab = TabSettings
+			case TabSettings:
 				m.tab = TabLog
 			}
 		case "shift+tab":
 			switch m.tab {
 			case TabLog:
-				m.tab = TabVM
+				m.tab = TabSettings
 			case TabStats:
 				m.tab = TabLog
 			case TabVM:
 				m.tab = TabStats
+			case TabSettings:
+				m.tab = TabVM
 			}
 			if m.tab == TabVM {
 				if m.apiClient != nil {
@@ -163,6 +175,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.logView.ScrollUp()
 			} else if m.tab == TabVM {
 				m.vmView, _ = m.vmView.Update(msg)
+			} else if m.tab == TabSettings {
+				m.settingsView, _ = m.settingsView.Update(msg)
 			}
 			return m, nil
 		case "down", "j":
@@ -170,8 +184,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.logView.ScrollDown()
 			} else if m.tab == TabVM {
 				m.vmView, _ = m.vmView.Update(msg)
+			} else if m.tab == TabSettings {
+				m.settingsView, _ = m.settingsView.Update(msg)
 			}
 			return m, nil
+		case "enter", " ":
+			if m.tab == TabSettings {
+				m.settingsView, _ = m.settingsView.Update(msg)
+				return m, nil
+			}
 		}
 
 	case VMViewMsg:
@@ -212,6 +233,8 @@ func (m Model) View() string {
 		b.WriteString(m.stats.View())
 	case TabVM:
 		b.WriteString(m.vmView.View())
+	case TabSettings:
+		b.WriteString(m.settingsView.View())
 	}
 
 	b.WriteString(m.renderFooter())
@@ -223,6 +246,7 @@ func (m Model) renderHeader() string {
 	logTab := TabInactiveStyle.Render(" Log ")
 	statsTab := TabInactiveStyle.Render(" Stats ")
 	vmTab := TabInactiveStyle.Render(" Models ")
+	settingsTab := TabInactiveStyle.Render(" Settings ")
 
 	if m.tab == TabLog {
 		logTab = TabActiveStyle.Render(" Log ")
@@ -230,6 +254,8 @@ func (m Model) renderHeader() string {
 		statsTab = TabActiveStyle.Render(" Stats ")
 	} else if m.tab == TabVM {
 		vmTab = TabActiveStyle.Render(" Models ")
+	} else if m.tab == TabSettings {
+		settingsTab = TabActiveStyle.Render(" Settings ")
 	}
 
 	title := TitleStyle.Render("llm-router")
@@ -239,7 +265,7 @@ func (m Model) renderHeader() string {
 		mode = MutedStyle.Render(" [remote]")
 	}
 
-	return fmt.Sprintf("%s%s  %s %s %s", title, mode, logTab, statsTab, vmTab)
+	return fmt.Sprintf("%s%s  %s %s %s %s", title, mode, logTab, statsTab, vmTab, settingsTab)
 }
 
 func (m Model) renderFooter() string {
@@ -247,15 +273,15 @@ func (m Model) renderFooter() string {
 	return lipgloss.Place(m.width, 1, lipgloss.Left, lipgloss.Bottom, help)
 }
 
-func Run(logChan <-chan proxy.RequestLog, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository) {
-	p := tea.NewProgram(New(logChan, vmRepo, modelRepo, tagRepo, providerRepo), tea.WithAltScreen())
+func Run(logChan <-chan proxy.RequestLog, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, cfg *config.Config) {
+	p := tea.NewProgram(New(logChan, vmRepo, modelRepo, tagRepo, providerRepo, cfg), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("TUI error: %v\n", err)
 	}
 }
 
-func RunRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog) {
-	p := tea.NewProgram(NewRemote(apiClient, logChan), tea.WithAltScreen())
+func RunRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog, cfg *config.Config) {
+	p := tea.NewProgram(NewRemote(apiClient, logChan, cfg), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("TUI error: %v\n", err)
 	}

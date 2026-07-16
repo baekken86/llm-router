@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/chris/llm-router/internal/config"
 	"github.com/chris/llm-router/internal/proxy"
 	"github.com/chris/llm-router/internal/tui"
 )
@@ -42,5 +43,6 @@ func runAdmin(args []string) {
 		}
 	}()
 
-	tui.RunRemote(client, logChan)
+	cfg := config.New()
+	tui.RunRemote(client, logChan, cfg)
 }

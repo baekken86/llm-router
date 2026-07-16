@@ -56,6 +56,22 @@ type ResolvedResponse struct {
 	Models       []ResolvedModelResponse  `json:"models"`
 }
 
+type ModelWithProviderResponse struct {
+	ID           int64       `json:"id"`
+	ProviderID   int64       `json:"provider_id"`
+	ProviderName string      `json:"provider_name"`
+	Name         string      `json:"name"`
+	Tags         []TagResponse `json:"tags,omitempty"`
+}
+
+type TagResponse struct {
+	ID              int64  `json:"id"`
+	ModelID         int64  `json:"model_id"`
+	ReasoningEffort string `json:"reasoning_effort"`
+	Key             string `json:"key"`
+	Value           string `json:"value"`
+}
+
 type APIClient struct {
 	baseURL    string
 	apiKey     string
@@ -112,6 +128,14 @@ func (c *APIClient) GetResolvedModels(vmID int64) ([]ResolvedModelResponse, erro
 		return nil, err
 	}
 	return resp.Models, nil
+}
+
+func (c *APIClient) GetModels() ([]ModelWithProviderResponse, error) {
+	var models []ModelWithProviderResponse
+	if err := c.doGET("/api/v1/models", &models); err != nil {
+		return nil, err
+	}
+	return models, nil
 }
 
 func (c *APIClient) StreamLogs(ch chan<- proxy.RequestLog) error {

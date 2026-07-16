@@ -97,8 +97,10 @@ func (m Model) Init() tea.Cmd {
 	if m.apiClient != nil {
 		cmds = append(cmds, m.refreshStats())
 		cmds = append(cmds, FetchVMData(m.apiClient))
+		cmds = append(cmds, FetchRawModels(m.apiClient))
 	} else if m.vmRepo != nil {
 		cmds = append(cmds, FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo))
+		cmds = append(cmds, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo))
 	}
 	return tea.Batch(cmds...)
 }
@@ -180,9 +182,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.tab == TabVM {
 				if m.apiClient != nil {
-					return m, FetchVMData(m.apiClient)
+					return m, tea.Batch(FetchVMData(m.apiClient), FetchRawModels(m.apiClient))
 				} else if m.vmRepo != nil {
-					return m, FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo)
+					return m, tea.Batch(FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo), FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo))
+				}
+			}
+			return m, nil
+		case "left", "h":
+			if m.tab == TabLog {
+				m.logView.ScrollLeft()
+			} else if m.tab == TabSyslog {
+				m.sysLogView.ScrollLeft()
+			} else if m.tab == TabVM {
+				prevTab := m.vmView.modelTab
+				m.vmView, _ = m.vmView.Update(msg)
+				if prevTab != m.vmView.modelTab {
+					if m.vmView.modelTab == ModelTabRaw {
+						if m.apiClient != nil {
+							return m, FetchRawModels(m.apiClient)
+						} else if m.vmRepo != nil {
+							return m, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo)
+						}
+					}
+				}
+			}
+			return m, nil
+		case "right", "l":
+			if m.tab == TabLog {
+				m.logView.ScrollRight()
+			} else if m.tab == TabSyslog {
+				m.sysLogView.ScrollRight()
+			} else if m.tab == TabVM {
+				prevTab := m.vmView.modelTab
+				m.vmView, _ = m.vmView.Update(msg)
+				if prevTab != m.vmView.modelTab {
+					if m.vmView.modelTab == ModelTabVirtual {
+						if m.apiClient != nil {
+							return m, FetchVMData(m.apiClient)
+						} else if m.vmRepo != nil {
+							return m, FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo)
+						}
+					}
 				}
 			}
 			return m, nil
@@ -190,10 +230,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.tab == TabStats {
 				m.stats, _ = m.stats.Update(StatsResetMsg{})
 			} else if m.tab == TabVM {
-				if m.apiClient != nil {
-					return m, FetchVMData(m.apiClient)
-				} else if m.vmRepo != nil {
-					return m, FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo)
+				if m.vmView.modelTab == ModelTabRaw {
+					if m.apiClient != nil {
+						return m, FetchRawModels(m.apiClient)
+					} else if m.vmRepo != nil {
+						return m, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo)
+					}
+				} else {
+					if m.apiClient != nil {
+						return m, FetchVMData(m.apiClient)
+					} else if m.vmRepo != nil {
+						return m, FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo)
+					}
 				}
 			}
 			return m, nil
@@ -217,20 +265,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.vmView, _ = m.vmView.Update(msg)
 			} else if m.tab == TabSettings {
 				m.settingsView, _ = m.settingsView.Update(msg)
-			}
-			return m, nil
-		case "left", "h":
-			if m.tab == TabLog {
-				m.logView.ScrollLeft()
-			} else if m.tab == TabSyslog {
-				m.sysLogView.ScrollLeft()
-			}
-			return m, nil
-		case "right", "l":
-			if m.tab == TabLog {
-				m.logView.ScrollRight()
-			} else if m.tab == TabSyslog {
-				m.sysLogView.ScrollRight()
 			}
 			return m, nil
 		case "pgup":
@@ -264,6 +298,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case VMViewMsg:
+		m.vmView, _ = m.vmView.Update(msg)
+		return m, nil
+
+	case RawModelListMsg:
 		m.vmView, _ = m.vmView.Update(msg)
 		return m, nil
 
@@ -342,15 +380,31 @@ func (m Model) renderHeader() string {
 		mode = MutedStyle.Render(" [remote]")
 	}
 
-	return fmt.Sprintf("%s%s  %s %s %s %s %s", title, mode, logTab, syslogTab, statsTab, vmTab, settingsTab)
+	header := fmt.Sprintf("%s%s  %s %s %s %s %s", title, mode, logTab, syslogTab, statsTab, vmTab, settingsTab)
+
+	if m.tab == TabVM {
+		subTabSep := MutedStyle.Render("  |  ")
+		rawLabel := MutedStyle.Render("Raw")
+		virtualLabel := MutedStyle.Render("Virtual")
+		if m.vmView.modelTab == ModelTabRaw {
+			rawLabel = SuccessStyle.Render("Raw")
+		} else {
+			virtualLabel = SuccessStyle.Render("Virtual")
+		}
+		header += subTabSep + rawLabel + MutedStyle.Render(" / ") + virtualLabel
+	}
+
+	return header
 }
 
 func (m Model) renderFooter() string {
 	help := HelpStyle.Render("tab/shift+tab: switch view  ↑/↓: scroll  ←/→: horizontal scroll  pgup/pgdown: jump  r: reset stats  q: quit")
-	if m.tab == TabVM && m.vmView.detailMode {
-		help = HelpStyle.Render("↑/↓: navigate  enter: select  esc: back  tab: switch view  q: quit")
+	if m.tab == TabVM && m.vmView.modelTab == ModelTabRaw {
+		help = HelpStyle.Render("↑/↓: navigate  ←/→: switch to Virtual  tab: switch view  r: refresh  q: quit")
+	} else if m.tab == TabVM && m.vmView.detailMode {
+		help = HelpStyle.Render("↑/↓: navigate  enter: select  esc: back  ←/→: switch tab  tab: switch view  q: quit")
 	} else if m.tab == TabVM {
-		help = HelpStyle.Render("↑/↓: navigate  enter: detail view  tab: switch view  r: refresh  q: quit")
+		help = HelpStyle.Render("↑/↓: navigate  enter: detail view  ←/→: switch to Raw  tab: switch view  r: refresh  q: quit")
 	}
 	return lipgloss.Place(m.width, 1, lipgloss.Left, lipgloss.Bottom, help)
 }

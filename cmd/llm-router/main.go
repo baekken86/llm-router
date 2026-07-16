@@ -125,6 +125,8 @@ func runProxy(args []string) {
 	dbPath := fs.String("db", "./data/llm-router.db", "SQLite database path")
 	encryptKey := fs.String("encryption-key", "", "32-byte hex encryption key")
 	noTUI := fs.Bool("no-tui", false, "Disable terminal UI")
+	rtkEnabled := fs.Bool("rtk", true, "Enable RTK token compression")
+	cavemanEnabled := fs.Bool("caveman", true, "Enable Caveman output compression")
 	fs.Parse(args)
 
 	if envPort := os.Getenv("LLM_ROUTER_PORT"); envPort != "" {
@@ -178,6 +180,12 @@ func runProxy(args []string) {
 	}()
 
 	engine := proxy.NewEngine(vmService, providerService, logger, logChan)
+	if !*rtkEnabled {
+		engine.GetRTK().SetEnabled(false)
+	}
+	if !*cavemanEnabled {
+		engine.GetCaveman().SetEnabled(false)
+	}
 
 	providerHandler := handlers.NewProviderHandler(providerService, modelService)
 	modelHandler := handlers.NewModelHandler(modelService)

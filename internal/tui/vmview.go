@@ -17,6 +17,15 @@ type VMViewMsg struct {
 	VirtualModels []VirtualModelInfo
 }
 
+type RawModelListMsg struct {
+	RawModels map[string][]RawModelInfo
+}
+
+type RawModelInfo struct {
+	Name string
+	Tags map[string]string
+}
+
 type VirtualModelInfo struct {
 	Name           string
 	Filter         string
@@ -34,11 +43,22 @@ type ResolvedModelInfo struct {
 	Position        int
 }
 
+type ModelTab int
+
+const (
+	ModelTabRaw ModelTab = iota
+	ModelTabVirtual
+)
+
 type VMViewModel struct {
 	items          []VirtualModelInfo
 	cursor         int
 	resolvedCursor int
 	detailMode     bool
+	modelTab       ModelTab
+	rawModels      map[string][]RawModelInfo
+	rawProviders   []string
+	rawCursor      int
 	width          int
 	height         int
 	loaded         bool
@@ -53,10 +73,38 @@ func (m VMViewModel) Update(msg tea.Msg) (VMViewModel, tea.Cmd) {
 	case VMViewMsg:
 		m.items = msg.VirtualModels
 		m.loaded = true
+	case RawModelListMsg:
+		m.rawModels = msg.RawModels
+		m.rawProviders = make([]string, 0, len(msg.RawModels))
+		for p := range msg.RawModels {
+			m.rawProviders = append(m.rawProviders, p)
+		}
+		sort.Strings(m.rawProviders)
+		m.loaded = true
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "up", "k":
+		case "left", "h":
 			if m.detailMode {
+				break
+			}
+			if m.modelTab == ModelTabVirtual {
+				m.modelTab = ModelTabRaw
+				m.cursor = 0
+			}
+		case "right", "l":
+			if m.detailMode {
+				break
+			}
+			if m.modelTab == ModelTabRaw {
+				m.modelTab = ModelTabVirtual
+				m.cursor = 0
+			}
+		case "up", "k":
+			if m.modelTab == ModelTabRaw {
+				if m.rawCursor > 0 {
+					m.rawCursor--
+				}
+			} else if m.detailMode {
 				if m.resolvedCursor > 0 {
 					m.resolvedCursor--
 				}
@@ -66,7 +114,15 @@ func (m VMViewModel) Update(msg tea.Msg) (VMViewModel, tea.Cmd) {
 				}
 			}
 		case "down", "j":
-			if m.detailMode {
+			if m.modelTab == ModelTabRaw {
+				total := 0
+				for _, models := range m.rawModels {
+					total += len(models)
+				}
+				if m.rawCursor < total-1 {
+					m.rawCursor++
+				}
+			} else if m.detailMode {
 				if m.cursor < len(m.items) {
 					vm := m.items[m.cursor]
 					if m.resolvedCursor < len(vm.ResolvedModels)-1 {
@@ -79,7 +135,7 @@ func (m VMViewModel) Update(msg tea.Msg) (VMViewModel, tea.Cmd) {
 				}
 			}
 		case "enter":
-			if !m.detailMode && len(m.items) > 0 {
+			if m.modelTab == ModelTabVirtual && !m.detailMode && len(m.items) > 0 {
 				m.detailMode = true
 				m.resolvedCursor = 0
 			}
@@ -95,7 +151,14 @@ func (m VMViewModel) Update(msg tea.Msg) (VMViewModel, tea.Cmd) {
 
 func (m VMViewModel) View() string {
 	if !m.loaded {
+		if m.modelTab == ModelTabRaw {
+			return MutedStyle.Render("  Loading raw models...")
+		}
 		return MutedStyle.Render("  Loading virtual models...")
+	}
+
+	if m.modelTab == ModelTabRaw {
+		return m.viewRawModels()
 	}
 
 	if len(m.items) == 0 {
@@ -107,6 +170,95 @@ func (m VMViewModel) View() string {
 	}
 
 	return m.viewOverview()
+}
+
+func (m VMViewModel) viewRawModels() string {
+	if len(m.rawModels) == 0 {
+		return MutedStyle.Render("  No raw models found. Discover models from providers first.")
+	}
+
+	// Collect all tag keys across all raw models for column headers
+	seen := make(map[string]bool)
+	var tagKeys []string
+	for _, models := range m.rawModels {
+		for _, rm := range models {
+			for k := range rm.Tags {
+				if !seen[k] {
+					seen[k] = true
+					tagKeys = append(tagKeys, k)
+				}
+			}
+		}
+	}
+
+	// Build a flat list with provider info for cursor tracking
+	type rawEntry struct {
+		provider string
+		model    RawModelInfo
+	}
+	var allEntries []rawEntry
+	for _, provider := range m.rawProviders {
+		for _, rm := range m.rawModels[provider] {
+			allEntries = append(allEntries, rawEntry{provider: provider, model: rm})
+		}
+	}
+
+	var b strings.Builder
+
+	// Find which provider group the cursor is in
+	cursorIdx := 0
+	for _, provider := range m.rawProviders {
+		models := m.rawModels[provider]
+		b.WriteString(fmt.Sprintf("  %s%s (%d models)\n",
+			InfoStyle.Render(provider),
+			MutedStyle.Render(fmt.Sprintf("")),
+			len(models),
+		))
+
+		// Column header
+		header := "    "
+		header += padRight("model", 5)
+		for _, key := range tagKeys {
+			header += "  " + padRight(abbrevKey(key), len(abbrevKey(key)))
+		}
+		b.WriteString(MutedStyle.Render(header))
+
+		// Separator
+		sep := "    " + strings.Repeat("-", 5)
+		for _, key := range tagKeys {
+			sep += "  " + strings.Repeat("-", len(abbrevKey(key)))
+		}
+		b.WriteString(MutedStyle.Render(sep))
+		b.WriteString("\n")
+
+		for _, rm := range models {
+			cursor := "  "
+			if cursorIdx == m.rawCursor {
+				cursor = SuccessStyle.Render("▸ ")
+			}
+
+			line := "    " + cursor
+			line += padRight(trunc(rm.Name, 5), 5)
+			for _, key := range tagKeys {
+				val := rm.Tags[key]
+				if val == "" {
+					val = "-"
+				}
+				line += "  " + padRight(val, len(abbrevKey(key)))
+			}
+
+			if cursorIdx == m.rawCursor {
+				b.WriteString(SuccessStyle.Render(line))
+			} else {
+				b.WriteString(line)
+			}
+			b.WriteString("\n")
+			cursorIdx++
+		}
+		b.WriteString("\n")
+	}
+
+	return b.String()
 }
 
 func (m VMViewModel) viewOverview() string {
@@ -536,6 +688,38 @@ func FetchVMDataLocal(vmRepo repository.VirtualModelRepository, modelRepo reposi
 	}
 }
 
+func FetchRawModelsLocal(modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		allModels, err := modelRepo.ListAll(ctx)
+		if err != nil {
+			return RawModelListMsg{}
+		}
+
+		rawModels := make(map[string][]RawModelInfo)
+		for _, m := range allModels {
+			provider, _ := providerRepo.GetByID(ctx, m.ProviderID)
+			if provider == nil {
+				continue
+			}
+
+			tags, _ := tagRepo.GetByModel(ctx, m.ID)
+			tagMap := make(map[string]string)
+			for _, t := range tags {
+				tagMap["mc."+t.Key] = t.Value
+			}
+
+			rawModels[provider.Name] = append(rawModels[provider.Name], RawModelInfo{
+				Name: m.Name,
+				Tags: tagMap,
+			})
+		}
+
+		return RawModelListMsg{RawModels: rawModels}
+	}
+}
+
 func sortResolved(resolved []ResolvedModelInfo, sortExpr models.SortExpr) {
 	if len(sortExpr) == 0 {
 		return
@@ -648,4 +832,33 @@ func parseFloat(s string) float64 {
 	var f float64
 	fmt.Sscanf(s, "%f", &f)
 	return f
+}
+
+func FetchRawModels(client *APIClient) tea.Cmd {
+	return func() tea.Msg {
+		if client == nil {
+			return RawModelListMsg{}
+		}
+
+		models, err := client.GetModels()
+		if err != nil {
+			return RawModelListMsg{}
+		}
+
+		rawModels := make(map[string][]RawModelInfo)
+		for _, m := range models {
+			tagMap := make(map[string]string)
+			for _, t := range m.Tags {
+				if t.ReasoningEffort == "" || t.ReasoningEffort == "default" {
+					tagMap["mc."+t.Key] = t.Value
+				}
+			}
+			rawModels[m.ProviderName] = append(rawModels[m.ProviderName], RawModelInfo{
+				Name: m.Name,
+				Tags: tagMap,
+			})
+		}
+
+		return RawModelListMsg{RawModels: rawModels}
+	}
 }

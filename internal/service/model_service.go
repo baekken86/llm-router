@@ -11,9 +11,15 @@ import (
 	"github.com/chris/llm-router/internal/repository"
 )
 
+type ModelWithProvider struct {
+	models.Model
+	ProviderName string `json:"provider_name"`
+}
+
 type ModelService interface {
 	Discover(ctx context.Context, providerID int64) ([]models.Model, error)
 	ListByProvider(ctx context.Context, providerID int64) ([]models.Model, error)
+	ListAll(ctx context.Context) ([]ModelWithProvider, error)
 	GetByID(ctx context.Context, id int64) (*models.Model, error)
 	SetTags(ctx context.Context, modelID int64, tags map[string]string) error
 	GetTags(ctx context.Context, modelID int64) ([]models.Tag, error)
@@ -21,10 +27,11 @@ type ModelService interface {
 }
 
 type modelService struct {
-	modelRepo    repository.ModelRepository
-	tagRepo      repository.TagRepository
-	providerRepo repository.ProviderRepository
-	provService  ProviderService
+	modelRepo      repository.ModelRepository
+	tagRepo        repository.TagRepository
+	providerRepo   repository.ProviderRepository
+	provService    ProviderService
+	globalMetaRepo repository.GlobalMetadataRepository
 }
 
 func NewModelService(
@@ -32,12 +39,14 @@ func NewModelService(
 	tagRepo repository.TagRepository,
 	providerRepo repository.ProviderRepository,
 	provService ProviderService,
+	globalMetaRepo repository.GlobalMetadataRepository,
 ) ModelService {
 	return &modelService{
-		modelRepo:    modelRepo,
-		tagRepo:      tagRepo,
-		providerRepo: providerRepo,
-		provService:  provService,
+		modelRepo:      modelRepo,
+		tagRepo:        tagRepo,
+		providerRepo:   providerRepo,
+		provService:    provService,
+		globalMetaRepo: globalMetaRepo,
 	}
 }
 
@@ -77,6 +86,16 @@ func (s *modelService) Discover(ctx context.Context, providerID int64) ([]models
 		if err != nil {
 			return nil, fmt.Errorf("upsert model %s: %w", name, err)
 		}
+
+		if s.globalMetaRepo != nil {
+			metadata, err := s.globalMetaRepo.GetByModel(ctx, m.Name)
+			if err == nil && len(metadata) > 0 {
+				for effort, tags := range metadata {
+					s.tagRepo.Set(ctx, m.ID, effort, tags)
+				}
+			}
+		}
+
 		discovered = append(discovered, *m)
 	}
 
@@ -113,6 +132,38 @@ func fetchModels(baseURL, apiKey string, apiType models.APIType) ([]string, erro
 		names = append(names, m.ID)
 	}
 	return names, nil
+}
+
+func (s *modelService) ListAll(ctx context.Context) ([]ModelWithProvider, error) {
+	allModels, err := s.modelRepo.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []ModelWithProvider
+	for _, m := range allModels {
+		tags, err := s.tagRepo.GetByModel(ctx, m.ID)
+		if err != nil {
+			return nil, err
+		}
+		m.Tags = tags
+
+		provider, err := s.providerRepo.GetByID(ctx, m.ProviderID)
+		if err != nil {
+			return nil, err
+		}
+		providerName := ""
+		if provider != nil {
+			providerName = provider.Name
+		}
+
+		result = append(result, ModelWithProvider{
+			Model:        m,
+			ProviderName: providerName,
+		})
+	}
+
+	return result, nil
 }
 
 func (s *modelService) ListByProvider(ctx context.Context, providerID int64) ([]models.Model, error) {

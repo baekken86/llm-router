@@ -20,11 +20,21 @@ func NewModelHandler(ms service.ModelService) *ModelHandler {
 
 func (h *ModelHandler) Routes() chi.Router {
 	r := chi.NewRouter()
+	r.Get("/", h.ListAll)
 	r.Get("/{id}", h.GetByID)
 	r.Put("/{id}/tags", h.SetTags)
 	r.Get("/{id}/tags", h.GetTags)
 	r.Delete("/{id}", h.Delete)
 	return r
+}
+
+func (h *ModelHandler) ListAll(w http.ResponseWriter, r *http.Request) {
+	models, err := h.modelService.ListAll(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, models)
 }
 
 func (h *ModelHandler) GetByID(w http.ResponseWriter, r *http.Request) {

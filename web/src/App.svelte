@@ -4,12 +4,14 @@
   import { apiFetch } from './lib/api.js';
   import VirtualModelList from './components/VirtualModelList.svelte';
   import VirtualModelForm from './components/VirtualModelForm.svelte';
+  import RawModelList from './components/RawModelList.svelte';
   import LoginPrompt from './components/LoginPrompt.svelte';
   import Toast from './components/Toast.svelte';
 
   let view = $state('list');
   let editingId = $state(null);
   let authenticated = $state(false);
+  let mainTab = $state('virtual');
 
   function navigate(target, id = null) {
     view = target;
@@ -53,15 +55,23 @@
     <nav class="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center gap-6">
       <h1 class="text-lg font-bold text-emerald-400">LLM Router</h1>
       <button
-        class="text-sm {view === 'list' ? 'text-white' : 'text-gray-400 hover:text-white'}"
-        onclick={() => navigate('list')}
+        class="text-sm {mainTab === 'raw' ? 'text-white border-b-2 border-emerald-400 pb-1' : 'text-gray-400 hover:text-white pb-1'}"
+        onclick={() => { mainTab = 'raw'; view = 'list'; }}
+      >
+        Raw Models
+      </button>
+      <button
+        class="text-sm {mainTab === 'virtual' ? 'text-white border-b-2 border-emerald-400 pb-1' : 'text-gray-400 hover:text-white pb-1'}"
+        onclick={() => { mainTab = 'virtual'; view = 'list'; }}
       >
         Virtual Models
       </button>
     </nav>
 
     <main class="max-w-6xl mx-auto p-6">
-      {#if view === 'list'}
+      {#if mainTab === 'raw'}
+        <RawModelList />
+      {:else if view === 'list'}
         <VirtualModelList
           onCreate={() => navigate('create')}
           onEdit={(id) => navigate('edit', id)}

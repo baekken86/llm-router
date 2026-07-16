@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -14,6 +16,11 @@ import (
 var migrationsFS embed.FS
 
 func Open(dbPath string) (*sql.DB, error) {
+	dir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("create db dir: %w", err)
+	}
+
 	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_foreign_keys=ON")
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)

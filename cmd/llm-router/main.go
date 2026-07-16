@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -53,6 +54,9 @@ func main() {
 		case "import":
 			runImportCmd(os.Args[2:])
 			return
+		case "seed-virtual-models":
+			runSeedVirtualModels(os.Args[2:])
+			return
 		case "help", "--help", "-h":
 			printUsage()
 			return
@@ -72,6 +76,7 @@ Usage:
   llm-router add-provider         Add a custom provider
   llm-router discover             Discover models from a provider
   llm-router tag                  Set metadata tags on models
+  llm-router seed-virtual-models  Create default virtual models (docs, exploration, planning, etc.)
   llm-router admin [flags]        Connect to running proxy as admin viewer
   llm-router import [flags]       Import CSV metadata
   llm-router help                 Show this help
@@ -91,7 +96,7 @@ Examples:
 
 Proxy flags:
   --port int                      HTTP port (default 8080, env LLM_ROUTER_PORT)
-  --db string                     SQLite path (default ./data/llm-router.db)
+  --db string                     SQLite path (default ~/.local/share/llm-router/llm-router.db)
   --encryption-key string         32-byte hex key (env LLM_ROUTER_ENCRYPTION_KEY)
   --no-tui                        Disable terminal UI
 
@@ -121,9 +126,12 @@ Import flags:
 }
 
 func runProxy(args []string) {
+	home, _ := os.UserHomeDir()
+	defaultDB := filepath.Join(home, ".local", "share", "llm-router", "llm-router.db")
+
 	fs := flag.NewFlagSet("proxy", flag.ExitOnError)
 	port := fs.Int("port", 8080, "HTTP server port")
-	dbPath := fs.String("db", "./data/llm-router.db", "SQLite database path")
+	dbPath := fs.String("db", defaultDB, "SQLite database path")
 	encryptKey := fs.String("encryption-key", "", "32-byte hex encryption key")
 	noTUI := fs.Bool("no-tui", false, "Disable terminal UI")
 	fs.Parse(args)

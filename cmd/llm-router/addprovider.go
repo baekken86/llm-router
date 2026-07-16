@@ -54,6 +54,7 @@ func runAddProvider(args []string) {
 	defer database.Close()
 
 	providerRepo := repository.NewProviderRepository(database)
+	providerMetadataRepo := repository.NewProviderMetadataRepository(database)
 	ctx := context.Background()
 
 	existing, _ := providerRepo.GetByName(ctx, *name)
@@ -62,7 +63,7 @@ func runAddProvider(args []string) {
 		os.Exit(1)
 	}
 
-	providerService := service.NewProviderService(providerRepo, make([]byte, 32))
+	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, make([]byte, 32))
 	_, err = providerService.Create(ctx, models.CreateProviderRequest{
 		Name:    *name,
 		APIType: models.APIType(*apiType),

@@ -1,0 +1,46 @@
+{
+  "spec": "002",
+  "status": "complete",
+  "created": "2026-07-16",
+  "tags": ["frontend", "web"],
+  "description": "Svelte SPA embedded in Go binary for virtual model management with visual condition builder",
+  "summary": "Web UI for Virtual Models",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Scaffold Frontend Project",
+      "description": "Initialize Svelte 5 + Vite + Tailwind CSS project in web/ directory. Configure build output to web/dist/. Create base component structure and API client.",
+      "tasks": ["T001", "T002", "T003"]
+    },
+    {
+      "id": "P2",
+      "title": "Backend API Addition",
+      "description": "Add GET /api/v1/metadata/fields endpoint to serve field definitions. Mount in router.",
+      "tasks": ["T004"]
+    },
+    {
+      "id": "P3",
+      "title": "Core Components",
+      "description": "Build the condition builder (FieldSelector, OperatorSelector, ValueInput) and sort builder components with type-aware predicate selection.",
+      "tasks": ["T005", "T006", "T007", "T008"]
+    },
+    {
+      "id": "P4",
+      "title": "Virtual Model CRUD Views",
+      "description": "Build list view, create/edit form, resolved preview, delete confirmation. Wire up to API.",
+      "tasks": ["T009", "T010", "T011", "T012"]
+    },
+    {
+      "id": "P5",
+      "title": "Go Embedding & SPA Serving",
+      "description": "Embed web/dist/ in Go binary via go:embed. Add SPA catch-all route to chi router. Handle static assets.",
+      "tasks": ["T013", "T014"]
+    },
+    {
+      "id": "P6",
+      "title": "Polish & Auth",
+      "description": "Login prompt for admin key, error handling with toasts, responsive layout, dark theme.",
+      "tasks": ["T015", "T016"]
+    }
+  ]
+}

@@ -17,20 +17,23 @@ type ProviderService interface {
 	Create(ctx context.Context, req models.CreateProviderRequest) (*models.Provider, error)
 	GetByID(ctx context.Context, id int64) (*models.Provider, error)
 	List(ctx context.Context) ([]models.Provider, error)
+	ListByMetadata(ctx context.Context, filters map[string]string) ([]models.Provider, error)
 	Update(ctx context.Context, id int64, req models.UpdateProviderRequest) (*models.Provider, error)
 	Delete(ctx context.Context, id int64) error
 	DecryptAPIKey(encrypted string) (string, error)
 }
 
 type providerService struct {
-	repo      repository.ProviderRepository
+	repo       repository.ProviderRepository
+	metadataRepo repository.ProviderMetadataRepository
 	encryptKey []byte
 }
 
-func NewProviderService(repo repository.ProviderRepository, encryptKey []byte) ProviderService {
+func NewProviderService(repo repository.ProviderRepository, metadataRepo repository.ProviderMetadataRepository, encryptKey []byte) ProviderService {
 	return &providerService{
-		repo:       repo,
-		encryptKey: encryptKey,
+		repo:         repo,
+		metadataRepo: metadataRepo,
+		encryptKey:   encryptKey,
 	}
 }
 
@@ -50,15 +53,58 @@ func (s *providerService) Create(ctx context.Context, req models.CreateProviderR
 	if err := s.repo.Create(ctx, p); err != nil {
 		return nil, err
 	}
+
+	if len(req.Metadata) > 0 {
+		if err := s.metadataRepo.Set(ctx, p.ID, req.Metadata); err != nil {
+			return nil, fmt.Errorf("set metadata: %w", err)
+		}
+		p.Metadata, _ = s.metadataRepo.GetByProvider(ctx, p.ID)
+	}
+
 	return p, nil
 }
 
 func (s *providerService) GetByID(ctx context.Context, id int64) (*models.Provider, error) {
-	return s.repo.GetByID(ctx, id)
+	p, err := s.repo.GetByID(ctx, id)
+	if err != nil || p == nil {
+		return p, err
+	}
+	p.Metadata, _ = s.metadataRepo.GetByProvider(ctx, p.ID)
+	return p, nil
 }
 
 func (s *providerService) List(ctx context.Context) ([]models.Provider, error) {
-	return s.repo.List(ctx)
+	providers, err := s.repo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.attachMetadata(ctx, providers)
+}
+
+func (s *providerService) ListByMetadata(ctx context.Context, filters map[string]string) ([]models.Provider, error) {
+	providers, err := s.repo.ListByMetadata(ctx, filters)
+	if err != nil {
+		return nil, err
+	}
+	return s.attachMetadata(ctx, providers)
+}
+
+func (s *providerService) attachMetadata(ctx context.Context, providers []models.Provider) ([]models.Provider, error) {
+	if len(providers) == 0 {
+		return providers, nil
+	}
+	ids := make([]int64, len(providers))
+	for i, p := range providers {
+		ids[i] = p.ID
+	}
+	allMeta, err := s.metadataRepo.GetByProviders(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range providers {
+		providers[i].Metadata = allMeta[providers[i].ID]
+	}
+	return providers, nil
 }
 
 func (s *providerService) Update(ctx context.Context, id int64, req models.UpdateProviderRequest) (*models.Provider, error) {
@@ -90,10 +136,21 @@ func (s *providerService) Update(ctx context.Context, id int64, req models.Updat
 	if err := s.repo.Update(ctx, p); err != nil {
 		return nil, err
 	}
+
+	if req.Metadata != nil {
+		if err := s.metadataRepo.Set(ctx, p.ID, *req.Metadata); err != nil {
+			return nil, fmt.Errorf("set metadata: %w", err)
+		}
+	}
+
+	p.Metadata, _ = s.metadataRepo.GetByProvider(ctx, p.ID)
 	return p, nil
 }
 
 func (s *providerService) Delete(ctx context.Context, id int64) error {
+	if err := s.metadataRepo.DeleteByProvider(ctx, id); err != nil {
+		return fmt.Errorf("delete metadata: %w", err)
+	}
 	return s.repo.Delete(ctx, id)
 }
 

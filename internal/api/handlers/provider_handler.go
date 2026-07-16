@@ -57,7 +57,20 @@ func (h *ProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ProviderHandler) List(w http.ResponseWriter, r *http.Request) {
-	providers, err := h.providerService.List(r.Context())
+	filters := make(map[string]string)
+	for key, values := range r.URL.Query() {
+		if len(values) > 0 {
+			filters[key] = values[0]
+		}
+	}
+
+	var providers []models.Provider
+	var err error
+	if len(filters) > 0 {
+		providers, err = h.providerService.ListByMetadata(r.Context(), filters)
+	} else {
+		providers, err = h.providerService.List(r.Context())
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

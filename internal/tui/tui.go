@@ -17,6 +17,10 @@ type LogMsg struct {
 	Log proxy.RequestLog
 }
 
+type SysLogMsg struct {
+	Line string
+}
+
 type StatsRefreshMsg struct {
 	Stats *StatsResponse
 }
@@ -25,6 +29,7 @@ type Tab int
 
 const (
 	TabLog Tab = iota
+	TabSyslog
 	TabStats
 	TabVM
 	TabSettings
@@ -32,6 +37,7 @@ const (
 
 type Model struct {
 	logView      LogViewModel
+	sysLogView   SysLogViewModel
 	stats        StatsModel
 	vmView       VMViewModel
 	settingsView SettingsModel
@@ -40,6 +46,7 @@ type Model struct {
 	height       int
 	ready        bool
 	logChan      <-chan proxy.RequestLog
+	syslogChan   <-chan string
 	apiClient    *APIClient
 	vmRepo       repository.VirtualModelRepository
 	modelRepo    repository.ModelRepository
@@ -48,14 +55,16 @@ type Model struct {
 	config       *config.Config
 }
 
-func New(logChan <-chan proxy.RequestLog, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, cfg *config.Config) Model {
+func New(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, cfg *config.Config) Model {
 	return Model{
 		logView:      NewLogViewModel(500),
+		sysLogView:   NewSysLogViewModel(1000),
 		stats:        NewStatsModel(),
 		vmView:       NewVMViewModel(),
 		settingsView: NewSettingsModel(cfg),
 		tab:          TabLog,
 		logChan:      logChan,
+		syslogChan:   syslogChan,
 		vmRepo:       vmRepo,
 		modelRepo:    modelRepo,
 		tagRepo:      tagRepo,
@@ -64,14 +73,16 @@ func New(logChan <-chan proxy.RequestLog, vmRepo repository.VirtualModelReposito
 	}
 }
 
-func NewRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog, cfg *config.Config) Model {
+func NewRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog, syslogChan <-chan string, cfg *config.Config) Model {
 	return Model{
 		logView:      NewLogViewModel(500),
+		sysLogView:   NewSysLogViewModel(1000),
 		stats:        NewStatsModel(),
 		vmView:       NewVMViewModel(),
 		settingsView: NewSettingsModel(cfg),
 		tab:          TabLog,
 		logChan:      logChan,
+		syslogChan:   syslogChan,
 		apiClient:    apiClient,
 		config:       cfg,
 	}
@@ -80,6 +91,7 @@ func NewRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog, cfg *confi
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		m.waitForLog(),
+		m.waitForSyslog(),
 		tea.EnterAltScreen,
 	}
 	if m.apiClient != nil {
@@ -98,6 +110,16 @@ func (m Model) waitForLog() tea.Cmd {
 			return nil
 		}
 		return LogMsg{Log: log}
+	}
+}
+
+func (m Model) waitForSyslog() tea.Cmd {
+	return func() tea.Msg {
+		line, ok := <-m.syslogChan
+		if !ok {
+			return nil
+		}
+		return SysLogMsg{Line: line}
 	}
 }
 
@@ -121,6 +143,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.ready = true
 		m.logView.SetSize(msg.Width, msg.Height-4)
+		m.sysLogView.SetSize(msg.Width, msg.Height-4)
 		m.stats.SetSize(msg.Width, msg.Height-4)
 		m.vmView.SetSize(msg.Width, msg.Height-4)
 		return m, nil
@@ -132,6 +155,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab":
 			switch m.tab {
 			case TabLog:
+				m.tab = TabSyslog
+			case TabSyslog:
 				m.tab = TabStats
 			case TabStats:
 				m.tab = TabVM
@@ -144,8 +169,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.tab {
 			case TabLog:
 				m.tab = TabSettings
-			case TabStats:
+			case TabSyslog:
 				m.tab = TabLog
+			case TabStats:
+				m.tab = TabSyslog
 			case TabVM:
 				m.tab = TabStats
 			case TabSettings:
@@ -173,6 +200,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.tab == TabLog {
 				m.logView.ScrollUp()
+			} else if m.tab == TabSyslog {
+				m.sysLogView.ScrollUp()
 			} else if m.tab == TabVM {
 				m.vmView, _ = m.vmView.Update(msg)
 			} else if m.tab == TabSettings {
@@ -182,6 +211,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "down", "j":
 			if m.tab == TabLog {
 				m.logView.ScrollDown()
+			} else if m.tab == TabSyslog {
+				m.sysLogView.ScrollDown()
 			} else if m.tab == TabVM {
 				m.vmView, _ = m.vmView.Update(msg)
 			} else if m.tab == TabSettings {
@@ -191,6 +222,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter", " ":
 			if m.tab == TabSettings {
 				m.settingsView, _ = m.settingsView.Update(msg)
+				return m, nil
+			}
+			if m.tab == TabVM {
+				m.vmView, _ = m.vmView.Update(msg)
+				return m, nil
+			}
+		case "esc":
+			if m.tab == TabVM {
+				m.vmView, _ = m.vmView.Update(msg)
 				return m, nil
 			}
 		}
@@ -205,6 +245,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.stats, _ = m.stats.Update(StatsUpdateMsg{Log: msg.Log})
 		return m, m.waitForLog()
+
+	case SysLogMsg:
+		m.sysLogView.AddEntry(msg.Line)
+		return m, m.waitForSyslog()
 
 	case StatsRefreshMsg:
 		if msg.Stats != nil {
@@ -229,6 +273,8 @@ func (m Model) View() string {
 	switch m.tab {
 	case TabLog:
 		b.WriteString(m.logView.View())
+	case TabSyslog:
+		b.WriteString(m.sysLogView.View())
 	case TabStats:
 		b.WriteString(m.stats.View())
 	case TabVM:
@@ -244,12 +290,15 @@ func (m Model) View() string {
 
 func (m Model) renderHeader() string {
 	logTab := TabInactiveStyle.Render(" Log ")
+	syslogTab := TabInactiveStyle.Render(" Syslog ")
 	statsTab := TabInactiveStyle.Render(" Stats ")
 	vmTab := TabInactiveStyle.Render(" Models ")
 	settingsTab := TabInactiveStyle.Render(" Settings ")
 
 	if m.tab == TabLog {
 		logTab = TabActiveStyle.Render(" Log ")
+	} else if m.tab == TabSyslog {
+		syslogTab = TabActiveStyle.Render(" Syslog ")
 	} else if m.tab == TabStats {
 		statsTab = TabActiveStyle.Render(" Stats ")
 	} else if m.tab == TabVM {
@@ -265,24 +314,29 @@ func (m Model) renderHeader() string {
 		mode = MutedStyle.Render(" [remote]")
 	}
 
-	return fmt.Sprintf("%s%s  %s %s %s %s", title, mode, logTab, statsTab, vmTab, settingsTab)
+	return fmt.Sprintf("%s%s  %s %s %s %s %s", title, mode, logTab, syslogTab, statsTab, vmTab, settingsTab)
 }
 
 func (m Model) renderFooter() string {
 	help := HelpStyle.Render("tab/shift+tab: switch view  ↑/↓: scroll  r: reset stats  q: quit")
+	if m.tab == TabVM && m.vmView.detailMode {
+		help = HelpStyle.Render("↑/↓: navigate  enter: select  esc: back  tab: switch view  q: quit")
+	} else if m.tab == TabVM {
+		help = HelpStyle.Render("↑/↓: navigate  enter: detail view  tab: switch view  r: refresh  q: quit")
+	}
 	return lipgloss.Place(m.width, 1, lipgloss.Left, lipgloss.Bottom, help)
 }
 
-func Run(logChan <-chan proxy.RequestLog, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, cfg *config.Config, quit chan<- struct{}) {
-	p := tea.NewProgram(New(logChan, vmRepo, modelRepo, tagRepo, providerRepo, cfg), tea.WithAltScreen())
+func Run(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, cfg *config.Config, quit chan<- struct{}) {
+	p := tea.NewProgram(New(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, cfg), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("TUI error: %v\n", err)
 	}
 	close(quit)
 }
 
-func RunRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog, cfg *config.Config, quit chan<- struct{}) {
-	p := tea.NewProgram(NewRemote(apiClient, logChan, cfg), tea.WithAltScreen())
+func RunRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog, syslogChan <-chan string, cfg *config.Config, quit chan<- struct{}) {
+	p := tea.NewProgram(NewRemote(apiClient, logChan, syslogChan, cfg), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("TUI error: %v\n", err)
 	}

@@ -35,6 +35,7 @@ func runSetKey(args []string) {
 	defer database.Close()
 
 	providerRepo := repository.NewProviderRepository(database)
+	providerMetadataRepo := repository.NewProviderMetadataRepository(database)
 
 	ctx := context.Background()
 	provider, err := providerRepo.GetByName(ctx, *providerName)
@@ -43,7 +44,7 @@ func runSetKey(args []string) {
 		os.Exit(1)
 	}
 
-	providerService := service.NewProviderService(providerRepo, make([]byte, 32))
+	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, make([]byte, 32))
 	_, err = providerService.Update(ctx, provider.ID, models.UpdateProviderRequest{
 		APIKey: apiKey,
 	})

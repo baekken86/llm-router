@@ -23,15 +23,19 @@ type VirtualModelService interface {
 }
 
 type ResolvedModel struct {
-	Model    models.Model
-	Provider models.Provider
+	Model           models.Model
+	Provider        models.Provider
+	ReasoningEffort string
+	GlobalMetadata  map[string]string
 }
 
 type virtualModelService struct {
-	vmRepo       repository.VirtualModelRepository
-	modelRepo    repository.ModelRepository
-	tagRepo      repository.TagRepository
-	providerRepo repository.ProviderRepository
+	vmRepo           repository.VirtualModelRepository
+	modelRepo        repository.ModelRepository
+	tagRepo          repository.TagRepository
+	providerRepo     repository.ProviderRepository
+	providerMetaRepo repository.ProviderMetadataRepository
+	globalMetaRepo   repository.GlobalMetadataRepository
 }
 
 func NewVirtualModelService(
@@ -39,12 +43,16 @@ func NewVirtualModelService(
 	modelRepo repository.ModelRepository,
 	tagRepo repository.TagRepository,
 	providerRepo repository.ProviderRepository,
+	providerMetaRepo repository.ProviderMetadataRepository,
+	globalMetaRepo repository.GlobalMetadataRepository,
 ) VirtualModelService {
 	return &virtualModelService{
-		vmRepo:       vmRepo,
-		modelRepo:    modelRepo,
-		tagRepo:      tagRepo,
-		providerRepo: providerRepo,
+		vmRepo:           vmRepo,
+		modelRepo:        modelRepo,
+		tagRepo:          tagRepo,
+		providerRepo:     providerRepo,
+		providerMetaRepo: providerMetaRepo,
+		globalMetaRepo:   globalMetaRepo,
 	}
 }
 
@@ -149,28 +157,47 @@ func (s *virtualModelService) ResolveModels(ctx context.Context, vm *models.Virt
 
 	var resolved []ResolvedModel
 	for _, m := range allModels {
-		tags, err := s.tagRepo.GetByModel(ctx, m.ID)
+		efforts, err := s.tagRepo.GetAvailableEfforts(ctx, m.ID)
 		if err != nil {
 			return nil, err
 		}
-		m.Tags = tags
-
-		if !matchesFilter(m.Tags, filter) {
-			continue
+		if len(efforts) == 0 {
+			efforts = []string{""}
 		}
 
-		provider, err := s.providerRepo.GetByID(ctx, m.ProviderID)
-		if err != nil {
-			return nil, err
-		}
-		if provider == nil {
-			continue
-		}
+		for _, effort := range efforts {
+			tags, err := s.tagRepo.GetByModelEffort(ctx, m.ID, effort)
+			if err != nil {
+				return nil, err
+			}
+			m.Tags = tags
 
-		resolved = append(resolved, ResolvedModel{
-			Model:    m,
-			Provider: *provider,
-		})
+			provider, err := s.providerRepo.GetByID(ctx, m.ProviderID)
+			if err != nil {
+				return nil, err
+			}
+			if provider == nil {
+				continue
+			}
+
+			providerMeta, _ := s.providerMetaRepo.GetByProvider(ctx, provider.ID)
+
+			globalMeta, _ := s.globalMetaRepo.GetByModelEffort(ctx, m.Name, effort)
+			if len(globalMeta) == 0 {
+				globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, m.Name, "")
+			}
+
+			if !matchesFilter(m.Tags, filter, providerMeta, globalMeta) {
+				continue
+			}
+
+			resolved = append(resolved, ResolvedModel{
+				Model:           m,
+				Provider:        *provider,
+				ReasoningEffort: effort,
+				GlobalMetadata:  globalMeta,
+			})
+		}
 	}
 
 	sort.Slice(resolved, func(i, j int) bool {
@@ -180,18 +207,34 @@ func (s *virtualModelService) ResolveModels(ctx context.Context, vm *models.Virt
 	return resolved, nil
 }
 
-func matchesFilter(tags []models.Tag, filter models.FilterExpr) bool {
+func matchesFilter(tags []models.Tag, filter models.FilterExpr, providerMeta []models.ProviderMetadata, globalMeta map[string]string) bool {
 	if len(filter.And) == 0 {
 		return true
 	}
 
 	tagMap := make(map[string]string)
 	for _, t := range tags {
-		tagMap[t.Key] = t.Value
+		tagMap["mc."+t.Key] = t.Value
+	}
+
+	providerMap := make(map[string]string)
+	for _, pm := range providerMeta {
+		providerMap["p."+pm.Key] = pm.Value
+	}
+
+	modelMap := make(map[string]string)
+	for k, v := range globalMeta {
+		modelMap["m."+k] = v
 	}
 
 	for _, cond := range filter.And {
 		val, exists := tagMap[cond.Key]
+		if !exists {
+			val, exists = providerMap[cond.Key]
+		}
+		if !exists {
+			val, exists = modelMap[cond.Key]
+		}
 		if !exists {
 			return false
 		}
@@ -262,15 +305,40 @@ func toFloat(v interface{}) (float64, error) {
 }
 
 func compareModels(a, b ResolvedModel, sortExpr models.SortExpr) bool {
-	aMap := tagMap(a.Model.Tags)
-	bMap := tagMap(b.Model.Tags)
+	aTagMap := make(map[string]string)
+	for _, t := range a.Model.Tags {
+		aTagMap["mc."+t.Key] = t.Value
+	}
+	bTagMap := make(map[string]string)
+	for _, t := range b.Model.Tags {
+		bTagMap["mc."+t.Key] = t.Value
+	}
+
+	for k, v := range a.GlobalMetadata {
+		aTagMap["m."+k] = v
+	}
+	for k, v := range b.GlobalMetadata {
+		bTagMap["m."+k] = v
+	}
 
 	for _, s := range sortExpr {
-		aVal := aMap[s.Key]
-		bVal := bMap[s.Key]
+		aVal := aTagMap[s.Key]
+		bVal := bTagMap[s.Key]
+
+		aMissing := aVal == ""
+		bMissing := bVal == ""
+		if aMissing && bMissing {
+			continue
+		}
+		if aMissing {
+			return false
+		}
+		if bMissing {
+			return true
+		}
 
 		if s.Direction != "" {
-			cmp := strings.Compare(aVal, bVal)
+			cmp := compareNumeric(aVal, bVal)
 			if cmp == 0 {
 				continue
 			}
@@ -291,14 +359,6 @@ func compareModels(a, b ResolvedModel, sortExpr models.SortExpr) bool {
 	}
 
 	return false
-}
-
-func tagMap(tags []models.Tag) map[string]string {
-	m := make(map[string]string)
-	for _, t := range tags {
-		m[t.Key] = t.Value
-	}
-	return m
 }
 
 func indexOf(arr []string, val string) int {

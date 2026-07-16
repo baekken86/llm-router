@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	llmrouter "github.com/chris/llm-router"
 	"github.com/chris/llm-router/internal/api"
 	"github.com/chris/llm-router/internal/api/handlers"
 	"github.com/chris/llm-router/internal/config"
@@ -54,8 +56,8 @@ func main() {
 		case "import":
 			runImportCmd(os.Args[2:])
 			return
-		case "seed-virtual-models":
-			runSeedVirtualModels(os.Args[2:])
+		case "create-key":
+			runCreateKey(os.Args[2:])
 			return
 		case "help", "--help", "-h":
 			printUsage()
@@ -159,7 +161,15 @@ func runProxy(args []string) {
 		logLevel = slog.LevelError
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
+	logChan := make(chan proxy.RequestLog, 100)
+	syslogChan := make(chan string, 200)
+
+	var logger *slog.Logger
+	if *noTUI {
+		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
+	} else {
+		logger = slog.New(slog.NewTextHandler(&syslogWriter{ch: syslogChan}, &slog.HandlerOptions{Level: logLevel}))
+	}
 
 	database, err := db.Open(*dbPath)
 	if err != nil {
@@ -180,18 +190,19 @@ func runProxy(args []string) {
 	}
 
 	providerRepo := repository.NewProviderRepository(database)
+	providerMetadataRepo := repository.NewProviderMetadataRepository(database)
 	modelRepo := repository.NewModelRepository(database)
 	tagRepo := repository.NewTagRepository(database)
 	vmRepo := repository.NewVirtualModelRepository(database)
 	keyRepo := repository.NewProxyKeyRepository(database)
+	globalMetaRepo := repository.NewGlobalMetadataRepository(database)
 
-	providerService := service.NewProviderService(providerRepo, keyBytes)
+	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, keyBytes)
 	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService)
-	vmService := service.NewVirtualModelService(vmRepo, modelRepo, tagRepo, providerRepo)
+	vmService := service.NewVirtualModelService(vmRepo, modelRepo, tagRepo, providerRepo, providerMetadataRepo, globalMetaRepo)
 	keyService := service.NewKeyService(keyRepo)
 
 	statsHandler := handlers.NewStatsHandler()
-	logChan := make(chan proxy.RequestLog, 100)
 
 	go func() {
 		for log := range logChan {
@@ -209,6 +220,7 @@ func runProxy(args []string) {
 	vmHandler := handlers.NewVirtualModelHandler(vmService)
 	keyHandler := handlers.NewKeyHandler(keyService)
 	importHandler := handlers.NewImportHandler(service.NewImportService(modelRepo, tagRepo))
+	metadataHandler := handlers.NewMetadataHandler(llmrouter.ModelsJSON)
 
 	oauthHandler := handlers.NewOAuthHandler(func(key string) int64 {
 		pk, _ := keyService.ValidateKey(context.Background(), key)
@@ -218,7 +230,15 @@ func runProxy(args []string) {
 		return 0
 	})
 
-	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, keyService)
+	var webFS *embed.FS
+	if _, err := llmrouter.WebDistFS.Open("web/dist"); err == nil {
+		webFS = &llmrouter.WebDistFS
+		logger.Info("web UI embedded")
+	} else {
+		logger.Warn("web UI not embedded", "error", err)
+	}
+
+	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, metadataHandler, keyService, webFS)
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middlewareAuthOrOAuth(keyService, oauthHandler))
@@ -252,7 +272,7 @@ func runProxy(args []string) {
 
 	if !*noTUI {
 		tuiQuit := make(chan struct{})
-		go tui.Run(logChan, vmRepo, modelRepo, tagRepo, providerRepo, cfg, tuiQuit)
+		go tui.Run(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, cfg, tuiQuit)
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		select {
@@ -355,4 +375,17 @@ func handleListModels(vmService service.VirtualModelService) http.HandlerFunc {
 		}
 		fmt.Fprintf(w, `}`)
 	}
+}
+
+type syslogWriter struct {
+	ch chan<- string
+}
+
+func (w *syslogWriter) Write(p []byte) (int, error) {
+	line := string(p)
+	select {
+	case w.ch <- line:
+	default:
+	}
+	return len(p), nil
 }

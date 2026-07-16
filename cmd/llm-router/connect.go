@@ -30,8 +30,9 @@ func runConnect(args []string) {
 	defer database.Close()
 
 	providerRepo := repository.NewProviderRepository(database)
+	providerMetadataRepo := repository.NewProviderMetadataRepository(database)
 	oauthRepo := repository.NewOAuthRepository(database)
-	providerService := service.NewProviderService(providerRepo, []byte("00000000000000000000000000000000"))
+	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, []byte("00000000000000000000000000000000"))
 	oauthService := service.NewOAuthService(oauthRepo, providerRepo, providerService, logger)
 
 	ctx := context.Background()

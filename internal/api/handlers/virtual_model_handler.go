@@ -141,37 +141,51 @@ func (h *VirtualModelHandler) GetResolved(w http.ResponseWriter, r *http.Request
 	}
 
 	type resolvedEntry struct {
-		Position     int               `json:"position"`
-		ModelID      int64             `json:"model_id"`
-		ModelName    string            `json:"model_name"`
-		ProviderID   int64             `json:"provider_id"`
-		ProviderName string            `json:"provider_name"`
-		APIType      string            `json:"api_type"`
-		Tags         map[string]string `json:"tags"`
+		Position        int               `json:"position"`
+		ModelID         int64             `json:"model_id"`
+		ModelName       string            `json:"model_name"`
+		ReasoningEffort string            `json:"reasoning_effort"`
+		ProviderID      int64             `json:"provider_id"`
+		ProviderName    string            `json:"provider_name"`
+		APIType         string            `json:"api_type"`
+		Tags            map[string]string `json:"tags"`
 	}
 
 	var result []resolvedEntry
 	for i, rm := range resolved {
 		tags := make(map[string]string)
 		for _, t := range rm.Model.Tags {
-			tags[t.Key] = t.Value
+			tags["mc."+t.Key] = t.Value
+		}
+		for k, v := range rm.GlobalMetadata {
+			tags["m."+k] = v
 		}
 
 		result = append(result, resolvedEntry{
-			Position:     i + 1,
-			ModelID:      rm.Model.ID,
-			ModelName:    rm.Model.Name,
-			ProviderID:   rm.Provider.ID,
-			ProviderName: rm.Provider.Name,
-			APIType:      string(rm.Provider.APIType),
-			Tags:         tags,
+			Position:        i + 1,
+			ModelID:         rm.Model.ID,
+			ModelName:       rm.Model.Name,
+			ReasoningEffort: rm.ReasoningEffort,
+			ProviderID:      rm.Provider.ID,
+			ProviderName:    rm.Provider.Name,
+			APIType:         string(rm.Provider.APIType),
+			Tags:            tags,
 		})
+	}
+
+	var filterObj interface{}
+	if len(vm.FilterExpr) > 0 {
+		json.Unmarshal(vm.FilterExpr, &filterObj)
+	}
+	var sortObj interface{}
+	if len(vm.SortExpr) > 0 {
+		json.Unmarshal(vm.SortExpr, &sortObj)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"virtual_model": vm.Name,
-		"filter":        string(vm.FilterExpr),
-		"sort":          string(vm.SortExpr),
+		"filter":        filterObj,
+		"sort":          sortObj,
 		"models":        result,
 	})
 }

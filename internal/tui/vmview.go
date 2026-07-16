@@ -18,25 +18,30 @@ type VMViewMsg struct {
 }
 
 type VirtualModelInfo struct {
-	Name          string
-	Filter        string
-	Sort          string
+	Name           string
+	Filter         string
+	Sort           string
+	FilterExpr     json.RawMessage
+	SortExpr       json.RawMessage
 	ResolvedModels []ResolvedModelInfo
 }
 
 type ResolvedModelInfo struct {
-	ModelName    string
-	ProviderName string
-	Tags         map[string]string
-	Position     int
+	ModelName       string
+	ProviderName    string
+	ReasoningEffort string
+	Tags            map[string]string
+	Position        int
 }
 
 type VMViewModel struct {
-	items  []VirtualModelInfo
-	cursor int
-	width  int
-	height int
-	loaded bool
+	items          []VirtualModelInfo
+	cursor         int
+	resolvedCursor int
+	detailMode     bool
+	width          int
+	height         int
+	loaded         bool
 }
 
 func NewVMViewModel() VMViewModel {
@@ -51,12 +56,37 @@ func (m VMViewModel) Update(msg tea.Msg) (VMViewModel, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
+			if m.detailMode {
+				if m.resolvedCursor > 0 {
+					m.resolvedCursor--
+				}
+			} else {
+				if m.cursor > 0 {
+					m.cursor--
+				}
 			}
 		case "down", "j":
-			if m.cursor < len(m.items)-1 {
-				m.cursor++
+			if m.detailMode {
+				if m.cursor < len(m.items) {
+					vm := m.items[m.cursor]
+					if m.resolvedCursor < len(vm.ResolvedModels)-1 {
+						m.resolvedCursor++
+					}
+				}
+			} else {
+				if m.cursor < len(m.items)-1 {
+					m.cursor++
+				}
+			}
+		case "enter":
+			if !m.detailMode && len(m.items) > 0 {
+				m.detailMode = true
+				m.resolvedCursor = 0
+			}
+		case "esc":
+			if m.detailMode {
+				m.detailMode = false
+				m.resolvedCursor = 0
 			}
 		}
 	}
@@ -72,6 +102,14 @@ func (m VMViewModel) View() string {
 		return MutedStyle.Render("  No virtual models configured. Create one via API.")
 	}
 
+	if m.detailMode {
+		return m.viewDetail()
+	}
+
+	return m.viewOverview()
+}
+
+func (m VMViewModel) viewOverview() string {
 	var b strings.Builder
 
 	for i, vm := range m.items {
@@ -98,14 +136,10 @@ func (m VMViewModel) View() string {
 			} else {
 				b.WriteString(StatHeaderStyle.Render("    Resolved Models (priority order)"))
 				b.WriteString("\n")
-				for _, rm := range vm.ResolvedModels {
-					tags := formatTagsCompact(rm.Tags)
-					b.WriteString(fmt.Sprintf("    %s %s/%s %s\n",
-						MutedStyle.Render(fmt.Sprintf("#%d", rm.Position)),
-						InfoStyle.Render(rm.ProviderName),
-						SuccessStyle.Render(rm.ModelName),
-						MutedStyle.Render(tags),
-					))
+				limit := 10
+				renderResolvedTable(&b, vm, limit, -1)
+				if len(vm.ResolvedModels) > limit {
+					b.WriteString(MutedStyle.Render(fmt.Sprintf("    ... and %d more (press Enter for full view)\n", len(vm.ResolvedModels)-limit)))
 				}
 			}
 			b.WriteString("\n")
@@ -115,36 +149,253 @@ func (m VMViewModel) View() string {
 	return b.String()
 }
 
+func (m VMViewModel) viewDetail() string {
+	vm := m.items[m.cursor]
+
+	var b strings.Builder
+
+	b.WriteString(fmt.Sprintf("  %s%s\n", SuccessStyle.Render("▸ "), InfoStyle.Render(vm.Name)))
+	b.WriteString(fmt.Sprintf("    %s %s\n",
+		MutedStyle.Render("Filter:"),
+		MutedStyle.Render(vm.Filter),
+	))
+	b.WriteString(fmt.Sprintf("    %s %s\n",
+		MutedStyle.Render("Sort:"),
+		MutedStyle.Render(vm.Sort),
+	))
+	b.WriteString("\n")
+
+	if len(vm.ResolvedModels) == 0 {
+		b.WriteString(MutedStyle.Render("    No matching models\n"))
+	} else {
+		b.WriteString(StatHeaderStyle.Render(fmt.Sprintf("    Resolved Models (%d)", len(vm.ResolvedModels))))
+		b.WriteString("\n")
+		renderResolvedTable(&b, vm, 0, m.resolvedCursor)
+	}
+
+	b.WriteString("\n")
+	b.WriteString(HelpStyle.Render("    esc: back  ↑/↓: navigate\n"))
+
+	return b.String()
+}
+
+func renderResolvedTable(b *strings.Builder, vm VirtualModelInfo, limit int, highlightRow int) {
+	cols := computeColumns(vm.SortExpr, vm.FilterExpr, vm.ResolvedModels)
+
+	models := vm.ResolvedModels
+	if limit > 0 && len(models) > limit {
+		models = models[:limit]
+	}
+
+	rows := make([]tableRow, len(models))
+	for i, rm := range models {
+		effort := rm.ReasoningEffort
+		if effort == "" {
+			effort = "-"
+		}
+		rows[i] = tableRow{
+			Position: fmt.Sprintf("#%d", rm.Position),
+			Provider: rm.ProviderName,
+			Model:    rm.ModelName,
+			Effort:   effort,
+			Values:   rm.Tags,
+		}
+	}
+
+	colWidths := computeColWidths(cols, rows)
+
+	// Header
+	header := "    "
+	header += padRight("#", colWidths[0]) + "  "
+	header += padRight("provider", colWidths[1]) + "  "
+	header += padRight("model", colWidths[2]) + "  "
+	header += padRight("effort", colWidths[3])
+	for j, col := range cols {
+		header += "  " + padRight(col.Abbrev, colWidths[4+j])
+	}
+	b.WriteString(MutedStyle.Render(header))
+
+	// Separator
+	sep := "    " + strings.Repeat("-", colWidths[0]) + "  " +
+		strings.Repeat("-", colWidths[1]) + "  " +
+		strings.Repeat("-", colWidths[2]) + "  " +
+		strings.Repeat("-", colWidths[3])
+	for _, w := range colWidths[4:] {
+		sep += "  " + strings.Repeat("-", w)
+	}
+	b.WriteString(MutedStyle.Render(sep))
+	b.WriteString("\n")
+
+	// Data rows
+	for i, r := range rows {
+		line := "    "
+		prefix := "  "
+		if i == highlightRow {
+			prefix = SuccessStyle.Render("▸ ")
+		}
+		line += prefix
+		line += padRight(r.Position, colWidths[0]) + "  "
+		line += padRight(trunc(r.Provider, colWidths[1]), colWidths[1]) + "  "
+		line += padRight(trunc(r.Model, colWidths[2]), colWidths[2]) + "  "
+		line += padRight(r.Effort, colWidths[3])
+
+		for j, col := range cols {
+			val := r.Values[col.Key]
+			if val == "" {
+				val = "-"
+			}
+			line += "  " + padRight(val, colWidths[4+j])
+		}
+
+		if i == highlightRow {
+			b.WriteString(SuccessStyle.Render(line))
+		} else {
+			b.WriteString(line)
+		}
+		b.WriteString("\n")
+	}
+}
+
+type tableCol struct {
+	Key    string
+	Abbrev string
+}
+
+type tableRow struct {
+	Position string
+	Provider string
+	Model    string
+	Effort   string
+	Values   map[string]string
+}
+
+func computeColumns(sortExprJSON, filterExprJSON json.RawMessage, resolvedModels []ResolvedModelInfo) []tableCol {
+	seen := make(map[string]bool)
+	var cols []tableCol
+
+	// Sort keys first
+	var sortExprParsed models.SortExpr
+	if len(sortExprJSON) > 0 {
+		json.Unmarshal(sortExprJSON, &sortExprParsed)
+	}
+	for _, s := range sortExprParsed {
+		if !seen[s.Key] {
+			seen[s.Key] = true
+			cols = append(cols, tableCol{Key: s.Key, Abbrev: abbrevKey(s.Key)})
+		}
+	}
+
+	// Filter keys second
+	var filterExprParsed models.FilterExpr
+	if len(filterExprJSON) > 0 {
+		json.Unmarshal(filterExprJSON, &filterExprParsed)
+	}
+	for _, f := range filterExprParsed.And {
+		if !seen[f.Key] {
+			seen[f.Key] = true
+			cols = append(cols, tableCol{Key: f.Key, Abbrev: abbrevKey(f.Key)})
+		}
+	}
+
+	// Remaining tags
+	for _, m := range resolvedModels {
+		for k := range m.Tags {
+			if !seen[k] {
+				seen[k] = true
+				cols = append(cols, tableCol{Key: k, Abbrev: abbrevKey(k)})
+			}
+		}
+	}
+
+	return cols
+}
+
+func abbrevKey(key string) string {
+	switch key {
+	case "mc.intelligence", "intelligence":
+		return "int"
+	case "mc.coding", "coding":
+		return "code"
+	case "mc.speed", "speed":
+		return "spd"
+	case "mc.cost_per_task", "cost_per_task":
+		return "$/task"
+	case "mc.cost_per_1m_input", "cost_per_1m_input":
+		return "$/1M"
+	case "mc.cost_per_1m_output", "cost_per_1m_output":
+		return "$/1M.out"
+	case "mc.cost_per_1m_cache", "cost_per_1m_cache":
+		return "$/1M.cache"
+	case "mc.hallucination", "hallucination":
+		return "hall"
+	case "mc.latency", "latency":
+		return "lat"
+	case "m.context_window", "context_window":
+		return "ctx"
+	case "mc.has_reasoning_effort", "has_reasoning_effort":
+		return "has_effort"
+	case "mc.reasoning", "reasoning":
+		return "reason"
+	default:
+		return key
+	}
+}
+
+func computeColWidths(cols []tableCol, rows []tableRow) []int {
+	widths := []int{2, 8, 5, 6} // #, provider, model, effort minimums
+
+	for _, col := range cols {
+		w := len(col.Abbrev)
+		if w < 4 {
+			w = 4
+		}
+		widths = append(widths, w)
+	}
+
+	for _, r := range rows {
+		if len(r.Position) > widths[0] {
+			widths[0] = len(r.Position)
+		}
+		if len(r.Provider) > widths[1] {
+			widths[1] = len(r.Provider)
+		}
+		if len(r.Model) > widths[2] {
+			widths[2] = len(r.Model)
+		}
+		if len(r.Effort) > widths[3] {
+			widths[3] = len(r.Effort)
+		}
+		for j, col := range cols {
+			val := r.Values[col.Key]
+			if len(val) > widths[4+j] {
+				widths[4+j] = len(val)
+			}
+		}
+	}
+
+	return widths
+}
+
+func padRight(s string, width int) string {
+	if len(s) >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-len(s))
+}
+
+func trunc(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return s[:max]
+	}
+	return s[:max-3] + "..."
+}
+
 func (m *VMViewModel) SetSize(w, h int) {
 	m.width = w
 	m.height = h
-}
-
-func formatTagsCompact(tags map[string]string) string {
-	if len(tags) == 0 {
-		return ""
-	}
-
-	parts := []string{}
-	if v, ok := tags["intelligence"]; ok {
-		parts = append(parts, fmt.Sprintf("int=%s", v))
-	}
-	if v, ok := tags["coding"]; ok {
-		parts = append(parts, fmt.Sprintf("code=%s", v))
-	}
-	if v, ok := tags["speed"]; ok {
-		parts = append(parts, fmt.Sprintf("spd=%s", v))
-	}
-	if v, ok := tags["cost_per_task"]; ok {
-		parts = append(parts, fmt.Sprintf("$/task=%s", v))
-	} else if v, ok := tags["cost_per_1m_input"]; ok {
-		parts = append(parts, fmt.Sprintf("$/1M=%s", v))
-	}
-	if v, ok := tags["hallucination"]; ok {
-		parts = append(parts, fmt.Sprintf("hall=%s", v))
-	}
-
-	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 func FetchVMData(client *APIClient) tea.Cmd {
@@ -168,17 +419,22 @@ func FetchVMData(client *APIClient) tea.Cmd {
 			var resolvedInfo []ResolvedModelInfo
 			for i, r := range resolved {
 				resolvedInfo = append(resolvedInfo, ResolvedModelInfo{
-					ModelName:    r.ModelName,
-					ProviderName: r.ProviderName,
-					Tags:         r.Tags,
-					Position:     i + 1,
+					ModelName:       r.ModelName,
+					ProviderName:    r.ProviderName,
+					ReasoningEffort: r.ReasoningEffort,
+					Tags:            r.Tags,
+					Position:        i + 1,
 				})
 			}
 
+			filterJSON, _ := json.Marshal(vm.FilterExpr)
+			sortJSON, _ := json.Marshal(vm.SortExpr)
 			items = append(items, VirtualModelInfo{
 				Name:           vm.Name,
 				Filter:         formatFilter(vm.FilterExpr),
 				Sort:           formatSort(vm.SortExpr),
+				FilterExpr:     filterJSON,
+				SortExpr:       sortJSON,
 				ResolvedModels: resolvedInfo,
 			})
 		}
@@ -228,28 +484,34 @@ func FetchVMDataLocal(vmRepo repository.VirtualModelRepository, modelRepo reposi
 			var resolved []ResolvedModelInfo
 
 			for _, m := range allModels {
-				tags, _ := tagRepo.GetByModel(ctx, m.ID)
-				tagMap := make(map[string]string)
-				for _, t := range tags {
-					if t.ReasoningEffort == "" {
-						tagMap[t.Key] = t.Value
+				efforts, _ := tagRepo.GetAvailableEfforts(ctx, m.ID)
+				if len(efforts) == 0 {
+					efforts = []string{""}
+				}
+
+				for _, effort := range efforts {
+					tags, _ := tagRepo.GetByModelEffort(ctx, m.ID, effort)
+					tagMap := make(map[string]string)
+					for _, t := range tags {
+						tagMap["mc."+t.Key] = t.Value
 					}
-				}
 
-				if !matchesFilter(tagMap, filterExpr) {
-					continue
-				}
+					if !matchesFilter(tagMap, filterExpr) {
+						continue
+					}
 
-				provider, _ := providerRepo.GetByID(ctx, m.ProviderID)
-				if provider == nil {
-					continue
-				}
+					provider, _ := providerRepo.GetByID(ctx, m.ProviderID)
+					if provider == nil {
+						continue
+					}
 
-				resolved = append(resolved, ResolvedModelInfo{
-					ModelName:    m.Name,
-					ProviderName: provider.Name,
-					Tags:         tagMap,
-				})
+					resolved = append(resolved, ResolvedModelInfo{
+						ModelName:       m.Name,
+						ProviderName:    provider.Name,
+						ReasoningEffort: effort,
+						Tags:            tagMap,
+					})
+				}
 			}
 
 			// Apply sorting
@@ -264,6 +526,8 @@ func FetchVMDataLocal(vmRepo repository.VirtualModelRepository, modelRepo reposi
 				Name:           vm.Name,
 				Filter:         string(vm.FilterExpr),
 				Sort:           string(vm.SortExpr),
+				FilterExpr:     vm.FilterExpr,
+				SortExpr:       vm.SortExpr,
 				ResolvedModels: resolved,
 			})
 		}
@@ -285,8 +549,20 @@ func sortResolved(resolved []ResolvedModelInfo, sortExpr models.SortExpr) {
 			valI := tagsI[s.Key]
 			valJ := tagsJ[s.Key]
 
+			aMissing := valI == ""
+			bMissing := valJ == ""
+			if aMissing && bMissing {
+				continue
+			}
+			if aMissing {
+				return false
+			}
+			if bMissing {
+				return true
+			}
+
 			if s.Direction != "" {
-				cmp := strings.Compare(valI, valJ)
+				cmp := compareNumeric(valI, valJ)
 				if cmp == 0 {
 					continue
 				}

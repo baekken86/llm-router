@@ -1,0 +1,149 @@
+{
+  "spec": "002",
+  "tasks": [
+    {
+      "id": "S002T001",
+      "title": "Svelte + Vite project scaffold",
+      "description": "Initialize web/ directory with Svelte 5, Vite, and Tailwind CSS v4. Configure vite.config.js to output to web/dist/. Create index.html, src/main.js, src/App.svelte, src/app.css.",
+      "status": "done",
+      "priority": 1,
+      "depends_on": [],
+      "owns": ["web/package.json", "web/vite.config.js", "web/svelte.config.js", "web/tailwind.config.js", "web/postcss.config.js", "web/index.html", "web/src/main.js", "web/src/App.svelte", "web/src/app.css"]
+    },
+    {
+      "id": "S002T002",
+      "title": "API client module",
+      "description": "Create web/src/lib/api.js with fetch wrappers for all virtual-model endpoints and metadata/fields. Handle auth header, error responses, and base URL configuration.",
+      "status": "done",
+      "priority": 1,
+      "depends_on": ["S002T001"],
+      "owns": ["web/src/lib/api.js"]
+    },
+    {
+      "id": "S002T003",
+      "title": "Svelte stores and field definitions",
+      "description": "Create web/src/lib/stores.js with writable stores (virtualModels, metadataFields, selectedVM, adminKey, toasts). Create web/src/lib/fields.js with predicate type matrix mapping field types to operators and value input types.",
+      "status": "done",
+      "priority": 1,
+      "depends_on": ["S002T001"],
+      "owns": ["web/src/lib/stores.js", "web/src/lib/fields.js"]
+    },
+    {
+      "id": "S002T004",
+      "title": "Metadata fields API endpoint",
+      "description": "Create internal/api/handlers/metadata_handler.go with GET /api/v1/metadata/fields handler. Returns field definitions (name, type, description, min, max, values) from models.json. Mount route in internal/api/router.go.",
+      "status": "done",
+      "priority": 2,
+      "depends_on": [],
+      "owns": ["internal/api/handlers/metadata_handler.go", "internal/api/router.go"]
+    },
+    {
+      "id": "S002T005",
+      "title": "FieldSelector component",
+      "description": "Create web/src/components/FieldSelector.svelte. Dropdown of metadata fields grouped by type (Numeric, String, Boolean). Receives fields array as prop, emits selected field. Shows field description on hover.",
+      "status": "done",
+      "priority": 3,
+      "depends_on": ["S002T003"],
+      "owns": ["web/src/components/FieldSelector.svelte"]
+    },
+    {
+      "id": "S002T006",
+      "title": "OperatorSelector component",
+      "description": "Create web/src/components/OperatorSelector.svelte. Shows operators appropriate for the selected field type. Number: eq/neq/gt/gte/lt/lte. String with values: eq/neq/in. String general: eq/neq/contains. Boolean: eq/neq.",
+      "status": "done",
+      "priority": 3,
+      "depends_on": ["S002T003", "S002T005"],
+      "owns": ["web/src/components/OperatorSelector.svelte"]
+    },
+    {
+      "id": "S002T007",
+      "title": "ValueInput component",
+      "description": "Create web/src/components/ValueInput.svelte. Type-aware value input: numeric slider/input for numbers, dropdown for string with known values, multi-select chips for 'in' operator, text input for general strings, toggle for booleans.",
+      "status": "done",
+      "priority": 3,
+      "depends_on": ["S002T003", "S002T006"],
+      "owns": ["web/src/components/ValueInput.svelte"]
+    },
+    {
+      "id": "S002T008",
+      "title": "ConditionBuilder and SortBuilder",
+      "description": "Create ConditionBuilder.svelte: list of condition rows (field+operator+value), add/remove buttons, visual summary text, outputs filter_expr JSON. Create SortBuilder.svelte: list of sort criteria, direction toggle or custom order mode, drag-to-reorder, outputs sort_expr JSON.",
+      "status": "done",
+      "priority": 3,
+      "depends_on": ["S002T005", "S002T006", "S002T007"],
+      "owns": ["web/src/components/ConditionBuilder.svelte", "web/src/components/SortBuilder.svelte"]
+    },
+    {
+      "id": "S002T009",
+      "title": "ResolvedPreview component",
+      "description": "Create web/src/components/ResolvedPreview.svelte. Calls GET /api/v1/virtual-models/{id}/resolved. Shows priority-ordered list with position, provider/model, compact tag display [int=85, code=78, spd=80]. Color-coded by priority.",
+      "status": "done",
+      "priority": 4,
+      "depends_on": ["S002T002"],
+      "owns": ["web/src/components/ResolvedPreview.svelte"]
+    },
+    {
+      "id": "S002T010",
+      "title": "VirtualModelForm (create/edit)",
+      "description": "Create web/src/components/VirtualModelForm.svelte. Combines name input, ConditionBuilder, SortBuilder, max_retries input, retry_on_status multi-select. Handles both create and edit modes. Submits to API, shows ResolvedPreview after save.",
+      "status": "done",
+      "priority": 4,
+      "depends_on": ["S002T008", "S002T009"],
+      "owns": ["web/src/components/VirtualModelForm.svelte"]
+    },
+    {
+      "id": "S002T011",
+      "title": "VirtualModelList view",
+      "description": "Create web/src/components/VirtualModelList.svelte. Table with name, filter summary, sort summary, action buttons. Create New button. Click to expand ResolvedPreview inline. Delete triggers ConfirmDialog.",
+      "status": "done",
+      "priority": 4,
+      "depends_on": ["S002T002", "S002T009"],
+      "owns": ["web/src/components/VirtualModelList.svelte"]
+    },
+    {
+      "id": "S002T012",
+      "title": "ConfirmDialog and Toast components",
+      "description": "Create ConfirmDialog.svelte for delete confirmation modal. Create Toast.svelte for success/error notifications. Create LoginPrompt.svelte for admin API key entry with localStorage persistence.",
+      "status": "done",
+      "priority": 4,
+      "depends_on": ["S002T001"],
+      "owns": ["web/src/components/ConfirmDialog.svelte", "web/src/components/Toast.svelte", "web/src/components/LoginPrompt.svelte"]
+    },
+    {
+      "id": "S002T013",
+      "title": "Go embed and SPA serving",
+      "description": "Modify cmd/llm-router/main.go to add //go:embed web/dist directive. Modify internal/api/router.go to serve SPA: index.html for non-API GET requests, static files from embedded FS for /assets/* paths.",
+      "status": "done",
+      "priority": 5,
+      "depends_on": ["S002T001"],
+      "owns": ["cmd/llm-router/main.go", "internal/api/router.go"]
+    },
+    {
+      "id": "S002T014",
+      "title": "Build script",
+      "description": "Add Makefile or build script that runs 'cd web && npm install && npm run build' then 'go build ./cmd/llm-router'. Document build process in README.",
+      "status": "done",
+      "priority": 5,
+      "depends_on": ["S002T013"],
+      "owns": ["Makefile"]
+    },
+    {
+      "id": "S002T015",
+      "title": "Dark theme and responsive layout",
+      "description": "Apply dark theme matching the TUI aesthetic. Ensure responsive layout works on desktop and tablet viewports. Style all components with Tailwind.",
+      "status": "done",
+      "priority": 6,
+      "depends_on": ["S002T010", "S002T011"],
+      "owns": []
+    },
+    {
+      "id": "S002T016",
+      "title": "Update architecture and techstack specs",
+      "description": "Update specs/architecture.json to add Web UI Layer node. Update specs/techstack.json to add Svelte, Vite, Tailwind CSS entries.",
+      "status": "done",
+      "priority": 6,
+      "depends_on": [],
+      "owns": ["specs/architecture.json", "specs/techstack.json"]
+    }
+  ]
+}

@@ -95,6 +95,31 @@
       "title": "TUI Layer",
       "content": "Terminal-UI mit Live-Log und Statistiken",
       "children": []
+    },
+    {
+      "id": "A7",
+      "title": "Web UI Layer",
+      "content": "Embedded Svelte SPA for virtual model management via browser",
+      "children": [
+        {
+          "id": "S10",
+          "title": "ConditionBuilder",
+          "content": "Dynamic filter form with type-aware predicates (number/string/boolean)",
+          "children": []
+        },
+        {
+          "id": "S11",
+          "title": "SortBuilder",
+          "content": "Sort criteria form with direction and custom-order modes",
+          "children": []
+        },
+        {
+          "id": "S12",
+          "title": "VirtualModelCRUD",
+          "content": "List, create, edit, delete virtual models with resolved preview",
+          "children": []
+        }
+      ]
     }
   ]
 }

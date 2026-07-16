@@ -130,6 +130,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case TabVM:
 				m.tab = TabLog
 			}
+		case "shift+tab":
+			switch m.tab {
+			case TabLog:
+				m.tab = TabVM
+			case TabStats:
+				m.tab = TabLog
+			case TabVM:
+				m.tab = TabStats
+			}
 			if m.tab == TabVM {
 				if m.apiClient != nil {
 					return m, FetchVMData(m.apiClient)
@@ -234,7 +243,7 @@ func (m Model) renderHeader() string {
 }
 
 func (m Model) renderFooter() string {
-	help := HelpStyle.Render("tab: switch view  ↑/↓: scroll  r: reset stats  q: quit")
+	help := HelpStyle.Render("tab/shift+tab: switch view  ↑/↓: scroll  r: reset stats  q: quit")
 	return lipgloss.Place(m.width, 1, lipgloss.Left, lipgloss.Bottom, help)
 }
 

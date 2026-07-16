@@ -323,7 +323,7 @@ func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey s
 		if err2 != nil {
 			return nil, err2
 		}
-		result := AnthropicToOpenAI(*anthResp, rm.Model.Name)
+		result := AnthropicToOpenAI(anthResp, rm.Model.Name)
 		resp = &result
 	} else {
 		req.Model = rm.Model.Name
@@ -334,13 +334,9 @@ func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey s
 	}
 
 	if e.caveman.IsEnabled() && resp != nil && len(resp.Choices) > 0 {
-		origContent := ""
-		if resp.Choices[0].Message != nil {
-			origContent = resp.Choices[0].Message.Content
-		}
-		if origContent != "" {
-			compressed, intercepted := e.caveman.InterceptOutput(origContent)
-			if intercepted && resp.Choices[0].Message != nil {
+		if content, ok := resp.Choices[0].Message.Content.(string); ok && content != "" {
+			compressed, intercepted := e.caveman.InterceptOutput(content)
+			if intercepted {
 				resp.Choices[0].Message.Content = compressed
 			}
 		}
@@ -453,11 +449,10 @@ func (e *Engine) interceptMessages(messages []Message) []Message {
 	for i, msg := range result {
 		if msg.Role == "tool" {
 			toolName := ""
-			toolInput := ""
 			content := ""
 
 			if msg.ToolCallID != "" {
-				toolName = msg.Name
+				toolName = "bash"
 			}
 
 			switch c := msg.Content.(type) {
@@ -476,7 +471,7 @@ func (e *Engine) interceptMessages(messages []Message) []Message {
 			}
 
 			if content != "" && toolName != "" {
-				compressed, intercepted := e.rtk.InterceptToolResult(toolName, toolInput, content)
+				compressed, intercepted := e.rtk.InterceptToolResult(toolName, "", content)
 				if intercepted {
 					result[i].Content = compressed
 				}

@@ -90,9 +90,11 @@ Examples:
 
 Proxy flags:
   --port int                      HTTP port (default 8080, env LLM_ROUTER_PORT)
-  --db string                     SQLite path (default ./data/llm-router.db, env LLM_ROUTER_DB)
+  --db string                     SQLite path (default ./data/llm-router.db)
   --encryption-key string         32-byte hex key (env LLM_ROUTER_ENCRYPTION_KEY)
   --no-tui                        Disable terminal UI
+  --rtk                           Enable RTK token compression (default true)
+  --caveman                       Enable Caveman output compression (default true)
 
 Setup flags:
   --provider string               Provider name (required)

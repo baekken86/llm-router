@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/chris/llm-router/internal/api"
 	"github.com/chris/llm-router/internal/api/handlers"
+	"github.com/chris/llm-router/internal/config"
 	"github.com/chris/llm-router/internal/db"
 	"github.com/chris/llm-router/internal/models"
 	"github.com/chris/llm-router/internal/proxy"
@@ -93,8 +94,6 @@ Proxy flags:
   --db string                     SQLite path (default ./data/llm-router.db)
   --encryption-key string         32-byte hex key (env LLM_ROUTER_ENCRYPTION_KEY)
   --no-tui                        Disable terminal UI
-  --rtk                           Enable RTK token compression (default true)
-  --caveman                       Enable Caveman output compression (default true)
 
 Setup flags:
   --provider string               Provider name (required)
@@ -127,8 +126,6 @@ func runProxy(args []string) {
 	dbPath := fs.String("db", "./data/llm-router.db", "SQLite database path")
 	encryptKey := fs.String("encryption-key", "", "32-byte hex encryption key")
 	noTUI := fs.Bool("no-tui", false, "Disable terminal UI")
-	rtkEnabled := fs.Bool("rtk", true, "Enable RTK token compression")
-	cavemanEnabled := fs.Bool("caveman", true, "Enable Caveman output compression")
 	fs.Parse(args)
 
 	if envPort := os.Getenv("LLM_ROUTER_PORT"); envPort != "" {
@@ -181,13 +178,12 @@ func runProxy(args []string) {
 		}
 	}()
 
+	cfg := config.New()
+	settings := cfg.Get()
+
 	engine := proxy.NewEngine(vmService, providerService, logger, logChan)
-	if !*rtkEnabled {
-		engine.GetRTK().SetEnabled(false)
-	}
-	if !*cavemanEnabled {
-		engine.GetCaveman().SetEnabled(false)
-	}
+	engine.GetRTK().SetEnabled(settings.RTKEnabled)
+	engine.GetCaveman().SetEnabled(settings.CavemanEnabled)
 
 	providerHandler := handlers.NewProviderHandler(providerService, modelService)
 	modelHandler := handlers.NewModelHandler(modelService)
@@ -236,7 +232,7 @@ func runProxy(args []string) {
 	}()
 
 	if !*noTUI {
-		go tui.Run(logChan, vmRepo, modelRepo, tagRepo, providerRepo)
+		go tui.Run(logChan, vmRepo, modelRepo, tagRepo, providerRepo, cfg)
 	}
 
 	quit := make(chan os.Signal, 1)

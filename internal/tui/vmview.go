@@ -217,14 +217,15 @@ func (m VMViewModel) viewRawModels() string {
 
 		// Column header
 		header := "    "
-		header += padRight("model", 5)
+		header += padRight("model", 20)
 		for _, key := range tagKeys {
 			header += "  " + padRight(abbrevKey(key), len(abbrevKey(key)))
 		}
 		b.WriteString(MutedStyle.Render(header))
+		b.WriteString("\n")
 
 		// Separator
-		sep := "    " + strings.Repeat("-", 5)
+		sep := "    " + strings.Repeat("-", 20)
 		for _, key := range tagKeys {
 			sep += "  " + strings.Repeat("-", len(abbrevKey(key)))
 		}
@@ -238,7 +239,7 @@ func (m VMViewModel) viewRawModels() string {
 			}
 
 			line := "    " + cursor
-			line += padRight(trunc(rm.Name, 5), 5)
+			line += padRight(trunc(rm.Name, 20), 20)
 			for _, key := range tagKeys {
 				val := rm.Tags[key]
 				if val == "" {
@@ -366,6 +367,7 @@ func renderResolvedTable(b *strings.Builder, vm VirtualModelInfo, limit int, hig
 		header += "  " + padRight(col.Abbrev, colWidths[4+j])
 	}
 	b.WriteString(MutedStyle.Render(header))
+	b.WriteString("\n")
 
 	// Separator
 	sep := "    " + strings.Repeat("-", colWidths[0]) + "  " +
@@ -494,7 +496,7 @@ func abbrevKey(key string) string {
 }
 
 func computeColWidths(cols []tableCol, rows []tableRow) []int {
-	widths := []int{2, 8, 5, 6} // #, provider, model, effort minimums
+	widths := []int{2, 8, 20, 6} // #, provider, model, effort minimums
 
 	for _, col := range cols {
 		w := len(col.Abbrev)

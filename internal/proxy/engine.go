@@ -44,6 +44,9 @@ type Engine struct {
 	logChan         chan<- RequestLog
 	rtk             *RTKInterceptor
 	caveman         *CavemanInterceptor
+	maxRetries      int
+	timeoutSeconds  int
+	maxTokens       int
 }
 
 func NewEngine(
@@ -61,6 +64,9 @@ func NewEngine(
 		logChan:         logChan,
 		rtk:             NewRTKInterceptor(logger),
 		caveman:         NewCavemanInterceptor(logger),
+		maxRetries:      2,
+		timeoutSeconds:  300,
+		maxTokens:       8192,
 	}
 }
 
@@ -70,6 +76,12 @@ func (e *Engine) GetRTK() *RTKInterceptor {
 
 func (e *Engine) GetCaveman() *CavemanInterceptor {
 	return e.caveman
+}
+
+func (e *Engine) ApplySettings(maxRetries, timeoutSeconds, maxTokens int) {
+	e.maxRetries = maxRetries
+	e.timeoutSeconds = timeoutSeconds
+	e.maxTokens = maxTokens
 }
 
 func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {

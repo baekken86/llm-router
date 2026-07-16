@@ -138,7 +138,20 @@ func runProxy(args []string) {
 		*encryptKey = envKey
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	cfg := config.New()
+	settings := cfg.Get()
+
+	logLevel := slog.LevelInfo
+	switch settings.LogLevel {
+	case "debug":
+		logLevel = slog.LevelDebug
+	case "warn":
+		logLevel = slog.LevelWarn
+	case "error":
+		logLevel = slog.LevelError
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 
 	database, err := db.Open(*dbPath)
 	if err != nil {
@@ -178,12 +191,10 @@ func runProxy(args []string) {
 		}
 	}()
 
-	cfg := config.New()
-	settings := cfg.Get()
-
 	engine := proxy.NewEngine(vmService, providerService, logger, logChan)
 	engine.GetRTK().SetEnabled(settings.RTKEnabled)
 	engine.GetCaveman().SetEnabled(settings.CavemanEnabled)
+	engine.ApplySettings(settings.MaxRetries, settings.TimeoutSeconds, settings.MaxTokens)
 
 	providerHandler := handlers.NewProviderHandler(providerService, modelService)
 	modelHandler := handlers.NewModelHandler(modelService)
@@ -232,12 +243,19 @@ func runProxy(args []string) {
 	}()
 
 	if !*noTUI {
-		go tui.Run(logChan, vmRepo, modelRepo, tagRepo, providerRepo, cfg)
+		tuiQuit := make(chan struct{})
+		go tui.Run(logChan, vmRepo, modelRepo, tagRepo, providerRepo, cfg, tuiQuit)
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		select {
+		case <-quit:
+		case <-tuiQuit:
+		}
+	} else {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		<-quit
 	}
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
 
 	logger.Info("shutting down...")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

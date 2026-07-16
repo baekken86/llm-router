@@ -8,8 +8,12 @@ import (
 )
 
 type Settings struct {
-	RTKEnabled     bool `json:"rtk_enabled"`
-	CavemanEnabled bool `json:"caveman_enabled"`
+	RTKEnabled     bool   `json:"rtk_enabled"`
+	CavemanEnabled bool   `json:"caveman_enabled"`
+	LogLevel       string `json:"log_level"`
+	MaxRetries     int    `json:"max_retries"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	MaxTokens      int    `json:"max_tokens"`
 }
 
 type Config struct {
@@ -58,12 +62,44 @@ func (c *Config) SetCaveman(enabled bool) {
 	c.save()
 }
 
+func (c *Config) SetLogLevel(level string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.settings.LogLevel = level
+	c.save()
+}
+
+func (c *Config) SetMaxRetries(retries int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.settings.MaxRetries = retries
+	c.save()
+}
+
+func (c *Config) SetTimeout(seconds int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.settings.TimeoutSeconds = seconds
+	c.save()
+}
+
+func (c *Config) SetMaxTokens(tokens int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.settings.MaxTokens = tokens
+	c.save()
+}
+
 func (c *Config) load() {
 	data, err := os.ReadFile(c.path)
 	if err != nil {
 		c.settings = Settings{
 			RTKEnabled:     true,
 			CavemanEnabled: true,
+			LogLevel:       "info",
+			MaxRetries:     2,
+			TimeoutSeconds: 300,
+			MaxTokens:      8192,
 		}
 		return
 	}

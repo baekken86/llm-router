@@ -31,11 +31,15 @@ type ModelStats struct {
 }
 
 type StatsModel struct {
-	global      ModelStats
-	byVM        map[string]*ModelStats
-	byModel     map[string]*ModelStats
-	width       int
-	height      int
+	global              ModelStats
+	byVM                map[string]*ModelStats
+	byModel             map[string]*ModelStats
+	rtkIntercepts       int
+	rtkSavedTokens      int
+	cavemanIntercepts   int
+	cavemanSavedTokens  int
+	width               int
+	height              int
 }
 
 func NewStatsModel() StatsModel {
@@ -154,6 +158,16 @@ func (m StatsModel) renderGlobalStats() string {
 		cacheRate = float64(m.global.CachedTokens) / float64(m.global.InputTokens) * 100
 	}
 
+	rtkRate := float64(0)
+	if m.rtkSavedTokens > 0 {
+		rtkRate = float64(m.rtkSavedTokens) / float64(m.global.InputTokens+m.global.OutputTokens+m.rtkSavedTokens) * 100
+	}
+
+	cavemanRate := float64(0)
+	if m.cavemanSavedTokens > 0 {
+		cavemanRate = float64(m.cavemanSavedTokens) / float64(m.global.OutputTokens+m.cavemanSavedTokens) * 100
+	}
+
 	rows := []struct {
 		label string
 		value string
@@ -166,6 +180,12 @@ func (m StatsModel) renderGlobalStats() string {
 		{"Cached Tokens", formatNumber(m.global.CachedTokens)},
 		{"Cache Hit Rate", fmt.Sprintf("%.1f%%", cacheRate)},
 		{"Reasoning Tokens", formatNumber(m.global.ReasoningTokens)},
+		{"RTK Intercepts", fmt.Sprintf("%d", m.rtkIntercepts)},
+		{"RTK Tokens Saved", formatNumber(m.rtkSavedTokens)},
+		{"RTK Savings Rate", fmt.Sprintf("%.1f%%", rtkRate)},
+		{"Caveman Intercepts", fmt.Sprintf("%d", m.cavemanIntercepts)},
+		{"Caveman Saved", formatNumber(m.cavemanSavedTokens)},
+		{"Caveman Rate", fmt.Sprintf("%.1f%%", cavemanRate)},
 	}
 
 	for _, r := range rows {

@@ -14,30 +14,36 @@ import (
 )
 
 type RequestLog struct {
-	Timestamp      time.Time
-	RequestID      string
-	VirtualModel   string
-	ClientKeyID    int64
-	ProviderName   string
-	ModelName      string
-	StatusCode     int
-	Latency        time.Duration
-	InputTokens    int
-	OutputTokens   int
-	CachedTokens   int
-	ReasoningTokens int
-	ErrorMessage   string
-	RetryCount     int
-	FallbackCount  int
+	Timestamp          time.Time
+	RequestID          string
+	VirtualModel       string
+	ClientKeyID        int64
+	ProviderName       string
+	ModelName          string
+	StatusCode         int
+	Latency            time.Duration
+	InputTokens        int
+	OutputTokens       int
+	CachedTokens       int
+	ReasoningTokens    int
+	ErrorMessage       string
+	RetryCount         int
+	FallbackCount      int
+	RTKIntercepted     bool
+	RTKSavedTokens     int
+	CavemanIntercepted bool
+	CavemanSavedTokens int
 }
 
 type Engine struct {
-	vmService      service.VirtualModelService
+	vmService       service.VirtualModelService
 	providerService service.ProviderService
-	openaiClient   *OpenAIClient
+	openaiClient    *OpenAIClient
 	anthropicClient *AnthropicClient
-	logger         *slog.Logger
-	logChan        chan<- RequestLog
+	logger          *slog.Logger
+	logChan         chan<- RequestLog
+	rtk             *RTKInterceptor
+	caveman         *CavemanInterceptor
 }
 
 func NewEngine(
@@ -53,7 +59,17 @@ func NewEngine(
 		anthropicClient: NewAnthropicClient(),
 		logger:          logger,
 		logChan:         logChan,
+		rtk:             NewRTKInterceptor(logger),
+		caveman:         NewCavemanInterceptor(logger),
 	}
+}
+
+func (e *Engine) GetRTK() *RTKInterceptor {
+	return e.rtk
+}
+
+func (e *Engine) GetCaveman() *CavemanInterceptor {
+	return e.caveman
 }
 
 func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
@@ -67,6 +83,10 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
 		return
+	}
+
+	if e.rtk.IsEnabled() {
+		req.Messages = e.interceptMessages(req.Messages)
 	}
 
 	vm, err := e.vmService.GetByName(r.Context(), req.Model)
@@ -293,19 +313,40 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 }
 
 func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey string, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
+	var resp *ChatCompletionResponse
+	var err error
+
 	if rm.Provider.APIType == models.APITypeAnthropic {
 		anthReq := OpenAIToAnthropic(req)
 		anthReq.Model = rm.Model.Name
-		resp, err := e.anthropicClient.ChatCompletion(rm.Provider.BaseURL, apiKey, anthReq)
+		anthResp, err2 := e.anthropicClient.ChatCompletion(rm.Provider.BaseURL, apiKey, anthReq)
+		if err2 != nil {
+			return nil, err2
+		}
+		result := AnthropicToOpenAI(*anthResp, rm.Model.Name)
+		resp = &result
+	} else {
+		req.Model = rm.Model.Name
+		resp, err = e.openaiClient.ChatCompletion(rm.Provider.BaseURL, apiKey, req)
 		if err != nil {
 			return nil, err
 		}
-		result := AnthropicToOpenAI(resp, rm.Model.Name)
-		return &result, nil
 	}
 
-	req.Model = rm.Model.Name
-	return e.openaiClient.ChatCompletion(rm.Provider.BaseURL, apiKey, req)
+	if e.caveman.IsEnabled() && resp != nil && len(resp.Choices) > 0 {
+		origContent := ""
+		if resp.Choices[0].Message != nil {
+			origContent = resp.Choices[0].Message.Content
+		}
+		if origContent != "" {
+			compressed, intercepted := e.caveman.InterceptOutput(origContent)
+			if intercepted && resp.Choices[0].Message != nil {
+				resp.Choices[0].Message.Content = compressed
+			}
+		}
+	}
+
+	return resp, nil
 }
 
 func (e *Engine) sendStreamRequest(r *http.Request, rm service.ResolvedModel, apiKey string, req ChatCompletionRequest) (io.ReadCloser, *http.Response, error) {
@@ -403,6 +444,47 @@ func shouldRetry(statusCode int, retryOnStatus []int) bool {
 		}
 	}
 	return false
+}
+
+func (e *Engine) interceptMessages(messages []Message) []Message {
+	result := make([]Message, len(messages))
+	copy(result, messages)
+
+	for i, msg := range result {
+		if msg.Role == "tool" {
+			toolName := ""
+			toolInput := ""
+			content := ""
+
+			if msg.ToolCallID != "" {
+				toolName = msg.Name
+			}
+
+			switch c := msg.Content.(type) {
+			case string:
+				content = c
+			case []interface{}:
+				for _, block := range c {
+					if m, ok := block.(map[string]interface{}); ok {
+						if t, ok := m["type"].(string); ok && t == "text" {
+							if text, ok := m["text"].(string); ok {
+								content = text
+							}
+						}
+					}
+				}
+			}
+
+			if content != "" && toolName != "" {
+				compressed, intercepted := e.rtk.InterceptToolResult(toolName, toolInput, content)
+				if intercepted {
+					result[i].Content = compressed
+				}
+			}
+		}
+	}
+
+	return result
 }
 
 func ForwardHeaders(dst http.ResponseWriter, src *http.Response) {

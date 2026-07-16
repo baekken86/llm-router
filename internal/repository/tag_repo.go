@@ -70,10 +70,6 @@ func (r *sqliteTagRepo) GetByModel(ctx context.Context, modelID int64) ([]models
 }
 
 func (r *sqliteTagRepo) GetByModelEffort(ctx context.Context, modelID int64, effort string) ([]models.Tag, error) {
-	if effort == "" {
-		effort = "default"
-	}
-
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, model_id, reasoning_effort, key, value, created_at FROM model_tags WHERE model_id = ? AND reasoning_effort = ? ORDER BY key`, modelID, effort,
 	)

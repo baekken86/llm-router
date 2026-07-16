@@ -16,7 +16,7 @@ import (
 
 func runConnect(args []string) {
 	fs := flag.NewFlagSet("connect", flag.ExitOnError)
-	dbPath := fs.String("db", "./data/llm-router.db", "SQLite database path")
+	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
 	providerName := fs.String("provider", "claude-code", "Provider name to connect")
 	fs.Parse(args)
 

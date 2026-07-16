@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	"github.com/chris/llm-router/internal/db"
 	"github.com/chris/llm-router/internal/repository"
@@ -14,13 +13,10 @@ import (
 )
 
 func runImportCmd(args []string) {
-	home, _ := os.UserHomeDir()
-	defaultDB := filepath.Join(home, ".local", "share", "llm-router", "llm-router.db")
-
 	fs := flag.NewFlagSet("import", flag.ExitOnError)
 	filePath := fs.String("file", "", "JSON file path (required)")
 	mode := fs.String("mode", "merge", "Import mode: merge or replace")
-	dbPath := fs.String("db", defaultDB, "SQLite database path")
+	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
 	fs.Parse(args)
 
 	if *filePath == "" {

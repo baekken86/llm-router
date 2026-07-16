@@ -14,7 +14,7 @@ import (
 
 func runDiscover(args []string) {
 	fs := flag.NewFlagSet("discover", flag.ExitOnError)
-	dbPath := fs.String("db", "./data/llm-router.db", "SQLite database path")
+	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
 	providerName := fs.String("provider", "", "Provider name (required)")
 	fs.Parse(args)
 

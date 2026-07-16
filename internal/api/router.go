@@ -25,6 +25,8 @@ func NewRouter(
 	oauthHandler *handlers.OAuthHandler,
 	metadataHandler *handlers.MetadataHandler,
 	keyService service.KeyService,
+	adminService service.AdminService,
+	adminHandler *handlers.AdminHandler,
 	webFS *embed.FS,
 ) chi.Router {
 	r := chi.NewRouter()
@@ -32,8 +34,13 @@ func NewRouter(
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.LoggingMiddleware(logger))
 
+	// Admin auth endpoint (no auth required)
+	r.Route("/api/v1/admin", func(r chi.Router) {
+		r.Mount("/", adminHandler.Routes())
+	})
+
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Use(middleware.AuthMiddleware(keyService))
+		r.Use(middleware.AuthMiddleware(keyService, adminService))
 
 		r.Route("/providers", func(r chi.Router) {
 			r.Mount("/", providerHandler.Routes())

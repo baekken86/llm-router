@@ -1,11 +1,11 @@
 import { get } from 'svelte/store';
-import { adminKey } from './stores.js';
+import { adminToken } from './stores.js';
 
 export async function apiFetch(url, options = {}) {
-  const key = get(adminKey);
+  const token = get(adminToken);
   const headers = { ...options.headers };
-  if (key) {
-    headers['Authorization'] = `Bearer ${key}`;
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
   }
   if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json';

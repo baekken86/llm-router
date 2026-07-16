@@ -17,7 +17,13 @@ func NewMetadataHandler(modelsJSON []byte) *MetadataHandler {
 	if err := json.Unmarshal(modelsJSON, &raw); err != nil {
 		panic("failed to parse models.json: " + err.Error())
 	}
-	fieldsJSON, _ := json.Marshal(raw.Fields)
+
+	qualified := make(map[string]json.RawMessage, len(raw.Fields))
+	for k, v := range raw.Fields {
+		qualified["mc."+k] = v
+	}
+
+	fieldsJSON, _ := json.Marshal(qualified)
 	return &MetadataHandler{fieldsJSON: fieldsJSON}
 }
 

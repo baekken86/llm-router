@@ -55,7 +55,7 @@ type providerConfig struct {
 
 func runSetup(args []string) {
 	fs := flag.NewFlagSet("setup", flag.ExitOnError)
-	dbPath := fs.String("db", "./data/llm-router.db", "SQLite database path")
+	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
 	providerName := fs.String("provider", "", "Provider name (required). Supported: claude-code, opencode-go, openai, anthropic, openrouter")
 	apiKey := fs.String("key", "", "API key (required for API key providers)")
 	baseURL := fs.String("url", "", "Custom base URL (optional, overrides default)")

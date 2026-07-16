@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/chris/llm-router/internal/db"
@@ -15,11 +14,8 @@ import (
 )
 
 func runInit(args []string) {
-	home, _ := os.UserHomeDir()
-	defaultDB := filepath.Join(home, ".local", "share", "llm-router", "llm-router.db")
-
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
-	dbPath := fs.String("db", defaultDB, "SQLite database path")
+	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
 	jsonPath := fs.String("file", "data/models.json", "Path to models.json")
 	fs.Parse(args)
 

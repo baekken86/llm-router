@@ -15,7 +15,7 @@ import (
 
 func runAddProvider(args []string) {
 	fs := flag.NewFlagSet("add-provider", flag.ExitOnError)
-	dbPath := fs.String("db", "./data/llm-router.db", "SQLite database path")
+	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
 	name := fs.String("name", "", "Provider name (required)")
 	apiType := fs.String("type", "", "API type: openai or anthropic (auto-detected if not set)")
 	baseURL := fs.String("url", "", "Base URL (required)")

@@ -14,11 +14,8 @@ import (
 )
 
 func runCreateKey(args []string) {
-	home, _ := os.UserHomeDir()
-	defaultDB := home + "/.local/share/llm-router/llm-router.db"
-
 	fs := flag.NewFlagSet("create-key", flag.ExitOnError)
-	dbPath := fs.String("db", defaultDB, "SQLite database path")
+	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
 	desc := fs.String("description", "admin", "Key description")
 	fs.Parse(args)
 

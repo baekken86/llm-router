@@ -14,6 +14,8 @@ type Settings struct {
 	MaxRetries     int    `json:"max_retries"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
 	MaxTokens      int    `json:"max_tokens"`
+	EncryptionKey  string `json:"encryption_key,omitempty"`
+	AdminPassword  string `json:"admin_password,omitempty"`
 }
 
 type Config struct {
@@ -87,6 +89,13 @@ func (c *Config) SetMaxTokens(tokens int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.settings.MaxTokens = tokens
+	c.save()
+}
+
+func (c *Config) SetAdminPassword(password string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.settings.AdminPassword = password
 	c.save()
 }
 

@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 
-export const adminKey = writable('');
+export const adminToken = writable('');
 export const metadataFields = writable({});
 export const toasts = writable([]);
 

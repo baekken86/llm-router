@@ -14,7 +14,7 @@ import (
 
 func runTag(args []string) {
 	fs := flag.NewFlagSet("tag", flag.ExitOnError)
-	dbPath := fs.String("db", "./data/llm-router.db", "SQLite database path")
+	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
 	modelName := fs.String("model", "", "Model name (required)")
 	tags := TagList{}
 	fs.Var(&tags, "set", "Tag in format key=value (repeatable)")

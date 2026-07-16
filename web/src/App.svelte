@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { adminKey, metadataFields, toasts } from './lib/stores.js';
+  import { adminToken, metadataFields, toasts } from './lib/stores.js';
   import { apiFetch } from './lib/api.js';
   import VirtualModelList from './components/VirtualModelList.svelte';
   import VirtualModelForm from './components/VirtualModelForm.svelte';
@@ -26,9 +26,9 @@
   }
 
   async function checkAuth() {
-    const key = localStorage.getItem('adminKey');
-    if (!key) return;
-    adminKey.set(key);
+    const token = localStorage.getItem('adminToken');
+    if (!token) return;
+    adminToken.set(token);
     try {
       await apiFetch('/api/v1/virtual-models');
       authenticated = true;

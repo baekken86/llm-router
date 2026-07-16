@@ -22,7 +22,6 @@ import (
 	"github.com/chris/llm-router/internal/api/handlers"
 	"github.com/chris/llm-router/internal/config"
 	"github.com/chris/llm-router/internal/db"
-	"github.com/chris/llm-router/internal/models"
 	"github.com/chris/llm-router/internal/proxy"
 	"github.com/chris/llm-router/internal/repository"
 	"github.com/chris/llm-router/internal/service"
@@ -78,7 +77,7 @@ Usage:
   llm-router add-provider         Add a custom provider
   llm-router discover             Discover models from a provider
   llm-router tag                  Set metadata tags on models
-  llm-router seed-virtual-models  Create default virtual models (docs, exploration, planning, etc.)
+  llm-router create-key [flags]   Create a new proxy API key
   llm-router admin [flags]        Connect to running proxy as admin viewer
   llm-router import [flags]       Import CSV metadata
   llm-router help                 Show this help
@@ -99,7 +98,7 @@ Examples:
 Proxy flags:
   --port int                      HTTP port (default 8080, env LLM_ROUTER_PORT)
   --db string                     SQLite path (default ~/.local/share/llm-router/llm-router.db)
-  --encryption-key string         32-byte hex key (env LLM_ROUTER_ENCRYPTION_KEY)
+  --encryption-key string         32-byte hex key (env LLM_ROUTER_ENCRYPTION_KEY, config encryption_key)
   --no-tui                        Disable terminal UI
 
 Setup flags:
@@ -124,17 +123,19 @@ Tag flags:
 Import flags:
   --file string                   CSV file path (required)
   --mode string                   merge or replace (default merge)
-  --db string                     SQLite path (default ./data/llm-router.db)`)
+  --db string                     SQLite path (default ~/.local/share/llm-router/llm-router.db)
+
+Create-key flags:
+  --db string                     SQLite path (default ~/.local/share/llm-router/llm-router.db)
+  --description string            Key description (default "admin")`)
 }
 
 func runProxy(args []string) {
-	home, _ := os.UserHomeDir()
-	defaultDB := filepath.Join(home, ".local", "share", "llm-router", "llm-router.db")
-
 	fs := flag.NewFlagSet("proxy", flag.ExitOnError)
 	port := fs.Int("port", 8080, "HTTP server port")
-	dbPath := fs.String("db", defaultDB, "SQLite database path")
+	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
 	encryptKey := fs.String("encryption-key", "", "32-byte hex encryption key")
+	adminPassword := fs.String("admin-password", "", "Admin password for web UI")
 	noTUI := fs.Bool("no-tui", false, "Disable terminal UI")
 	fs.Parse(args)
 
@@ -146,6 +147,9 @@ func runProxy(args []string) {
 	}
 	if envKey := os.Getenv("LLM_ROUTER_ENCRYPTION_KEY"); envKey != "" {
 		*encryptKey = envKey
+	}
+	if envPass := os.Getenv("LLM_ROUTER_ADMIN_PASSWORD"); envPass != "" {
+		*adminPassword = envPass
 	}
 
 	cfg := config.New()
@@ -180,6 +184,9 @@ func runProxy(args []string) {
 
 	key := *encryptKey
 	if key == "" {
+		key = settings.EncryptionKey
+	}
+	if key == "" {
 		key = generateEncryptionKey()
 		logger.Info("generated encryption key (save this!)", "key", key)
 	}
@@ -187,6 +194,15 @@ func runProxy(args []string) {
 	if err != nil || len(keyBytes) != 32 {
 		logger.Error("invalid encryption key: must be 32 bytes hex-encoded")
 		os.Exit(1)
+	}
+
+	pass := *adminPassword
+	if pass == "" {
+		pass = settings.AdminPassword
+	}
+	if pass == "" {
+		pass = generateAdminPassword()
+		logger.Info("generated admin password (save this!)", "password", pass)
 	}
 
 	providerRepo := repository.NewProviderRepository(database)
@@ -201,6 +217,7 @@ func runProxy(args []string) {
 	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService)
 	vmService := service.NewVirtualModelService(vmRepo, modelRepo, tagRepo, providerRepo, providerMetadataRepo, globalMetaRepo)
 	keyService := service.NewKeyService(keyRepo)
+	adminService := service.NewAdminService(pass)
 
 	statsHandler := handlers.NewStatsHandler()
 
@@ -221,6 +238,7 @@ func runProxy(args []string) {
 	keyHandler := handlers.NewKeyHandler(keyService)
 	importHandler := handlers.NewImportHandler(service.NewImportService(modelRepo, tagRepo))
 	metadataHandler := handlers.NewMetadataHandler(llmrouter.ModelsJSON)
+	adminHandler := handlers.NewAdminHandler(adminService)
 
 	oauthHandler := handlers.NewOAuthHandler(func(key string) int64 {
 		pk, _ := keyService.ValidateKey(context.Background(), key)
@@ -238,7 +256,7 @@ func runProxy(args []string) {
 		logger.Warn("web UI not embedded", "error", err)
 	}
 
-	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, metadataHandler, keyService, webFS)
+	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, metadataHandler, keyService, adminService, adminHandler, webFS)
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middlewareAuthOrOAuth(keyService, oauthHandler))
@@ -247,8 +265,6 @@ func runProxy(args []string) {
 		r.Post("/messages/stream", engine.HandleAnthropicMessagesStream)
 		r.Get("/models", handleListModels(vmService))
 	})
-
-	adminKey := createAdminKeyIfEmpty(keyService, logger, context.Background())
 
 	addr := fmt.Sprintf(":%d", *port)
 	srv := &http.Server{
@@ -261,9 +277,6 @@ func runProxy(args []string) {
 
 	go func() {
 		logger.Info("llm-router started", "addr", addr)
-		if adminKey != "" {
-			logger.Info("admin API key (save this!)", "key", adminKey)
-		}
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("server error", "error", err)
 			os.Exit(1)
@@ -301,19 +314,15 @@ func generateEncryptionKey() string {
 	return hex.EncodeToString(b)
 }
 
-func createAdminKeyIfEmpty(ks service.KeyService, logger *slog.Logger, ctx context.Context) string {
-	keys, err := ks.List(ctx)
-	if err != nil || len(keys) > 0 {
-		return ""
-	}
+func generateAdminPassword() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
 
-	key, err := ks.Create(ctx, models.CreateKeyRequest{Description: "admin"})
-	if err != nil {
-		logger.Error("failed to create admin key", "error", err)
-		return ""
-	}
-
-	return key.Key
+func defaultDBPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "llm-router", "llm-router.db")
 }
 
 func middlewareAuthOrOAuth(ks service.KeyService, oauth *handlers.OAuthHandler) func(http.Handler) http.Handler {

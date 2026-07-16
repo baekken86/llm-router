@@ -15,7 +15,7 @@ import (
 
 func runSetKey(args []string) {
 	fs := flag.NewFlagSet("set-key", flag.ExitOnError)
-	dbPath := fs.String("db", "./data/llm-router.db", "SQLite database path")
+	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
 	providerName := fs.String("provider", "", "Provider name (required)")
 	apiKey := fs.String("key", "", "API key (required)")
 	fs.Parse(args)

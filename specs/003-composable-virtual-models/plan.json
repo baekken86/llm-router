@@ -1,0 +1,34 @@
+{
+  "spec": "003",
+  "status": "active",
+  "created": "2026-07-17",
+  "tags": [],
+  "description": "Implement composable virtual models with recursive operation tree, description field, and composition builder UI.",
+  "summary": "4-phase implementation: backend data model + resolution, API layer, frontend composition builder, testing + polish",
+  "phases": [
+    {
+      "id": "P1",
+      "title": "Backend: Data Model + Resolution Engine",
+      "description": "Database migration, Go CompositionNode struct, repository read/write, set operations (union/intersection/difference), recursive evaluateNode with cycle detection, description field migration.",
+      "tasks": ["T001", "T002", "T013", "T003", "T004", "T005"]
+    },
+    {
+      "id": "P2",
+      "title": "Backend: API Layer + Dependencies",
+      "description": "Update create/update/preview handlers for composition field, add GET /dependencies endpoint, add delete guard (409 on dependent VMs), wire description field through API.",
+      "tasks": ["T006", "T007", "T014"]
+    },
+    {
+      "id": "P3",
+      "title": "Backend: Testing",
+      "description": "Unit tests for set operations, circular reference detection, recursive tree evaluation. Integration tests for nested composition, post-operation filter/sort, delete guard, edge cases.",
+      "tasks": ["T008"]
+    },
+    {
+      "id": "P4",
+      "title": "Frontend: Composition Builder + Description",
+      "description": "Create CompositionBuilder.svelte (recursive), VMBlock, OperationBlock, OperationSelector, AddSourceButton. Integrate into VirtualModelForm with mode toggle. Wire live preview. Add description textarea to form and list display. Dependency warnings, delete confirmation, empty states.",
+      "tasks": ["T009", "T010", "T015", "T011", "T012"]
+    }
+  ]
+}

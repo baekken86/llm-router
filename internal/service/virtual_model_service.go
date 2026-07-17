@@ -20,13 +20,16 @@ type VirtualModelService interface {
 	Update(ctx context.Context, id int64, req models.UpdateVirtualModelRequest) (*models.VirtualModel, error)
 	Delete(ctx context.Context, id int64) error
 	ResolveModels(ctx context.Context, vm *models.VirtualModel) ([]ResolvedModel, error)
+	PreviewResolve(ctx context.Context, filterExpr json.RawMessage, sortExpr json.RawMessage, includeModels json.RawMessage, composition *models.CompositionNode) ([]ResolvedModel, error)
+	GetDependencies(ctx context.Context) (map[string][]string, error)
 }
 
 type ResolvedModel struct {
-	Model           models.Model
-	Provider        models.Provider
-	ReasoningEffort string
-	GlobalMetadata  map[string]string
+	Model            models.Model
+	Provider         models.Provider
+	ReasoningEffort  string
+	GlobalMetadata   map[string]string
+	ProviderMetadata map[string]string
 }
 
 type virtualModelService struct {
@@ -57,17 +60,32 @@ func NewVirtualModelService(
 }
 
 func (s *virtualModelService) Create(ctx context.Context, req models.CreateVirtualModelRequest) (*models.VirtualModel, error) {
-	if err := validateFilterExpr(req.FilterExpr); err != nil {
-		return nil, fmt.Errorf("invalid filter_expr: %w", err)
+	if req.Composition != nil {
+		if len(req.FilterExpr) > 0 && string(req.FilterExpr) != "{}" {
+			return nil, fmt.Errorf("cannot specify both composition and filter_expr at top level")
+		}
+		if err := models.ValidateCompositionNode(req.Composition, 0); err != nil {
+			return nil, fmt.Errorf("invalid composition: %w", err)
+		}
+	} else {
+		if err := validateFilterExpr(req.FilterExpr); err != nil {
+			return nil, fmt.Errorf("invalid filter_expr: %w", err)
+		}
 	}
 	if err := validateSortExpr(req.SortExpr); err != nil {
 		return nil, fmt.Errorf("invalid sort_expr: %w", err)
 	}
+	if err := validateIncludeModels(req.IncludeModels); err != nil {
+		return nil, fmt.Errorf("invalid include_models: %w", err)
+	}
 
 	vm := &models.VirtualModel{
-		Name:       req.Name,
-		FilterExpr: req.FilterExpr,
-		SortExpr:   req.SortExpr,
+		Name:          req.Name,
+		Description:   req.Description,
+		FilterExpr:    req.FilterExpr,
+		SortExpr:      req.SortExpr,
+		IncludeModels: req.IncludeModels,
+		Composition:   req.Composition,
 	}
 	if req.MaxRetries != nil {
 		vm.MaxRetries = *req.MaxRetries
@@ -106,7 +124,24 @@ func (s *virtualModelService) Update(ctx context.Context, id int64, req models.U
 	if req.Name != nil {
 		vm.Name = *req.Name
 	}
+	if req.Description != nil {
+		vm.Description = *req.Description
+	}
+	if req.Composition != nil {
+		if err := models.ValidateCompositionNode(req.Composition, 0); err != nil {
+			return nil, fmt.Errorf("invalid composition: %w", err)
+		}
+		vm.Composition = req.Composition
+		vm.FilterExpr = nil
+		vm.SortExpr = nil
+	} else if req.FilterExpr != nil || req.SortExpr != nil {
+		// Sending filter/sort means switching to leaf mode — clear any existing composition
+		vm.Composition = nil
+	}
 	if req.FilterExpr != nil {
+		if vm.Composition != nil {
+			return nil, fmt.Errorf("cannot specify both composition and filter_expr")
+		}
 		if err := validateFilterExpr(*req.FilterExpr); err != nil {
 			return nil, fmt.Errorf("invalid filter_expr: %w", err)
 		}
@@ -124,6 +159,12 @@ func (s *virtualModelService) Update(ctx context.Context, id int64, req models.U
 	if req.RetryOnStatus != nil {
 		vm.RetryOnStatus = *req.RetryOnStatus
 	}
+	if req.IncludeModels != nil {
+		if err := validateIncludeModels(*req.IncludeModels); err != nil {
+			return nil, fmt.Errorf("invalid include_models: %w", err)
+		}
+		vm.IncludeModels = *req.IncludeModels
+	}
 
 	if err := s.vmRepo.Update(ctx, vm); err != nil {
 		return nil, err
@@ -135,13 +176,60 @@ func (s *virtualModelService) Delete(ctx context.Context, id int64) error {
 	return s.vmRepo.Delete(ctx, id)
 }
 
+func (s *virtualModelService) PreviewResolve(ctx context.Context, filterExpr json.RawMessage, sortExpr json.RawMessage, includeModels json.RawMessage, composition *models.CompositionNode) ([]ResolvedModel, error) {
+	if composition != nil {
+		if len(filterExpr) > 0 && string(filterExpr) != "{}" {
+			return nil, fmt.Errorf("cannot specify both composition and filter_expr")
+		}
+		if err := models.ValidateCompositionNode(composition, 0); err != nil {
+			return nil, fmt.Errorf("invalid composition: %w", err)
+		}
+	} else {
+		if err := validateFilterExpr(filterExpr); err != nil {
+			return nil, fmt.Errorf("invalid filter_expr: %w", err)
+		}
+	}
+	if err := validateSortExpr(sortExpr); err != nil {
+		return nil, fmt.Errorf("invalid sort_expr: %w", err)
+	}
+	if err := validateIncludeModels(includeModels); err != nil {
+		return nil, fmt.Errorf("invalid include_models: %w", err)
+	}
+
+	vm := &models.VirtualModel{
+		FilterExpr:    filterExpr,
+		SortExpr:      sortExpr,
+		IncludeModels: includeModels,
+		Composition:   composition,
+	}
+	return s.ResolveModels(ctx, vm)
+}
+
 func (s *virtualModelService) ResolveModels(ctx context.Context, vm *models.VirtualModel) ([]ResolvedModel, error) {
+	// Composite VM — evaluate the composition tree
+	if vm.Composition != nil {
+		stack := make(map[string]bool)
+		result, err := s.evaluateCompositionNode(ctx, vm.Composition, stack)
+		if err != nil {
+			return nil, err
+		}
+		// Apply top-level include_models
+		result = s.applyIncludeModels(ctx, result, vm.IncludeModels)
+		return result, nil
+	}
+
+	// Leaf VM — existing logic
+	return s.resolveLeafModels(ctx, vm)
+}
+
+// resolveLeafModels contains the original leaf VM resolution logic.
+func (s *virtualModelService) resolveLeafModels(ctx context.Context, vm *models.VirtualModel) ([]ResolvedModel, error) {
 	allModels, err := s.modelRepo.ListAll(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list models: %w", err)
 	}
 
-	var filter models.FilterExpr
+	var filter models.FilterNode
 	if len(vm.FilterExpr) > 0 {
 		if err := json.Unmarshal(vm.FilterExpr, &filter); err != nil {
 			return nil, fmt.Errorf("parse filter: %w", err)
@@ -152,6 +240,30 @@ func (s *virtualModelService) ResolveModels(ctx context.Context, vm *models.Virt
 	if len(vm.SortExpr) > 0 {
 		if err := json.Unmarshal(vm.SortExpr, &sortExpr); err != nil {
 			return nil, fmt.Errorf("parse sort: %w", err)
+		}
+	}
+
+	type includeRef struct {
+		model    models.Model
+		provider models.Provider
+	}
+	var includes []includeRef
+
+	if len(vm.IncludeModels) > 0 && string(vm.IncludeModels) != "[]" {
+		var refs []models.IncludeModelRef
+		if err := json.Unmarshal(vm.IncludeModels, &refs); err != nil {
+			return nil, fmt.Errorf("parse include_models: %w", err)
+		}
+		for _, ref := range refs {
+			provider, err := s.providerRepo.GetByName(ctx, ref.Provider)
+			if err != nil || provider == nil {
+				continue
+			}
+			m, err := s.modelRepo.GetByProviderAndName(ctx, provider.ID, ref.Model)
+			if err != nil || m == nil {
+				continue
+			}
+			includes = append(includes, includeRef{model: *m, provider: *provider})
 		}
 	}
 
@@ -187,17 +299,59 @@ func (s *virtualModelService) ResolveModels(ctx context.Context, vm *models.Virt
 				globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, m.Name, "")
 			}
 
-			if !matchesFilter(m.Tags, filter, providerMeta, globalMeta) {
+			if !matchesFilter(m.Tags, m.Name, filter, provider.Name, providerMeta, globalMeta) {
 				continue
 			}
 
+			pMetaMap := make(map[string]string)
+			pMetaMap["p.name"] = provider.Name
+			for _, pm := range providerMeta {
+				pMetaMap["p."+pm.Key] = pm.Value
+			}
+
 			resolved = append(resolved, ResolvedModel{
-				Model:           m,
-				Provider:        *provider,
-				ReasoningEffort: effort,
-				GlobalMetadata:  globalMeta,
+				Model:            m,
+				Provider:         *provider,
+				ReasoningEffort:  effort,
+				GlobalMetadata:   globalMeta,
+				ProviderMetadata: pMetaMap,
 			})
 		}
+	}
+
+	if len(includes) > 0 {
+		existing := make(map[string]bool, len(resolved))
+		for _, r := range resolved {
+			existing[r.Provider.Name+"/"+r.Model.Name] = true
+		}
+
+		var includeResolved []ResolvedModel
+		for _, inc := range includes {
+			key := inc.provider.Name + "/" + inc.model.Name
+			if existing[key] {
+				continue
+			}
+
+			providerMeta, _ := s.providerMetaRepo.GetByProvider(ctx, inc.provider.ID)
+
+			globalMeta, _ := s.globalMetaRepo.GetByModelEffort(ctx, inc.model.Name, "")
+
+			pMetaMap := make(map[string]string)
+			pMetaMap["p.name"] = inc.provider.Name
+			for _, pm := range providerMeta {
+				pMetaMap["p."+pm.Key] = pm.Value
+			}
+
+			includeResolved = append(includeResolved, ResolvedModel{
+				Model:            inc.model,
+				Provider:         inc.provider,
+				ReasoningEffort:  "",
+				GlobalMetadata:   globalMeta,
+				ProviderMetadata: pMetaMap,
+			})
+		}
+
+		resolved = append(includeResolved, resolved...)
 	}
 
 	sort.Slice(resolved, func(i, j int) bool {
@@ -207,8 +361,283 @@ func (s *virtualModelService) ResolveModels(ctx context.Context, vm *models.Virt
 	return resolved, nil
 }
 
-func matchesFilter(tags []models.Tag, filter models.FilterExpr, providerMeta []models.ProviderMetadata, globalMeta map[string]string) bool {
-	if len(filter.And) == 0 {
+// evaluateCompositionNode recursively resolves a composition tree node.
+func (s *virtualModelService) evaluateCompositionNode(ctx context.Context, node *models.CompositionNode, stack map[string]bool) ([]ResolvedModel, error) {
+	if node.IsVMRef() {
+		return s.resolveVMRef(ctx, node, stack)
+	}
+	if node.IsOperation() {
+		return s.resolveOperation(ctx, node, stack)
+	}
+	return nil, fmt.Errorf("composition node must have either vm or operation")
+}
+
+// resolveVMRef resolves a VM reference node, then applies its filter/sort.
+func (s *virtualModelService) resolveVMRef(ctx context.Context, node *models.CompositionNode, stack map[string]bool) ([]ResolvedModel, error) {
+	if stack[node.Vm] {
+		return nil, fmt.Errorf("circular reference detected: %s", node.Vm)
+	}
+
+	sourceVM, err := s.vmRepo.GetByName(ctx, node.Vm)
+	if err != nil {
+		return nil, fmt.Errorf("resolve VM %q: %w", node.Vm, err)
+	}
+	if sourceVM == nil {
+		return nil, fmt.Errorf("virtual model not found: %s", node.Vm)
+	}
+
+	stack[node.Vm] = true
+	result, err := s.ResolveModels(ctx, sourceVM)
+	delete(stack, node.Vm)
+	if err != nil {
+		return nil, fmt.Errorf("resolve VM %q: %w", node.Vm, err)
+	}
+
+	// Apply per-node filter
+	if node.FilterExpr != nil {
+		result = s.filterResolvedModels(result, *node.FilterExpr)
+	}
+
+	// Apply per-node sort
+	if len(node.SortExpr) > 0 {
+		sort.Slice(result, func(i, j int) bool {
+			return compareModels(result[i], result[j], node.SortExpr)
+		})
+	}
+
+	return result, nil
+}
+
+// resolveOperation resolves an operation node by resolving all children, applying the set operation, then filter/sort.
+func (s *virtualModelService) resolveOperation(ctx context.Context, node *models.CompositionNode, stack map[string]bool) ([]ResolvedModel, error) {
+	if len(node.Sources) < 2 {
+		return nil, fmt.Errorf("operation %s requires at least 2 sources", node.Operation)
+	}
+
+	var sourceResults [][]ResolvedModel
+	for i := range node.Sources {
+		result, err := s.evaluateCompositionNode(ctx, &node.Sources[i], stack)
+		if err != nil {
+			return nil, fmt.Errorf("source[%d]: %w", i, err)
+		}
+		sourceResults = append(sourceResults, result)
+	}
+
+	combined := applySetOperation(node.Operation, sourceResults)
+
+	// Apply per-node filter
+	if node.FilterExpr != nil {
+		combined = s.filterResolvedModels(combined, *node.FilterExpr)
+	}
+
+	// Apply per-node sort
+	if len(node.SortExpr) > 0 {
+		sort.Slice(combined, func(i, j int) bool {
+			return compareModels(combined[i], combined[j], node.SortExpr)
+		})
+	}
+
+	return combined, nil
+}
+
+// filterResolvedModels filters an already-resolved model list using a FilterNode.
+func (s *virtualModelService) filterResolvedModels(models []ResolvedModel, filter models.FilterNode) []ResolvedModel {
+	var result []ResolvedModel
+	for _, rm := range models {
+		tagMap := make(map[string]string)
+		for _, t := range rm.Model.Tags {
+			tagMap["mc."+t.Key] = t.Value
+		}
+
+		providerMap := make(map[string]string)
+		providerMap["p.name"] = rm.Provider.Name
+		for k, v := range rm.ProviderMetadata {
+			if k != "p.name" {
+				providerMap[k] = v
+			}
+		}
+
+		modelMap := make(map[string]string)
+		modelMap["m.name"] = rm.Model.Name
+		for k, v := range rm.GlobalMetadata {
+			modelMap["m."+k] = v
+		}
+
+		allMaps := []map[string]string{tagMap, providerMap, modelMap}
+		if evalFilterNode(filter, allMaps) {
+			result = append(result, rm)
+		}
+	}
+	return result
+}
+
+// applyIncludeModels prepends explicitly included models to the resolved list.
+func (s *virtualModelService) applyIncludeModels(ctx context.Context, resolved []ResolvedModel, includeModels json.RawMessage) []ResolvedModel {
+	if len(includeModels) == 0 || string(includeModels) == "[]" {
+		return resolved
+	}
+
+	var refs []models.IncludeModelRef
+	if err := json.Unmarshal(includeModels, &refs); err != nil {
+		return resolved
+	}
+
+	existing := make(map[string]bool, len(resolved))
+	for _, r := range resolved {
+		existing[r.Provider.Name+"/"+r.Model.Name] = true
+	}
+
+	var includeResolved []ResolvedModel
+	for _, ref := range refs {
+		key := ref.Provider + "/" + ref.Model
+		if existing[key] {
+			continue
+		}
+
+		provider, err := s.providerRepo.GetByName(ctx, ref.Provider)
+		if err != nil || provider == nil {
+			continue
+		}
+		m, err := s.modelRepo.GetByProviderAndName(ctx, provider.ID, ref.Model)
+		if err != nil || m == nil {
+			continue
+		}
+
+		providerMeta, _ := s.providerMetaRepo.GetByProvider(ctx, provider.ID)
+		globalMeta, _ := s.globalMetaRepo.GetByModelEffort(ctx, m.Name, "")
+
+		pMetaMap := make(map[string]string)
+		pMetaMap["p.name"] = provider.Name
+		for _, pm := range providerMeta {
+			pMetaMap["p."+pm.Key] = pm.Value
+		}
+
+		includeResolved = append(includeResolved, ResolvedModel{
+			Model:            *m,
+			Provider:         *provider,
+			ReasoningEffort:  "",
+			GlobalMetadata:   globalMeta,
+			ProviderMetadata: pMetaMap,
+		})
+	}
+
+	return append(includeResolved, resolved...)
+}
+
+// applySetOperation applies a set operation to multiple resolved model lists.
+func applySetOperation(op string, sourceResults [][]ResolvedModel) []ResolvedModel {
+	switch op {
+	case "union":
+		return unionResults(sourceResults)
+	case "intersection":
+		return intersectionResults(sourceResults)
+	case "difference":
+		return differenceResults(sourceResults)
+	default:
+		return nil
+	}
+}
+
+func modelKey(rm ResolvedModel) string {
+	effort := rm.ReasoningEffort
+	return rm.Provider.Name + "/" + rm.Model.Name + "/" + effort
+}
+
+func unionResults(sourceResults [][]ResolvedModel) []ResolvedModel {
+	seen := make(map[string]bool)
+	var result []ResolvedModel
+	for _, source := range sourceResults {
+		for _, rm := range source {
+			key := modelKey(rm)
+			if !seen[key] {
+				seen[key] = true
+				result = append(result, rm)
+			}
+		}
+	}
+	return result
+}
+
+func intersectionResults(sourceResults [][]ResolvedModel) []ResolvedModel {
+	if len(sourceResults) < 2 {
+		return nil
+	}
+
+	sets := make([]map[string]bool, len(sourceResults))
+	for i, source := range sourceResults {
+		sets[i] = make(map[string]bool, len(source))
+		for _, rm := range source {
+			sets[i][modelKey(rm)] = true
+		}
+	}
+
+	common := make(map[string]bool)
+	for key := range sets[0] {
+		inAll := true
+		for i := 1; i < len(sets); i++ {
+			if !sets[i][key] {
+				inAll = false
+				break
+			}
+		}
+		if inAll {
+			common[key] = true
+		}
+	}
+
+	var result []ResolvedModel
+	for _, rm := range sourceResults[0] {
+		if common[modelKey(rm)] {
+			result = append(result, rm)
+		}
+	}
+	return result
+}
+
+func differenceResults(sourceResults [][]ResolvedModel) []ResolvedModel {
+	if len(sourceResults) < 2 {
+		if len(sourceResults) == 1 {
+			return sourceResults[0]
+		}
+		return nil
+	}
+
+	exclude := make(map[string]bool)
+	for i := 1; i < len(sourceResults); i++ {
+		for _, rm := range sourceResults[i] {
+			exclude[modelKey(rm)] = true
+		}
+	}
+
+	var result []ResolvedModel
+	for _, rm := range sourceResults[0] {
+		if !exclude[modelKey(rm)] {
+			result = append(result, rm)
+		}
+	}
+	return result
+}
+
+// GetDependencies returns a map of VM name -> list of VM names it depends on.
+func (s *virtualModelService) GetDependencies(ctx context.Context) (map[string][]string, error) {
+	vms, err := s.vmRepo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	deps := make(map[string][]string)
+	for _, vm := range vms {
+		if vm.Composition != nil {
+			deps[vm.Name] = vm.Composition.CollectVMNames()
+		} else {
+			deps[vm.Name] = []string{}
+		}
+	}
+	return deps, nil
+}
+
+func matchesFilter(tags []models.Tag, modelName string, filter models.FilterNode, providerName string, providerMeta []models.ProviderMetadata, globalMeta map[string]string) bool {
+	if !filter.IsLeaf() && len(filter.And) == 0 && len(filter.Or) == 0 && filter.Not == nil {
 		return true
 	}
 
@@ -218,29 +647,58 @@ func matchesFilter(tags []models.Tag, filter models.FilterExpr, providerMeta []m
 	}
 
 	providerMap := make(map[string]string)
+	providerMap["p.name"] = providerName
 	for _, pm := range providerMeta {
 		providerMap["p."+pm.Key] = pm.Value
 	}
 
 	modelMap := make(map[string]string)
+	modelMap["m.name"] = modelName
 	for k, v := range globalMeta {
 		modelMap["m."+k] = v
 	}
 
-	for _, cond := range filter.And {
-		val, exists := tagMap[cond.Key]
-		if !exists {
-			val, exists = providerMap[cond.Key]
-		}
-		if !exists {
-			val, exists = modelMap[cond.Key]
+	allMaps := []map[string]string{tagMap, providerMap, modelMap}
+	return evalFilterNode(filter, allMaps)
+}
+
+func evalFilterNode(node models.FilterNode, allMaps []map[string]string) bool {
+	if node.IsLeaf() {
+		var val string
+		var exists bool
+		for _, m := range allMaps {
+			if v, ok := m[node.Key]; ok {
+				val = v
+				exists = true
+				break
+			}
 		}
 		if !exists {
 			return false
 		}
-		if !evaluateCondition(val, cond.Op, cond.Value) {
-			return false
+		return evaluateCondition(val, node.Op, node.Value)
+	}
+
+	if len(node.And) > 0 {
+		for _, child := range node.And {
+			if !evalFilterNode(child, allMaps) {
+				return false
+			}
 		}
+		return true
+	}
+
+	if len(node.Or) > 0 {
+		for _, child := range node.Or {
+			if evalFilterNode(child, allMaps) {
+				return true
+			}
+		}
+		return false
+	}
+
+	if node.Not != nil {
+		return !evalFilterNode(*node.Not, allMaps)
 	}
 
 	return true
@@ -321,7 +779,32 @@ func compareModels(a, b ResolvedModel, sortExpr models.SortExpr) bool {
 		bTagMap["m."+k] = v
 	}
 
+	aTagMap["m.name"] = a.Model.Name
+	bTagMap["m.name"] = b.Model.Name
+
+	for k, v := range a.ProviderMetadata {
+		aTagMap[k] = v
+	}
+	for k, v := range b.ProviderMetadata {
+		bTagMap[k] = v
+	}
+
+	aMaps := []map[string]string{aTagMap}
+	bMaps := []map[string]string{bTagMap}
+
 	for _, s := range sortExpr {
+		if s.IsCondition() {
+			aMatch := evalFilterNode(*s.Condition, aMaps)
+			bMatch := evalFilterNode(*s.Condition, bMaps)
+			if aMatch == bMatch {
+				continue
+			}
+			if s.Direction == "desc" {
+				return !aMatch
+			}
+			return aMatch
+		}
+
 		aVal := aTagMap[s.Key]
 		bVal := bTagMap[s.Key]
 
@@ -374,8 +857,62 @@ func validateFilterExpr(data json.RawMessage) error {
 	if len(data) == 0 || string(data) == "{}" {
 		return nil
 	}
-	var f models.FilterExpr
-	return json.Unmarshal(data, &f)
+	var f models.FilterNode
+	if err := json.Unmarshal(data, &f); err != nil {
+		return err
+	}
+	return validateFilterNode(&f)
+}
+
+func validateFilterNode(node *models.FilterNode) error {
+	if node == nil {
+		return fmt.Errorf("nil filter node")
+	}
+
+	hasLeaf := node.Key != ""
+	hasAnd := len(node.And) > 0
+	hasOr := len(node.Or) > 0
+	hasNot := node.Not != nil
+
+	if hasLeaf && (hasAnd || hasOr || hasNot) {
+		return fmt.Errorf("filter node cannot have both leaf fields (key/op/value) and logical operators (and/or/not)")
+	}
+
+	if !hasLeaf && !hasAnd && !hasOr && !hasNot {
+		return fmt.Errorf("filter node must have either leaf fields or logical operators")
+	}
+
+	if hasLeaf {
+		if node.Op == "" {
+			return fmt.Errorf("leaf node missing operator")
+		}
+		validOps := map[string]bool{"eq": true, "neq": true, "gt": true, "gte": true, "lt": true, "lte": true, "in": true, "contains": true}
+		if !validOps[node.Op] {
+			return fmt.Errorf("unknown operator: %s", node.Op)
+		}
+		return nil
+	}
+
+	if hasAnd {
+		for i := range node.And {
+			if err := validateFilterNode(&node.And[i]); err != nil {
+				return fmt.Errorf("and[%d]: %w", i, err)
+			}
+		}
+	}
+	if hasOr {
+		for i := range node.Or {
+			if err := validateFilterNode(&node.Or[i]); err != nil {
+				return fmt.Errorf("or[%d]: %w", i, err)
+			}
+		}
+	}
+	if hasNot {
+		if err := validateFilterNode(node.Not); err != nil {
+			return fmt.Errorf("not: %w", err)
+		}
+	}
+	return nil
 }
 
 func validateSortExpr(data json.RawMessage) error {
@@ -384,4 +921,23 @@ func validateSortExpr(data json.RawMessage) error {
 	}
 	var s models.SortExpr
 	return json.Unmarshal(data, &s)
+}
+
+func validateIncludeModels(data json.RawMessage) error {
+	if len(data) == 0 || string(data) == "[]" {
+		return nil
+	}
+	var refs []models.IncludeModelRef
+	if err := json.Unmarshal(data, &refs); err != nil {
+		return err
+	}
+	for i, ref := range refs {
+		if ref.Provider == "" {
+			return fmt.Errorf("include_models[%d]: provider is required", i)
+		}
+		if ref.Model == "" {
+			return fmt.Errorf("include_models[%d]: model is required", i)
+		}
+	}
+	return nil
 }

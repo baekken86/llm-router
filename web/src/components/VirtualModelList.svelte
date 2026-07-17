@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from 'svelte';
   import { apiFetch } from '../lib/api.js';
   import { addToast } from '../lib/stores.js';
   import ConfirmDialog from './ConfirmDialog.svelte';
@@ -35,20 +36,46 @@
   }
 
   function formatFilter(expr) {
-    if (!expr || !expr.and || expr.and.length === 0) return 'No filters';
-    return expr.and.map(c => `${c.key} ${c.op} ${Array.isArray(c.value) ? c.value.join(',') : c.value}`).join(' AND ');
+    if (!expr) return 'No filters';
+    if (expr.key) {
+      const val = Array.isArray(expr.value) ? expr.value.join(',') : expr.value;
+      return `${expr.key} ${expr.op} ${val}`;
+    }
+    if (expr.not) {
+      return `NOT (${formatFilter(expr.not)})`;
+    }
+    const op = expr.and ? 'AND' : 'OR';
+    const items = (expr.and || expr.or || []);
+    if (items.length === 0) return 'No filters';
+    return items.map(i => formatFilter(i)).join(` ${op} `);
   }
 
   function formatSort(expr) {
     if (!expr || expr.length === 0) return 'No sort';
     return expr.map(c => {
+      if (c.condition) {
+        const val = Array.isArray(c.condition.value) ? c.condition.value.join(',') : c.condition.value;
+        return `IF ${c.condition.key} ${c.condition.op} ${val} ${c.direction || ''}`.trim();
+      }
       if (c.direction) return `${c.key} ${c.direction}`;
       if (c.order) return `${c.key}: [${c.order.join(', ')}]`;
       return c.key;
     }).join(', ');
   }
 
-  $effect(() => { load(); });
+  function formatComposition(node, depth = 0) {
+    if (!node) return '';
+    if (node.vm) return node.vm;
+    if (node.operation) {
+      const opSymbol = { union: '∪', intersection: '∩', difference: '\\' }[node.operation] || node.operation;
+      const children = (node.sources || []).map(s => formatComposition(s, depth + 1));
+      if (depth === 0) return `${node.operation}: ${children.join(' ')} ${opSymbol}`;
+      return `(${children.join(` ${opSymbol} `)})`;
+    }
+    return '?';
+  }
+
+  onMount(() => { load(); });
 </script>
 
 <div>
@@ -76,7 +103,16 @@
           >
             <div class="flex-1 min-w-0">
               <span class="font-medium text-gray-100">{vm.name}</span>
-              <span class="text-xs text-gray-500 ml-3">{formatFilter(vm.filter_expr)}</span>
+              {#if vm.description}
+                <span class="text-xs text-gray-500 ml-3">{vm.description}</span>
+              {/if}
+              <div class="text-xs text-gray-500 mt-1">
+                {#if vm.composition}
+                  <span class="text-blue-400">composite:</span> {formatComposition(vm.composition)}
+                {:else}
+                  {formatFilter(vm.filter_expr)}
+                {/if}
+              </div>
             </div>
             <div class="flex gap-2 ml-4">
               <button
@@ -95,15 +131,25 @@
           </div>
           {#if expandedId === vm.id}
             <div class="px-4 pb-3 border-t border-gray-800 pt-3">
-              <div class="mb-2 text-xs text-gray-500">
-                <span class="text-gray-400">Sort:</span> {formatSort(vm.sort_expr)}
-              </div>
-              <div class="mb-2 text-xs text-gray-500">
-                <span class="text-gray-400">Filter:</span> {formatFilter(vm.filter_expr)}
-              </div>
+              {#if vm.composition}
+                <div class="mb-2 text-xs text-gray-500">
+                  <span class="text-gray-400">Composition:</span> {formatComposition(vm.composition)}
+                </div>
+              {:else}
+                <div class="mb-2 text-xs text-gray-500">
+                  <span class="text-gray-400">Sort:</span> {formatSort(vm.sort_expr)}
+                </div>
+                <div class="mb-2 text-xs text-gray-500">
+                  <span class="text-gray-400">Filter:</span> {formatFilter(vm.filter_expr)}
+                </div>
+              {/if}
               <div class="mt-3">
                 <p class="text-xs text-gray-500 mb-2">Resolved models:</p>
-                <ResolvedPreview vmId={vm.id} filterExpr={vm.filter_expr} sortExpr={vm.sort_expr} />
+                {#if vm.composition}
+                  <ResolvedPreview vmId={vm.id} composition={vm.composition} />
+                {:else}
+                  <ResolvedPreview vmId={vm.id} filterExpr={vm.filter_expr} sortExpr={vm.sort_expr} />
+                {/if}
               </div>
             </div>
           {/if}

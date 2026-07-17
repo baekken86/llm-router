@@ -1,18 +1,23 @@
 <script>
+  import { onMount } from 'svelte';
   import { apiFetch } from '../lib/api.js';
   import { addToast } from '../lib/stores.js';
   import ConditionBuilder from './ConditionBuilder.svelte';
   import SortBuilder from './SortBuilder.svelte';
+  import CompositionBuilder from './CompositionBuilder.svelte';
   import ResolvedPreview from './ResolvedPreview.svelte';
 
   let { vmId = null, onBack } = $props();
 
   let name = $state('');
-  let conditions = $state([]);
+  let description = $state('');
+  let mode = $state('leaf'); // 'leaf' or 'composite'
+  let filterNode = $state({ and: [] });
   let sortCriteria = $state([]);
+  let compositionNode = $state({ vm: '' });
+  let includeModels = $state([]);
   let maxRetries = $state(0);
   let retryOnStatus = $state([429, 500, 502, 503]);
-  let savedId = $state(null);
   let saving = $state(false);
   let loading = $state(vmId !== null);
 
@@ -23,14 +28,24 @@
     try {
       const vm = await apiFetch(`/api/v1/virtual-models/${vmId}`);
       name = vm.name;
+      description = vm.description || '';
       maxRetries = vm.max_retries || 0;
       retryOnStatus = vm.retry_on_status || [429, 500, 502, 503];
 
-      if (vm.filter_expr && vm.filter_expr.and) {
-        conditions = vm.filter_expr.and;
+      if (vm.composition) {
+        mode = 'composite';
+        compositionNode = vm.composition;
+      } else {
+        mode = 'leaf';
+        if (vm.filter_expr && (vm.filter_expr.and || vm.filter_expr.or)) {
+          filterNode = vm.filter_expr;
+        }
+        if (vm.sort_expr && Array.isArray(vm.sort_expr)) {
+          sortCriteria = vm.sort_expr;
+        }
       }
-      if (vm.sort_expr && Array.isArray(vm.sort_expr)) {
-        sortCriteria = vm.sort_expr;
+      if (vm.include_models && Array.isArray(vm.include_models)) {
+        includeModels = vm.include_models;
       }
     } catch (e) {
       addToast(e.message, 'error');
@@ -39,30 +54,61 @@
     }
   }
 
+  function isEmptyNode(n) {
+    if (!n) return true;
+    if (n.key) return false;
+    if (n.and) return n.and.length === 0 || n.and.every(isEmptyNode);
+    if (n.or) return n.or.length === 0 || n.or.every(isEmptyNode);
+    if (n.not) return isEmptyNode(n.not);
+    return true;
+  }
+
   function buildFilterExpr() {
-    const valid = conditions.filter(c => c.key && c.op);
-    if (valid.length === 0) return {};
-    return { and: valid };
+    if (isEmptyNode(filterNode)) return {};
+    return filterNode;
   }
 
   function buildSortExpr() {
-    return sortCriteria.filter(c => c.key);
+    return sortCriteria.filter(c => c.key || c.condition);
   }
+
+  function isValidComposition(node) {
+    if (!node) return false;
+    if (node.vm) return node.vm !== '';
+    if (node.operation) {
+      return node.sources && node.sources.length >= 2 && node.sources.every(isValidComposition);
+    }
+    return false;
+  }
+
+  const memoizedFilterExpr = $derived(buildFilterExpr());
+  const memoizedSortExpr = $derived(buildSortExpr());
 
   async function handleSubmit() {
     if (!name.trim()) {
       addToast('Name is required', 'error');
       return;
     }
+    if (mode === 'composite' && !isValidComposition(compositionNode)) {
+      addToast('Composition must have at least 2 sources with VMs selected', 'error');
+      return;
+    }
     saving = true;
     try {
       const body = {
         name: name.trim(),
-        filter_expr: buildFilterExpr(),
-        sort_expr: buildSortExpr(),
+        description: description.trim(),
         max_retries: maxRetries,
-        retry_on_status: retryOnStatus
+        retry_on_status: retryOnStatus,
+        include_models: includeModels
       };
+
+      if (mode === 'composite') {
+        body.composition = compositionNode;
+      } else {
+        body.filter_expr = buildFilterExpr();
+        body.sort_expr = buildSortExpr();
+      }
 
       let result;
       if (vmId) {
@@ -70,14 +116,17 @@
           method: 'PUT',
           body
         });
+        addToast('Updated', 'success');
       } else {
         result = await apiFetch('/api/v1/virtual-models', {
           method: 'POST',
           body
         });
+        addToast('Created', 'success');
+        if (result?.id) {
+          vmId = result.id;
+        }
       }
-      savedId = result.id;
-      addToast(vmId ? 'Updated' : 'Created', 'success');
     } catch (e) {
       addToast(e.message, 'error');
     } finally {
@@ -93,7 +142,7 @@
     }
   }
 
-  $effect(() => { loadVM(); });
+  onMount(() => { loadVM(); });
 </script>
 
 <div>
@@ -118,18 +167,54 @@
       </div>
 
       <div>
-        <label class="block text-sm text-gray-400 mb-2">Filter Conditions</label>
-        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-          <ConditionBuilder {conditions} onchange={(v) => conditions = v} />
+        <label class="block text-sm text-gray-400 mb-1">Description</label>
+        <textarea
+          bind:value={description}
+          placeholder="What does this virtual model do? How is it used?"
+          rows="2"
+          class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+        ></textarea>
+      </div>
+
+      <!-- Mode toggle -->
+      <div>
+        <label class="block text-sm text-gray-400 mb-2">Mode</label>
+        <div class="flex gap-2">
+          <button
+            type="button"
+            class="px-4 py-2 text-sm rounded border {mode === 'leaf' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'}"
+            onclick={() => mode = 'leaf'}
+          >Leaf (Filter/Sort)</button>
+          <button
+            type="button"
+            class="px-4 py-2 text-sm rounded border {mode === 'composite' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'}"
+            onclick={() => mode = 'composite'}
+          >Composite (Combine VMs)</button>
         </div>
       </div>
 
-      <div>
-        <label class="block text-sm text-gray-400 mb-2">Sort Criteria</label>
-        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-          <SortBuilder criteria={sortCriteria} onchange={(v) => sortCriteria = v} />
+      {#if mode === 'leaf'}
+        <div>
+          <label class="block text-sm text-gray-400 mb-2">Filter Conditions</label>
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+            <ConditionBuilder node={filterNode} onchange={(v) => filterNode = v || { and: [] }} />
+          </div>
         </div>
-      </div>
+
+        <div>
+          <label class="block text-sm text-gray-400 mb-2">Sort Criteria</label>
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+            <SortBuilder criteria={sortCriteria} onchange={(v) => sortCriteria = v} />
+          </div>
+        </div>
+      {:else}
+        <div>
+          <label class="block text-sm text-gray-400 mb-2">Composition</label>
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+            <CompositionBuilder bind:node={compositionNode} />
+          </div>
+        </div>
+      {/if}
 
       <div class="grid grid-cols-2 gap-4">
         <div>
@@ -176,11 +261,15 @@
       </div>
     </form>
 
-    {#if savedId}
-      <div class="mt-8 bg-gray-900 border border-gray-800 rounded-lg p-4">
-        <h3 class="text-sm font-medium text-gray-300 mb-3">Resolved Models</h3>
-        <ResolvedPreview vmId={savedId} filterExpr={buildFilterExpr()} sortExpr={buildSortExpr()} />
-      </div>
-    {/if}
+    <div class="mt-8 bg-gray-900 border border-gray-800 rounded-lg p-4">
+      <h3 class="text-sm font-medium text-gray-300 mb-3">
+        Resolved Models <span class="text-gray-500 text-xs">(live preview)</span>
+      </h3>
+      {#if mode === 'leaf'}
+        <ResolvedPreview previewMode={true} filterExpr={memoizedFilterExpr} sortExpr={memoizedSortExpr} />
+      {:else}
+        <ResolvedPreview previewMode={true} composition={compositionNode} />
+      {/if}
+    </div>
   {/if}
 </div>

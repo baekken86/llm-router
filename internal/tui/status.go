@@ -1,10 +1,14 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/chris/llm-router/internal/repository"
 )
 
 type StatusRefreshMsg struct {
@@ -141,4 +145,42 @@ func (m StatusModel) SelectedProvider() *ProviderStatusResponse {
 		return &m.providers[m.cursor]
 	}
 	return nil
+}
+
+func FetchStatusLocal(providerRepo repository.ProviderRepository, oauthRepo repository.OAuthRepository) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		providers, err := providerRepo.List(ctx)
+		if err != nil {
+			return StatusRefreshMsg{}
+		}
+
+		var result []ProviderStatusResponse
+		for _, p := range providers {
+			ps := ProviderStatusResponse{
+				ID:   p.ID,
+				Name: p.Name,
+			}
+
+			if p.APIKeyEncrypted != "" {
+				ps.APIKeyConfigured = true
+			}
+
+			oauthToken, _ := oauthRepo.GetByProviderID(ctx, p.ID)
+			if oauthToken != nil && oauthToken.AccessToken != "" {
+				ps.OAuthConfigured = true
+				ps.OAuthEmail = oauthToken.Email
+				if !oauthToken.ExpiresAt.IsZero() {
+					ps.OAuthExpiresAt = oauthToken.ExpiresAt.Format(time.RFC3339)
+					if time.Now().After(oauthToken.ExpiresAt) {
+						ps.OAuthExpired = true
+					}
+				}
+			}
+
+			result = append(result, ps)
+		}
+
+		return StatusRefreshMsg{Status: &StatusResponse{Providers: result}}
+	}
 }

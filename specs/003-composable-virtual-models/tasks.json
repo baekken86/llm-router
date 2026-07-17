@@ -1,0 +1,193 @@
+{
+  "spec": "003",
+  "tasks": [
+    {
+      "id": "S003T001",
+      "title": "Add migration 016 (composition column)",
+      "description": "",
+      "status": "done",
+      "priority": 1,
+      "depends_on": [],
+      "owns": [
+        "internal/db/migrations/016_add_composition_to_virtual_models.sql"
+      ]
+    },
+    {
+      "id": "S003T002",
+      "title": "Add CompositionExpr Go struct and update VirtualModel",
+      "description": "",
+      "status": "done",
+      "priority": 1,
+      "depends_on": [],
+      "owns": [
+        "internal/models/virtual_model.go"
+      ]
+    },
+    {
+      "id": "S003T003",
+      "title": "Update repository to read/write composition JSON",
+      "description": "",
+      "status": "done",
+      "priority": 2,
+      "depends_on": [
+        "S003T002"
+      ],
+      "owns": [
+        "internal/repository/virtual_model_repo.go"
+      ]
+    },
+    {
+      "id": "S003T004",
+      "title": "Implement set operations (union, intersection, difference) in service",
+      "description": "",
+      "status": "done",
+      "priority": 2,
+      "depends_on": [
+        "S003T003"
+      ],
+      "owns": [
+        "internal/service/virtual_model_service.go"
+      ]
+    },
+    {
+      "id": "S003T005",
+      "title": "Modify ResolveModels for composite VMs with cycle detection",
+      "description": "",
+      "status": "done",
+      "priority": 2,
+      "depends_on": [
+        "S003T004"
+      ],
+      "owns": [
+        "internal/service/virtual_model_service.go"
+      ]
+    },
+    {
+      "id": "S003T006",
+      "title": "Update API handlers (create/update/preview) for composition",
+      "description": "",
+      "status": "done",
+      "priority": 3,
+      "depends_on": [
+        "S003T005"
+      ],
+      "owns": [
+        "internal/api/handlers/virtual_model_handler.go"
+      ]
+    },
+    {
+      "id": "S003T007",
+      "title": "Add GET /dependencies endpoint and delete guard",
+      "description": "",
+      "status": "done",
+      "priority": 3,
+      "depends_on": [
+        "S003T003"
+      ],
+      "owns": [
+        "internal/api/handlers/virtual_model_handler.go"
+      ]
+    },
+    {
+      "id": "S003T008",
+      "title": "Write backend tests for composition logic",
+      "description": "",
+      "status": "done",
+      "priority": 4,
+      "depends_on": [
+        "S003T005"
+      ],
+      "owns": []
+    },
+    {
+      "id": "S003T009",
+      "title": "Create CompositionBuilder.svelte component",
+      "description": "",
+      "status": "done",
+      "priority": 5,
+      "depends_on": [
+        "S003T006"
+      ],
+      "owns": [
+        "web/src/components/CompositionBuilder.svelte"
+      ]
+    },
+    {
+      "id": "S003T010",
+      "title": "Integrate CompositionBuilder into VirtualModelForm with mode toggle",
+      "description": "",
+      "status": "done",
+      "priority": 5,
+      "depends_on": [
+        "S003T009"
+      ],
+      "owns": [
+        "web/src/components/VirtualModelForm.svelte"
+      ]
+    },
+    {
+      "id": "S003T011",
+      "title": "Add dependency warnings and delete confirmation with dependents",
+      "description": "",
+      "status": "done",
+      "priority": 6,
+      "depends_on": [
+        "S003T007",
+        "S003T010"
+      ],
+      "owns": [
+        "web/src/components/VirtualModelList.svelte"
+      ]
+    },
+    {
+      "id": "S003T012",
+      "title": "Update ResolvedPreview for composite VMs",
+      "description": "",
+      "status": "done",
+      "priority": 6,
+      "depends_on": [
+        "S003T010"
+      ],
+      "owns": [
+        "web/src/components/ResolvedPreview.svelte"
+      ]
+    },
+    {
+      "id": "S003T013",
+      "title": "Add description column migration and Go struct",
+      "description": "",
+      "status": "done",
+      "priority": 1,
+      "depends_on": [],
+      "owns": [
+        "internal/db/migrations/017_add_description_to_virtual_models.sql internal/models/virtual_model.go"
+      ]
+    },
+    {
+      "id": "S003T014",
+      "title": "Update repository and API handlers for description field",
+      "description": "",
+      "status": "done",
+      "priority": 2,
+      "depends_on": [
+        "S003T013"
+      ],
+      "owns": [
+        "internal/repository/virtual_model_repo.go internal/api/handlers/virtual_model_handler.go"
+      ]
+    },
+    {
+      "id": "S003T015",
+      "title": "Add description textarea to VirtualModelForm and list display",
+      "description": "",
+      "status": "done",
+      "priority": 5,
+      "depends_on": [
+        "S003T014"
+      ],
+      "owns": [
+        "web/src/components/VirtualModelForm.svelte web/src/components/VirtualModelList.svelte web/src/components/CompositionBuilder.svelte"
+      ]
+    }
+  ]
+}

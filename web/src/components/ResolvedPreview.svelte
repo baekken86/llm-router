@@ -1,15 +1,24 @@
 <script>
   import { apiFetch } from '../lib/api.js';
 
-  let { vmId = null, filterExpr = null, sortExpr = null } = $props();
+  let { vmId = null, filterExpr = null, sortExpr = null, composition = null, previewMode = false } = $props();
 
   let resolved = $state([]);
   let apiFilter = $state(null);
   let apiSort = $state(null);
   let loading = $state(false);
   let error = $state('');
+  let debounceTimer = null;
+
+  let prevVmId = $state(null);
+  let prevFilter = $state(null);
+  let prevSort = $state(null);
 
   async function load() {
+    if (previewMode && filterExpr !== null) {
+      await loadPreview();
+      return;
+    }
     if (!vmId) return;
     loading = true;
     error = '';
@@ -25,8 +34,53 @@
     }
   }
 
+  async function loadPreview() {
+    loading = true;
+    error = '';
+    try {
+      const body = {};
+      if (composition) {
+        body.composition = composition;
+      } else {
+        body.filter_expr = filterExpr || {};
+        body.sort_expr = sortExpr || [];
+      }
+      const data = await apiFetch('/api/v1/virtual-models/preview', {
+        method: 'POST',
+        body
+      });
+      resolved = data.models || [];
+    } catch (e) {
+      error = e.message;
+    } finally {
+      loading = false;
+    }
+  }
+
+  function schedulePreview() {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      load();
+    }, 300);
+  }
+
   $effect(() => {
-    if (vmId) load();
+    const vId = vmId;
+    const f = filterExpr;
+    const s = sortExpr;
+    const c = composition;
+    const pm = previewMode;
+
+    if (pm) {
+      schedulePreview();
+    } else {
+      if (vId !== prevVmId || f !== prevFilter || s !== prevSort) {
+        prevVmId = vId;
+        prevFilter = f;
+        prevSort = s;
+        if (vId) load();
+      }
+    }
   });
 
   const effFilter = $derived(filterExpr || apiFilter);
@@ -51,6 +105,13 @@
     return map[key] || key;
   }
 
+  function collectFilterKeys(node) {
+    if (!node) return [];
+    if (node.key) return [node.key];
+    const items = node.and || node.or || [];
+    return items.flatMap(i => collectFilterKeys(i));
+  }
+
   const columns = $derived.by(() => {
     const seen = new Set();
     const cols = [];
@@ -64,11 +125,11 @@
       }
     }
 
-    if (effFilter && effFilter.and) {
-      for (const f of effFilter.and) {
-        if (f.key && !seen.has(f.key)) {
-          seen.add(f.key);
-          cols.push({ key: f.key, abbrev: abbrevKey(f.key) });
+    if (effFilter) {
+      for (const key of collectFilterKeys(effFilter)) {
+        if (!seen.has(key)) {
+          seen.add(key);
+          cols.push({ key, abbrev: abbrevKey(key) });
         }
       }
     }

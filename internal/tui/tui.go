@@ -54,10 +54,11 @@ type Model struct {
 	modelRepo    repository.ModelRepository
 	tagRepo      repository.TagRepository
 	providerRepo repository.ProviderRepository
+	oauthRepo    repository.OAuthRepository
 	config       *config.Config
 }
 
-func New(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse) Model {
+func New(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, oauthRepo repository.OAuthRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse) Model {
 	logView := NewLogViewModel(500)
 	if len(initialLogs) > 0 {
 		logView.LoadInitial(initialLogs)
@@ -87,6 +88,7 @@ func New(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repos
 		modelRepo:    modelRepo,
 		tagRepo:      tagRepo,
 		providerRepo: providerRepo,
+		oauthRepo:    oauthRepo,
 		config:       cfg,
 	}
 }
@@ -119,6 +121,7 @@ func (m Model) Init() tea.Cmd {
 		cmds = append(cmds, FetchVMData(m.apiClient))
 		cmds = append(cmds, FetchRawModels(m.apiClient))
 	} else if m.vmRepo != nil {
+		cmds = append(cmds, FetchStatusLocal(m.providerRepo, m.oauthRepo))
 		cmds = append(cmds, FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo))
 		cmds = append(cmds, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo))
 	}
@@ -287,6 +290,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.tab == TabStatus {
 				if m.apiClient != nil {
 					return m, FetchStatus(m.apiClient)
+				} else if m.providerRepo != nil {
+					return m, FetchStatusLocal(m.providerRepo, m.oauthRepo)
 				}
 			} else if m.tab == TabVM {
 				if m.vmView.modelTab == ModelTabRaw {
@@ -493,8 +498,8 @@ func (m Model) renderFooter() string {
 	return lipgloss.Place(m.width, 1, lipgloss.Left, lipgloss.Bottom, help)
 }
 
-func Run(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse, quit chan<- struct{}) {
-	p := tea.NewProgram(New(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, cfg, initialLogs, initialSyslogs, initialStats), tea.WithAltScreen())
+func Run(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, oauthRepo repository.OAuthRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse, quit chan<- struct{}) {
+	p := tea.NewProgram(New(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, oauthRepo, cfg, initialLogs, initialSyslogs, initialStats), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("TUI error: %v\n", err)
 	}

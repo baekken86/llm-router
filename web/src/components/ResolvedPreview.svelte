@@ -15,7 +15,7 @@
   let prevSort = $state(null);
 
   async function load() {
-    if (previewMode && filterExpr !== null) {
+    if (previewMode && (filterExpr !== null || composition)) {
       await loadPreview();
       return;
     }

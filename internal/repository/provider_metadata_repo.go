@@ -13,6 +13,7 @@ type ProviderMetadataRepository interface {
 	GetByProvider(ctx context.Context, providerID int64) ([]models.ProviderMetadata, error)
 	GetByProviders(ctx context.Context, providerIDs []int64) (map[int64][]models.ProviderMetadata, error)
 	ListAll(ctx context.Context) (map[int64]map[string]string, error)
+	ListAllKeys(ctx context.Context) (map[string][]string, error)
 	DeleteByProvider(ctx context.Context, providerID int64) error
 }
 
@@ -134,4 +135,31 @@ func (r *sqliteProviderMetadataRepo) DeleteByProvider(ctx context.Context, provi
 		return fmt.Errorf("delete: %w", err)
 	}
 	return nil
+}
+
+func (r *sqliteProviderMetadataRepo) ListAllKeys(ctx context.Context) (map[string][]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT key, value FROM provider_metadata ORDER BY key, value`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list keys: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string][]string)
+	seen := make(map[string]map[string]bool)
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		if seen[key] == nil {
+			seen[key] = make(map[string]bool)
+		}
+		if !seen[key][value] {
+			seen[key][value] = true
+			result[key] = append(result[key], value)
+		}
+	}
+	return result, nil
 }

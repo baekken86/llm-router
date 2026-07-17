@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -168,19 +169,21 @@ func runProxy(args []string) {
 	logChan := make(chan proxy.RequestLog, 100)
 	syslogChan := make(chan string, 200)
 
+	database, err := db.Open(*dbPath)
+	if err != nil {
+		slog.Error("failed to open database", "error", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+
+	logRepo := repository.NewLogRepository(database)
+
 	var logger *slog.Logger
 	if *noTUI {
 		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	} else {
-		logger = slog.New(slog.NewTextHandler(&syslogWriter{ch: syslogChan}, &slog.HandlerOptions{Level: logLevel}))
+		logger = slog.New(slog.NewTextHandler(&syslogWriter{ch: syslogChan, logRepo: logRepo}, &slog.HandlerOptions{Level: logLevel}))
 	}
-
-	database, err := db.Open(*dbPath)
-	if err != nil {
-		logger.Error("failed to open database", "error", err)
-		os.Exit(1)
-	}
-	defer database.Close()
 
 	key := *encryptKey
 	if key == "" {
@@ -215,16 +218,107 @@ func runProxy(args []string) {
 	oauthRepo := repository.NewOAuthRepository(database)
 
 	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, keyBytes)
-	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService)
+	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalMetaRepo)
 	vmService := service.NewVirtualModelService(vmRepo, modelRepo, tagRepo, providerRepo, providerMetadataRepo, globalMetaRepo)
 	keyService := service.NewKeyService(keyRepo)
 	adminService := service.NewAdminService(pass)
 
-	statsHandler := handlers.NewStatsHandler()
+	statsHandler := handlers.NewStatsHandler(logRepo, logger)
 
 	go func() {
 		for log := range logChan {
 			statsHandler.RecordLog(log)
+		}
+	}()
+
+	// Load initial data from DB
+	initialLogs, _ := logRepo.ListRequestLogs(context.Background(), 500)
+	initialSyslogs, _ := logRepo.ListSyslogEntries(context.Background(), 1000)
+	initialStats, _ := logRepo.ComputeStats(context.Background())
+
+	// Convert to tui types
+	tuiLogs := make([]proxy.RequestLog, 0, len(initialLogs))
+	for _, dl := range initialLogs {
+		tuiLogs = append(tuiLogs, proxy.RequestLog{
+			Type:               dl.Type,
+			Timestamp:          dl.Timestamp,
+			RequestID:          dl.RequestID,
+			VirtualModel:       dl.VirtualModel,
+			ClientKeyID:        dl.ClientKeyID,
+			ProviderName:       dl.ProviderName,
+			ModelName:          dl.ModelName,
+			StatusCode:         dl.StatusCode,
+			Latency:            dl.Latency,
+			InputTokens:        dl.InputTokens,
+			OutputTokens:       dl.OutputTokens,
+			CachedTokens:       dl.CachedTokens,
+			ReasoningTokens:    dl.ReasoningTokens,
+			ErrorMessage:       dl.ErrorMessage,
+			RetryCount:         dl.RetryCount,
+			FallbackCount:      dl.FallbackCount,
+			RTKIntercepted:     dl.RTKIntercepted,
+			RTKSavedTokens:     dl.RTKSavedTokens,
+			CavemanIntercepted: dl.CavemanIntercepted,
+			CavemanSavedTokens: dl.CavemanSavedTokens,
+		})
+	}
+
+	tuiSyslogs := make([]tui.SysLogEntry, len(initialSyslogs))
+	for i, e := range initialSyslogs {
+		tuiSyslogs[i] = tui.SysLogEntry{
+			Timestamp: e.Timestamp,
+			Level:     e.Level,
+			Message:   e.Message,
+		}
+	}
+
+	var tuiStats *tui.StatsResponse
+	if initialStats != nil {
+		tuiStats = &tui.StatsResponse{
+			TotalRequests:      initialStats.TotalRequests,
+			Successes:          initialStats.Successes,
+			Failures:           initialStats.Failures,
+			InputTokens:        initialStats.InputTokens,
+			OutputTokens:       initialStats.OutputTokens,
+			CachedTokens:       initialStats.CachedTokens,
+			ReasoningTokens:    initialStats.ReasoningTokens,
+			RTKIntercepts:      initialStats.RTKIntercepts,
+			RTKSavedTokens:     initialStats.RTKSavedTokens,
+			CavemanIntercepts:  initialStats.CavemanIntercepts,
+			CavemanSavedTokens: initialStats.CavemanSavedTokens,
+			ByVirtualModel:     make(map[string]tui.ModelStat),
+			ByProvider:         make(map[string]tui.ModelStat),
+		}
+		for name, ms := range initialStats.ByVirtualModel {
+			tuiStats.ByVirtualModel[name] = tui.ModelStat{
+				Requests:     ms.Requests,
+				Successes:    ms.Successes,
+				Failures:     ms.Failures,
+				InputTokens:  ms.InputTokens,
+				OutputTokens: ms.OutputTokens,
+				CachedTokens: ms.CachedTokens,
+			}
+		}
+		for name, ms := range initialStats.ByProvider {
+			tuiStats.ByProvider[name] = tui.ModelStat{
+				Requests:     ms.Requests,
+				Successes:    ms.Successes,
+				Failures:     ms.Failures,
+				InputTokens:  ms.InputTokens,
+				OutputTokens: ms.OutputTokens,
+				CachedTokens: ms.CachedTokens,
+			}
+		}
+	}
+
+	// Start cleanup goroutine
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := logRepo.DeleteOlderThan(context.Background(), 7*24*time.Hour); err != nil {
+				logger.Warn("failed to cleanup old logs", "error", err)
+			}
 		}
 	}()
 
@@ -238,7 +332,7 @@ func runProxy(args []string) {
 	vmHandler := handlers.NewVirtualModelHandler(vmService)
 	keyHandler := handlers.NewKeyHandler(keyService)
 	importHandler := handlers.NewImportHandler(service.NewImportService(modelRepo, tagRepo))
-	metadataHandler := handlers.NewMetadataHandler(llmrouter.ModelsJSON)
+	metadataHandler := handlers.NewMetadataHandler(llmrouter.ModelsJSON, providerMetadataRepo, globalMetaRepo)
 	adminHandler := handlers.NewAdminHandler(adminService)
 
 	oauthHandler := handlers.NewOAuthHandler(func(key string) int64 {
@@ -286,7 +380,7 @@ func runProxy(args []string) {
 
 	if !*noTUI {
 		tuiQuit := make(chan struct{})
-		go tui.Run(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, cfg, tuiQuit)
+		go tui.Run(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, cfg, tuiLogs, tuiSyslogs, tuiStats, tuiQuit)
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		select {
@@ -409,7 +503,8 @@ func handleListModels(vmService service.VirtualModelService) http.HandlerFunc {
 }
 
 type syslogWriter struct {
-	ch chan<- string
+	ch      chan<- string
+	logRepo *repository.LogRepository
 }
 
 func (w *syslogWriter) Write(p []byte) (int, error) {
@@ -418,5 +513,23 @@ func (w *syslogWriter) Write(p []byte) (int, error) {
 	case w.ch <- line:
 	default:
 	}
+
+	if w.logRepo != nil {
+		msg := strings.TrimSpace(string(p))
+		if msg != "" {
+			level := "INFO"
+			if strings.Contains(msg, "level=DEBUG") || strings.Contains(msg, "level=debug") {
+				level = "DEBUG"
+			} else if strings.Contains(msg, "level=WARN") || strings.Contains(msg, "level=warn") {
+				level = "WARN"
+			} else if strings.Contains(msg, "level=ERROR") || strings.Contains(msg, "level=error") {
+				level = "ERROR"
+			}
+			if err := w.logRepo.InsertSyslogEntry(context.Background(), time.Now(), level, msg); err != nil {
+				// silent fail for syslog persistence
+			}
+		}
+	}
+
 	return len(p), nil
 }

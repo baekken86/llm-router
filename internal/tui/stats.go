@@ -70,6 +70,16 @@ func (m *StatsModel) updateStats(log proxy.RequestLog) {
 	m.global.ReasoningTokens += log.ReasoningTokens
 	m.global.TotalLatency += log.Latency
 
+	if log.RTKIntercepted {
+		m.rtkIntercepts++
+	}
+	m.rtkSavedTokens += log.RTKSavedTokens
+
+	if log.CavemanIntercepted {
+		m.cavemanIntercepts++
+	}
+	m.cavemanSavedTokens += log.CavemanSavedTokens
+
 	if log.StatusCode >= 200 && log.StatusCode < 300 {
 		m.global.Successes++
 	} else {
@@ -299,6 +309,11 @@ func (m *StatsModel) LoadFromAPI(resp *StatsResponse) {
 	m.global.InputTokens = resp.InputTokens
 	m.global.OutputTokens = resp.OutputTokens
 	m.global.CachedTokens = resp.CachedTokens
+	m.global.ReasoningTokens = resp.ReasoningTokens
+	m.rtkIntercepts = resp.RTKIntercepts
+	m.rtkSavedTokens = resp.RTKSavedTokens
+	m.cavemanIntercepts = resp.CavemanIntercepts
+	m.cavemanSavedTokens = resp.CavemanSavedTokens
 
 	m.byVM = make(map[string]*ModelStats)
 	for name, stat := range resp.ByVirtualModel {

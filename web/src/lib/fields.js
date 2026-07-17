@@ -1,19 +1,19 @@
 export function getFieldGroups(fields) {
   if (!fields) return [];
-  const groups = { numeric: [], string: [], boolean: [] };
+  const namespaces = { 'Model Tags (mc.*)': [], 'Provider (p.*)': [], 'Global Model (m.*)': [] };
   for (const [key, def] of Object.entries(fields)) {
     const item = { key, ...def };
-    switch (def.type) {
-      case 'number': groups.numeric.push(item); break;
-      case 'string': groups.string.push(item); break;
-      case 'boolean': groups.boolean.push(item); break;
+    if (key.startsWith('p.')) {
+      namespaces['Provider (p.*)'].push(item);
+    } else if (key.startsWith('m.')) {
+      namespaces['Global Model (m.*)'].push(item);
+    } else {
+      namespaces['Model Tags (mc.*)'].push(item);
     }
   }
-  return [
-    { label: 'Numeric', fields: groups.numeric },
-    { label: 'String', fields: groups.string },
-    { label: 'Boolean', fields: groups.boolean }
-  ].filter(g => g.fields.length > 0);
+  return Object.entries(namespaces)
+    .map(([label, fields]) => ({ label, fields }))
+    .filter(g => g.fields.length > 0);
 }
 
 export function getFieldType(fields, key) {

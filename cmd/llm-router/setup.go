@@ -26,6 +26,12 @@ var supportedProviders = map[string]providerConfig{
 		baseURL: "https://opencode.ai/zen/go",
 		auth:    "apikey",
 	},
+	"opencode-zen": {
+		name:    "opencode-zen",
+		apiType: "openai",
+		baseURL: "https://opencode.ai/zen",
+		auth:    "apikey",
+	},
 	"openai": {
 		name:    "openai",
 		apiType: "openai",
@@ -56,7 +62,7 @@ type providerConfig struct {
 func runSetup(args []string) {
 	fs := flag.NewFlagSet("setup", flag.ExitOnError)
 	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
-	providerName := fs.String("provider", "", "Provider name (required). Supported: claude-code, opencode-go, openai, anthropic, openrouter")
+	providerName := fs.String("provider", "", "Provider name (required). Supported: claude-code, opencode-go, opencode-zen, openai, anthropic, openrouter")
 	apiKey := fs.String("key", "", "API key (required for API key providers)")
 	baseURL := fs.String("url", "", "Custom base URL (optional, overrides default)")
 	fs.Parse(args)
@@ -103,7 +109,7 @@ func runSetup(args []string) {
 	}
 
 	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, loadEncryptionKey())
-	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService)
+	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalRepo)
 
 	existing, _ := providerRepo.GetByName(ctx, *providerName)
 	if existing != nil {
@@ -299,6 +305,7 @@ func printSupportedProviders() {
 	fmt.Println()
 	fmt.Println("  API Key (--key required):")
 	fmt.Println("    opencode-go     OpenCode Go ($10/mo)")
+	fmt.Println("    opencode-zen    OpenCode Zen (pay-as-you-go, free models available)")
 	fmt.Println("    openai          OpenAI (GPT-4o, o3, etc.)")
 	fmt.Println("    anthropic       Anthropic API (Claude)")
 	fmt.Println("    openrouter      OpenRouter (multi-provider)")
@@ -309,5 +316,6 @@ func printSupportedProviders() {
 	fmt.Println("Examples:")
 	fmt.Println("  llm-router setup --provider claude-code")
 	fmt.Println("  llm-router setup --provider opencode-go --key sk-...")
+	fmt.Println("  llm-router setup --provider opencode-zen --key sk-...")
 	fmt.Println("  llm-router setup --provider openai --key sk-...")
 }

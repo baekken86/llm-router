@@ -55,11 +55,26 @@ type Model struct {
 	config       *config.Config
 }
 
-func New(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, cfg *config.Config) Model {
+func New(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse) Model {
+	logView := NewLogViewModel(500)
+	if len(initialLogs) > 0 {
+		logView.LoadInitial(initialLogs)
+	}
+
+	sysLogView := NewSysLogViewModel(1000)
+	if len(initialSyslogs) > 0 {
+		sysLogView.LoadInitial(initialSyslogs)
+	}
+
+	stats := NewStatsModel()
+	if initialStats != nil {
+		stats.LoadFromAPI(initialStats)
+	}
+
 	return Model{
-		logView:      NewLogViewModel(500),
-		sysLogView:   NewSysLogViewModel(1000),
-		stats:        NewStatsModel(),
+		logView:      logView,
+		sysLogView:   sysLogView,
+		stats:        stats,
 		vmView:       NewVMViewModel(),
 		settingsView: NewSettingsModel(cfg),
 		tab:          TabLog,
@@ -409,8 +424,8 @@ func (m Model) renderFooter() string {
 	return lipgloss.Place(m.width, 1, lipgloss.Left, lipgloss.Bottom, help)
 }
 
-func Run(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, cfg *config.Config, quit chan<- struct{}) {
-	p := tea.NewProgram(New(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, cfg), tea.WithAltScreen())
+func Run(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse, quit chan<- struct{}) {
+	p := tea.NewProgram(New(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, cfg, initialLogs, initialSyslogs, initialStats), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("TUI error: %v\n", err)
 	}

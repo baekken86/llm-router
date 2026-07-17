@@ -141,6 +141,7 @@ func (c *AnthropicClient) ChatCompletion(baseURL, apiKey string, req AnthropicRe
 		return nil, &ProviderError{
 			StatusCode: resp.StatusCode,
 			Message:    string(respBody),
+			RetryAfter: parseRetryAfter(resp),
 		}
 	}
 
@@ -195,6 +196,7 @@ func (c *AnthropicClient) ChatCompletionStream(baseURL, apiKey string, req Anthr
 		return nil, nil, &ProviderError{
 			StatusCode: resp.StatusCode,
 			Message:    string(respBody),
+			RetryAfter: parseRetryAfter(resp),
 		}
 	}
 

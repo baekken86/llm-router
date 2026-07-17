@@ -68,30 +68,10 @@ func (m StatusModel) View() string {
 		return b.String()
 	}
 
-	header := fmt.Sprintf("  %s  %-20s  %-12s  %s",
-		MutedStyle.Render(""),
-		InfoStyle.Render("Provider"),
-		InfoStyle.Render("Status"),
-		InfoStyle.Render("Details"),
-	)
-	b.WriteString(header)
-	b.WriteString("\n")
-	b.WriteString(MutedStyle.Render(strings.Repeat("-", 60)))
-	b.WriteString("\n")
-
 	for i, p := range m.providers {
 		cursor := "  "
 		if i == m.cursor {
 			cursor = SuccessStyle.Render("▸ ")
-		}
-
-		statusStr := ""
-		details := ""
-		if p.RateLimited {
-			statusStr = ErrorStyle.Render("RATE LIMITED")
-			details = WarningStyle.Render(fmt.Sprintf("retry in %s", p.RetryIn))
-		} else {
-			statusStr = SuccessStyle.Render("OK")
 		}
 
 		name := p.Name
@@ -99,12 +79,50 @@ func (m StatusModel) View() string {
 			name = name[:17] + "..."
 		}
 
-		b.WriteString(fmt.Sprintf("%s%-20s  %-12s  %s\n",
-			cursor,
-			InfoStyle.Render(name),
-			statusStr,
-			details,
-		))
+		b.WriteString(fmt.Sprintf("%s%s\n", cursor, InfoStyle.Render(name)))
+
+		// Rate limit status
+		if p.RateLimited {
+			b.WriteString(fmt.Sprintf("    %s %s\n",
+				ErrorStyle.Render("RATE LIMITED"),
+				WarningStyle.Render(fmt.Sprintf("retry in %s", p.RetryIn)),
+			))
+		} else {
+			b.WriteString(fmt.Sprintf("    %s\n", SuccessStyle.Render("OK")))
+		}
+
+		// Auth status
+		if p.OAuthConfigured {
+			authInfo := "OAuth"
+			if p.OAuthEmail != "" {
+				authInfo = fmt.Sprintf("OAuth (%s)", p.OAuthEmail)
+			}
+			if p.OAuthExpired {
+				b.WriteString(fmt.Sprintf("    %s %s\n",
+					ErrorStyle.Render("EXPIRED"),
+					MutedStyle.Render(authInfo),
+				))
+			} else {
+				b.WriteString(fmt.Sprintf("    %s %s\n",
+					SuccessStyle.Render("configured"),
+					MutedStyle.Render(authInfo),
+				))
+			}
+			if p.OAuthExpiresAt != "" {
+				b.WriteString(fmt.Sprintf("    %s %s\n",
+					MutedStyle.Render("expires:"),
+					MutedStyle.Render(p.OAuthExpiresAt),
+				))
+			}
+		} else if p.APIKeyConfigured {
+			b.WriteString(fmt.Sprintf("    %s\n", SuccessStyle.Render("API key configured")))
+		} else {
+			b.WriteString(fmt.Sprintf("    %s\n", ErrorStyle.Render("no credentials")))
+		}
+
+		if i < len(m.providers)-1 {
+			b.WriteString("\n")
+		}
 	}
 
 	b.WriteString("\n")

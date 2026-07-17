@@ -120,12 +120,16 @@ func (c *APIClient) GetStats() (*StatsResponse, error) {
 }
 
 type ProviderStatusResponse struct {
-	ID              int64  `json:"id"`
-	Name            string `json:"name"`
-	RateLimited     bool   `json:"rate_limited"`
-	RetryIn         string `json:"retry_in,omitempty"`
-	OAuthConfigured bool   `json:"oauth_configured"`
-	APIKeyConfigured bool  `json:"api_key_configured"`
+	ID               int64  `json:"id"`
+	Name             string `json:"name"`
+	RateLimited      bool   `json:"rate_limited"`
+	RetryIn          string `json:"retry_in,omitempty"`
+	OAuthConfigured  bool   `json:"oauth_configured"`
+	OAuthExpired     bool   `json:"oauth_expired,omitempty"`
+	OAuthExpiresAt   string `json:"oauth_expires_at,omitempty"`
+	OAuthEmail       string `json:"oauth_email,omitempty"`
+	APIKeyConfigured bool   `json:"api_key_configured"`
+	BaseURL          string `json:"base_url"`
 }
 
 type StatusResponse struct {

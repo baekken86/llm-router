@@ -5,6 +5,7 @@
   import VirtualModelList from './components/VirtualModelList.svelte';
   import VirtualModelForm from './components/VirtualModelForm.svelte';
   import RawModelList from './components/RawModelList.svelte';
+  import StatusView from './components/StatusView.svelte';
   import LoginPrompt from './components/LoginPrompt.svelte';
   import Toast from './components/Toast.svelte';
 
@@ -66,11 +67,19 @@
       >
         Virtual Models
       </button>
+      <button
+        class="text-sm {mainTab === 'status' ? 'text-white border-b-2 border-emerald-400 pb-1' : 'text-gray-400 hover:text-white pb-1'}"
+        onclick={() => { mainTab = 'status'; }}
+      >
+        Status
+      </button>
     </nav>
 
     <main class="max-w-6xl mx-auto p-6">
       {#if mainTab === 'raw'}
         <RawModelList />
+      {:else if mainTab === 'status'}
+        <StatusView />
       {:else if view === 'list'}
         <VirtualModelList
           onCreate={() => navigate('create')}

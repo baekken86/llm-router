@@ -31,6 +31,7 @@ const (
 	TabLog Tab = iota
 	TabSyslog
 	TabStats
+	TabStatus
 	TabVM
 	TabSettings
 )
@@ -39,6 +40,7 @@ type Model struct {
 	logView      LogViewModel
 	sysLogView   SysLogViewModel
 	stats        StatsModel
+	status       StatusModel
 	vmView       VMViewModel
 	settingsView SettingsModel
 	tab          Tab
@@ -75,6 +77,7 @@ func New(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repos
 		logView:      logView,
 		sysLogView:   sysLogView,
 		stats:        stats,
+		status:       NewStatusModel(),
 		vmView:       NewVMViewModel(),
 		settingsView: NewSettingsModel(cfg),
 		tab:          TabLog,
@@ -93,6 +96,7 @@ func NewRemote(apiClient *APIClient, logChan <-chan proxy.RequestLog, syslogChan
 		logView:      NewLogViewModel(500),
 		sysLogView:   NewSysLogViewModel(1000),
 		stats:        NewStatsModel(),
+		status:       NewStatusModel(),
 		vmView:       NewVMViewModel(),
 		settingsView: NewSettingsModel(cfg),
 		tab:          TabLog,
@@ -111,6 +115,7 @@ func (m Model) Init() tea.Cmd {
 	}
 	if m.apiClient != nil {
 		cmds = append(cmds, m.refreshStats())
+		cmds = append(cmds, FetchStatus(m.apiClient))
 		cmds = append(cmds, FetchVMData(m.apiClient))
 		cmds = append(cmds, FetchRawModels(m.apiClient))
 	} else if m.vmRepo != nil {
@@ -153,6 +158,36 @@ func (m Model) refreshStats() tea.Cmd {
 	})
 }
 
+func (m Model) refreshStatus() tea.Cmd {
+	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+		if m.apiClient == nil {
+			return nil
+		}
+		status, err := m.apiClient.GetStatus()
+		if err != nil {
+			return nil
+		}
+		return StatusRefreshMsg{Status: status}
+	})
+}
+
+func FetchStatus(apiClient *APIClient) tea.Cmd {
+	return func() tea.Msg {
+		status, err := apiClient.GetStatus()
+		if err != nil {
+			return StatusRefreshMsg{}
+		}
+		return StatusRefreshMsg{Status: status}
+	}
+}
+
+func ClearRateLimitCmd(apiClient *APIClient, providerID int64) tea.Cmd {
+	return func() tea.Msg {
+		err := apiClient.ClearRateLimit(providerID)
+		return StatusClearMsg{ProviderID: providerID, Err: err}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -162,6 +197,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logView.SetSize(msg.Width, msg.Height-4)
 		m.sysLogView.SetSize(msg.Width, msg.Height-4)
 		m.stats.SetSize(msg.Width, msg.Height-4)
+		m.status.SetSize(msg.Width, msg.Height-4)
 		m.vmView.SetSize(msg.Width, msg.Height-4)
 		return m, nil
 
@@ -176,6 +212,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case TabSyslog:
 				m.tab = TabStats
 			case TabStats:
+				m.tab = TabStatus
+			case TabStatus:
 				m.tab = TabVM
 			case TabVM:
 				m.tab = TabSettings
@@ -190,8 +228,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tab = TabLog
 			case TabStats:
 				m.tab = TabSyslog
-			case TabVM:
+			case TabStatus:
 				m.tab = TabStats
+			case TabVM:
+				m.tab = TabStatus
 			case TabSettings:
 				m.tab = TabVM
 			}
@@ -244,6 +284,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			if m.tab == TabStats {
 				m.stats, _ = m.stats.Update(StatsResetMsg{})
+			} else if m.tab == TabStatus {
+				if m.apiClient != nil {
+					return m, FetchStatus(m.apiClient)
+				}
 			} else if m.tab == TabVM {
 				if m.vmView.modelTab == ModelTabRaw {
 					if m.apiClient != nil {
@@ -265,6 +309,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.logView.ScrollUp()
 			} else if m.tab == TabSyslog {
 				m.sysLogView.ScrollUp()
+			} else if m.tab == TabStatus {
+				m.status, _ = m.status.Update(msg)
 			} else if m.tab == TabVM {
 				m.vmView, _ = m.vmView.Update(msg)
 			} else if m.tab == TabSettings {
@@ -276,6 +322,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.logView.ScrollDown()
 			} else if m.tab == TabSyslog {
 				m.sysLogView.ScrollDown()
+			} else if m.tab == TabStatus {
+				m.status, _ = m.status.Update(msg)
 			} else if m.tab == TabVM {
 				m.vmView, _ = m.vmView.Update(msg)
 			} else if m.tab == TabSettings {
@@ -310,6 +358,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.vmView, _ = m.vmView.Update(msg)
 				return m, nil
 			}
+		case "c":
+			if m.tab == TabStatus && m.apiClient != nil {
+				if p := m.status.SelectedProvider(); p != nil && p.RateLimited {
+					return m, ClearRateLimitCmd(m.apiClient, p.ID)
+				}
+			}
 		}
 
 	case VMViewMsg:
@@ -336,6 +390,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.stats.LoadFromAPI(msg.Stats)
 			return m, m.refreshStats()
 		}
+
+	case StatusRefreshMsg:
+		m.status, _ = m.status.Update(msg)
+		return m, m.refreshStatus()
+
+	case StatusClearMsg:
+		m.status, _ = m.status.Update(msg)
+		return m, nil
 	}
 
 	return m, nil
@@ -358,6 +420,8 @@ func (m Model) View() string {
 		b.WriteString(m.sysLogView.View())
 	case TabStats:
 		b.WriteString(m.stats.View())
+	case TabStatus:
+		b.WriteString(m.status.View())
 	case TabVM:
 		b.WriteString(m.vmView.View())
 	case TabSettings:
@@ -373,6 +437,7 @@ func (m Model) renderHeader() string {
 	logTab := TabInactiveStyle.Render(" Log ")
 	syslogTab := TabInactiveStyle.Render(" Syslog ")
 	statsTab := TabInactiveStyle.Render(" Stats ")
+	statusTab := TabInactiveStyle.Render(" Status ")
 	vmTab := TabInactiveStyle.Render(" Models ")
 	settingsTab := TabInactiveStyle.Render(" Settings ")
 
@@ -382,6 +447,8 @@ func (m Model) renderHeader() string {
 		syslogTab = TabActiveStyle.Render(" Syslog ")
 	} else if m.tab == TabStats {
 		statsTab = TabActiveStyle.Render(" Stats ")
+	} else if m.tab == TabStatus {
+		statusTab = TabActiveStyle.Render(" Status ")
 	} else if m.tab == TabVM {
 		vmTab = TabActiveStyle.Render(" Models ")
 	} else if m.tab == TabSettings {
@@ -395,7 +462,7 @@ func (m Model) renderHeader() string {
 		mode = MutedStyle.Render(" [remote]")
 	}
 
-	header := fmt.Sprintf("%s%s  %s %s %s %s %s", title, mode, logTab, syslogTab, statsTab, vmTab, settingsTab)
+	header := fmt.Sprintf("%s%s  %s %s %s %s %s %s", title, mode, logTab, syslogTab, statsTab, statusTab, vmTab, settingsTab)
 
 	if m.tab == TabVM {
 		subTabSep := MutedStyle.Render("  |  ")
@@ -414,7 +481,9 @@ func (m Model) renderHeader() string {
 
 func (m Model) renderFooter() string {
 	help := HelpStyle.Render("tab/shift+tab: switch view  ↑/↓: scroll  ←/→: horizontal scroll  pgup/pgdown: jump  r: reset stats  q: quit")
-	if m.tab == TabVM && m.vmView.modelTab == ModelTabRaw {
+	if m.tab == TabStatus {
+		help = HelpStyle.Render("↑/↓: navigate  c: clear rate limit  r: refresh  tab: switch view  q: quit")
+	} else if m.tab == TabVM && m.vmView.modelTab == ModelTabRaw {
 		help = HelpStyle.Render("↑/↓: navigate  ←/→: switch to Virtual  tab: switch view  r: refresh  q: quit")
 	} else if m.tab == TabVM && m.vmView.detailMode {
 		help = HelpStyle.Render("↑/↓: navigate  enter: select  esc: back  ←/→: switch tab  tab: switch view  q: quit")

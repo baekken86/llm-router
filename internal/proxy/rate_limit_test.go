@@ -78,3 +78,85 @@ func TestRateLimitTracker_UpdateCooldown(t *testing.T) {
 		t.Errorf("expected extended cooldown, got %v remaining", remaining)
 	}
 }
+
+func TestRateLimitTracker_GetStatus(t *testing.T) {
+	tracker := &RateLimitTracker{}
+
+	statuses := tracker.GetStatus()
+	if len(statuses) != 0 {
+		t.Errorf("expected empty status, got %d entries", len(statuses))
+	}
+
+	tracker.MarkLimited(1, 10*time.Second)
+	tracker.MarkLimited(2, 30*time.Second)
+
+	statuses = tracker.GetStatus()
+	if len(statuses) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(statuses))
+	}
+
+	byID := make(map[int64]ProviderRateLimitStatus)
+	for _, s := range statuses {
+		byID[s.ProviderID] = s
+	}
+
+	s1, ok := byID[1]
+	if !ok {
+		t.Fatal("expected provider 1 in status")
+	}
+	if !s1.Limited {
+		t.Error("expected provider 1 to be limited")
+	}
+	if s1.Remaining <= 0 || s1.Remaining > 10*time.Second {
+		t.Errorf("expected provider 1 remaining 0-10s, got %v", s1.Remaining)
+	}
+
+	s2, ok := byID[2]
+	if !ok {
+		t.Fatal("expected provider 2 in status")
+	}
+	if !s2.Limited {
+		t.Error("expected provider 2 to be limited")
+	}
+	if s2.Remaining <= 0 || s2.Remaining > 30*time.Second {
+		t.Errorf("expected provider 2 remaining 0-30s, got %v", s2.Remaining)
+	}
+}
+
+func TestRateLimitTracker_Clear(t *testing.T) {
+	tracker := &RateLimitTracker{}
+	tracker.MarkLimited(1, 10*time.Second)
+
+	limited, _ := tracker.IsLimited(1)
+	if !limited {
+		t.Error("expected limited before clear")
+	}
+
+	tracker.Clear(1)
+
+	limited, _ = tracker.IsLimited(1)
+	if limited {
+		t.Error("expected not limited after clear")
+	}
+
+	statuses := tracker.GetStatus()
+	if len(statuses) != 0 {
+		t.Errorf("expected empty status after clear, got %d entries", len(statuses))
+	}
+}
+
+func TestRateLimitTracker_GetStatus_CleansExpired(t *testing.T) {
+	tracker := &RateLimitTracker{}
+	tracker.MarkLimited(1, 50*time.Millisecond)
+	tracker.MarkLimited(2, 10*time.Second)
+
+	time.Sleep(100 * time.Millisecond)
+
+	statuses := tracker.GetStatus()
+	if len(statuses) != 1 {
+		t.Fatalf("expected 1 entry after expiry, got %d", len(statuses))
+	}
+	if statuses[0].ProviderID != 2 {
+		t.Errorf("expected provider 2, got provider %d", statuses[0].ProviderID)
+	}
+}

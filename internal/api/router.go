@@ -24,6 +24,7 @@ func NewRouter(
 	statsHandler *handlers.StatsHandler,
 	oauthHandler *handlers.OAuthHandler,
 	metadataHandler *handlers.MetadataHandler,
+	statusHandler *handlers.StatusHandler,
 	keyService service.KeyService,
 	adminService service.AdminService,
 	adminHandler *handlers.AdminHandler,
@@ -64,6 +65,10 @@ func NewRouter(
 
 		r.Route("/stats", func(r chi.Router) {
 			r.Mount("/", statsHandler.Routes())
+		})
+
+		r.Route("/status", func(r chi.Router) {
+			r.Mount("/", statusHandler.Routes())
 		})
 
 		r.Route("/metadata", func(r chi.Router) {

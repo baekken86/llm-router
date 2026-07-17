@@ -100,6 +100,14 @@ func (e *Engine) GetCaveman() *CavemanInterceptor {
 	return e.caveman
 }
 
+func (e *Engine) GetRateLimitStatus() []ProviderRateLimitStatus {
+	return e.rateLimits.GetStatus()
+}
+
+func (e *Engine) ClearRateLimit(providerID int64) {
+	e.rateLimits.Clear(providerID)
+}
+
 func (e *Engine) getAPIKey(ctx context.Context, provider models.Provider) (string, error) {
 	// Check for OAuth token first
 	oauthToken, err := e.oauthRepo.GetByProviderID(ctx, provider.ID)

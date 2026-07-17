@@ -119,6 +119,46 @@ func (c *APIClient) GetStats() (*StatsResponse, error) {
 	return &stats, nil
 }
 
+type ProviderStatusResponse struct {
+	ID              int64  `json:"id"`
+	Name            string `json:"name"`
+	RateLimited     bool   `json:"rate_limited"`
+	RetryIn         string `json:"retry_in,omitempty"`
+	OAuthConfigured bool   `json:"oauth_configured"`
+	APIKeyConfigured bool  `json:"api_key_configured"`
+}
+
+type StatusResponse struct {
+	Providers []ProviderStatusResponse `json:"providers"`
+}
+
+func (c *APIClient) GetStatus() (*StatusResponse, error) {
+	var status StatusResponse
+	if err := c.doGET("/api/v1/status", &status); err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+func (c *APIClient) ClearRateLimit(providerID int64) error {
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/status/clear/%d", c.baseURL, providerID), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("clear rate limit returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (c *APIClient) GetVirtualModels() ([]VirtualModelResponse, error) {
 	var vms []VirtualModelResponse
 	if err := c.doGET("/api/v1/virtual-models", &vms); err != nil {

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 )
 
 type RequestLog struct {
+	Type               string        // "incoming" or "proxy"
 	Timestamp          time.Time
 	RequestID          string
 	VirtualModel       string
@@ -38,6 +40,18 @@ type RequestLog struct {
 	CavemanSavedTokens int
 }
 
+type SendRequestResult struct {
+	Response             *ChatCompletionResponse
+	CavemanIntercepted   bool
+	CavemanSavedTokens   int
+}
+
+type InterceptResult struct {
+	Messages         []Message
+	RTKIntercepted   bool
+	RTKSavedTokens   int
+}
+
 type Engine struct {
 	vmService       service.VirtualModelService
 	providerService service.ProviderService
@@ -48,6 +62,7 @@ type Engine struct {
 	logChan         chan<- RequestLog
 	rtk             *RTKInterceptor
 	caveman         *CavemanInterceptor
+	rateLimits      *RateLimitTracker
 	maxRetries      int
 	timeoutSeconds  int
 	maxTokens       int
@@ -70,6 +85,7 @@ func NewEngine(
 		logChan:         logChan,
 		rtk:             NewRTKInterceptor(logger),
 		caveman:         NewCavemanInterceptor(logger),
+		rateLimits:      &RateLimitTracker{},
 		maxRetries:      2,
 		timeoutSeconds:  300,
 		maxTokens:       8192,
@@ -134,8 +150,14 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var rtkIntercepted bool
+	var rtkSavedTokens int
+
 	if e.rtk.IsEnabled() {
-		req.Messages = e.interceptMessages(req.Messages)
+		interceptResult := e.interceptMessages(req.Messages)
+		req.Messages = interceptResult.Messages
+		rtkIntercepted = interceptResult.RTKIntercepted
+		rtkSavedTokens = interceptResult.RTKSavedTokens
 	}
 
 	vm, err := e.vmService.GetByName(r.Context(), req.Model)
@@ -158,6 +180,14 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"no matching models found"}`, http.StatusNotFound)
 		return
 	}
+
+	e.logRequest(RequestLog{
+		Type:         "incoming",
+		Timestamp:    start,
+		RequestID:    requestID,
+		VirtualModel: req.Model,
+		StatusCode:   http.StatusOK,
+	})
 
 	var failures []map[string]interface{}
 	var retryOnStatus []int
@@ -194,26 +224,45 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		resp, err := e.sendRequest(r, rm, apiKey, req)
-		if err == nil {
+		if limited, remaining := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+			failures = append(failures, map[string]interface{}{
+				"model":    rm.Model.Name,
+				"provider": rm.Provider.Name,
+				"status":   429,
+				"message":  fmt.Sprintf("rate limited, retry in %s", remaining.Round(time.Second)),
+			})
+			continue
+		}
+
+		resp, reqResult, err := e.sendRequest(r, rm, apiKey, req)
+		if reqResult == nil {
+			reqResult = &SendRequestResult{}
+		}
+		if resp != nil {
 			e.logRequest(RequestLog{
-				Timestamp:    start,
-				RequestID:    requestID,
-				VirtualModel: req.Model,
-				ProviderName: rm.Provider.Name,
-				ModelName:    rm.Model.Name,
-				StatusCode:   http.StatusOK,
-				Latency:      time.Since(start),
-				InputTokens:  resp.Usage.PromptTokens,
-				OutputTokens: resp.Usage.CompletionTokens,
+				Type:          "proxy",
+				Timestamp:     start,
+				RequestID:     requestID,
+				VirtualModel:  req.Model,
+				ProviderName:  rm.Provider.Name,
+				ModelName:     rm.Model.Name,
+				StatusCode:    http.StatusOK,
+				Latency:       time.Since(start),
+				InputTokens:   resp.Usage.PromptTokens,
+				OutputTokens:  resp.Usage.CompletionTokens,
 				CachedTokens: func() int {
 					if resp.Usage.PromptTokensDetails != nil {
 						return resp.Usage.PromptTokensDetails.CachedTokens
 					}
 					return 0
 				}(),
-				FallbackCount: i,
-				RetryCount:    prs.retries,
+				ReasoningTokens: extractReasoningTokens(&resp.Usage),
+				RTKIntercepted:     rtkIntercepted,
+				RTKSavedTokens:     rtkSavedTokens,
+				CavemanIntercepted: reqResult.CavemanIntercepted,
+				CavemanSavedTokens: reqResult.CavemanSavedTokens,
+				FallbackCount:      i,
+				RetryCount:         prs.retries,
 			})
 
 			w.Header().Set("Content-Type", "application/json")
@@ -229,18 +278,23 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 			providerErr = &ProviderError{StatusCode: 500, Message: err.Error()}
 		}
 
+		if providerErr.StatusCode == http.StatusTooManyRequests {
+			e.rateLimits.MarkLimited(rm.Provider.ID, providerErr.RetryAfter)
+		}
+
 		e.logRequest(RequestLog{
-			Timestamp:    start,
-			RequestID:    requestID,
-			VirtualModel: req.Model,
-			ProviderName: rm.Provider.Name,
-			ModelName:    rm.Model.Name,
-			StatusCode:   providerErr.StatusCode,
-			Latency:      time.Since(start),
-			ErrorMessage: providerErr.Message,
-			FallbackCount: i,
-			RetryCount:    prs.retries,
-		})
+				Type:          "proxy",
+				Timestamp:     start,
+				RequestID:     requestID,
+				VirtualModel:  req.Model,
+				ProviderName:  rm.Provider.Name,
+				ModelName:     rm.Model.Name,
+				StatusCode:    providerErr.StatusCode,
+				Latency:       time.Since(start),
+				ErrorMessage:  providerErr.Message,
+				FallbackCount: i,
+				RetryCount:    prs.retries,
+			})
 
 		if shouldRetry(providerErr.StatusCode, retryOnStatus) && prs.retries < vm.MaxRetries {
 			prs.retries++
@@ -258,12 +312,13 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	e.logRequest(RequestLog{
-		Timestamp:    start,
-		RequestID:    requestID,
-		VirtualModel: req.Model,
-		StatusCode:   502,
-		Latency:      time.Since(start),
-		ErrorMessage: "all models failed",
+		Type:          "proxy",
+		Timestamp:     start,
+		RequestID:     requestID,
+		VirtualModel:  req.Model,
+		StatusCode:    502,
+		Latency:       time.Since(start),
+		ErrorMessage:  "all models failed",
 	})
 
 	w.Header().Set("Content-Type", "application/json")
@@ -288,6 +343,15 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	var rtkIntercepted bool
+	var rtkSavedTokens int
+	if e.rtk.IsEnabled() {
+		interceptResult := e.interceptMessages(req.Messages)
+		req.Messages = interceptResult.Messages
+		rtkIntercepted = interceptResult.RTKIntercepted
+		rtkSavedTokens = interceptResult.RTKSavedTokens
+	}
+
 	vm, err := e.vmService.GetByName(r.Context(), req.Model)
 	if err != nil {
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
@@ -309,6 +373,14 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	e.logRequest(RequestLog{
+		Type:         "incoming",
+		Timestamp:    start,
+		RequestID:    requestID,
+		VirtualModel: req.Model,
+		StatusCode:   http.StatusOK,
+	})
+
 	var retryOnStatus []int
 	if len(vm.RetryOnStatus) > 0 {
 		json.Unmarshal(vm.RetryOnStatus, &retryOnStatus)
@@ -320,6 +392,10 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 
+		if limited, _ := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+			continue
+		}
+
 		for retry := 0; retry <= vm.MaxRetries; retry++ {
 			if retry > 0 {
 				time.Sleep(time.Duration(retry) * time.Second)
@@ -327,18 +403,6 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 
 			streamResp, httpResp, err := e.sendStreamRequest(r, rm, apiKey, req)
 			if err == nil {
-				e.logRequest(RequestLog{
-					Timestamp:    start,
-					RequestID:    requestID,
-					VirtualModel: req.Model,
-					ProviderName: rm.Provider.Name,
-					ModelName:    rm.Model.Name,
-					StatusCode:   http.StatusOK,
-					Latency:      time.Since(start),
-					FallbackCount: i,
-					RetryCount:    retry,
-				})
-
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.Header().Set("Cache-Control", "no-cache")
 				w.Header().Set("Connection", "keep-alive")
@@ -352,17 +416,46 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 					return
 				}
 
+				var usage *Usage
 				if rm.Provider.APIType == models.APITypeAnthropic {
-					e.streamAnthropicToOpenAI(w, flusher, streamResp, rm.Model.Name, requestID)
+					usage = e.streamAnthropicToOpenAI(w, flusher, streamResp, rm.Model.Name, requestID)
 				} else {
-					e.streamPassthrough(w, flusher, streamResp, httpResp)
+					usage = e.streamPassthrough(w, flusher, streamResp, httpResp)
 				}
+
+				log := RequestLog{
+					Type:          "proxy",
+					Timestamp:     start,
+					RequestID:     requestID,
+					VirtualModel:  req.Model,
+					ProviderName:  rm.Provider.Name,
+					ModelName:     rm.Model.Name,
+					StatusCode:    http.StatusOK,
+					Latency:       time.Since(start),
+					RTKIntercepted: rtkIntercepted,
+					RTKSavedTokens: rtkSavedTokens,
+					FallbackCount: i,
+					RetryCount:    retry,
+				}
+				if usage != nil {
+					log.InputTokens = usage.PromptTokens
+					log.OutputTokens = usage.CompletionTokens
+					if usage.PromptTokensDetails != nil {
+						log.CachedTokens = usage.PromptTokensDetails.CachedTokens
+					}
+					log.ReasoningTokens = extractReasoningTokens(usage)
+				}
+				e.logRequest(log)
 				return
 			}
 
 			providerErr, ok := err.(*ProviderError)
 			if !ok {
 				providerErr = &ProviderError{StatusCode: 500, Message: err.Error()}
+			}
+
+			if providerErr.StatusCode == http.StatusTooManyRequests {
+				e.rateLimits.MarkLimited(rm.Provider.ID, providerErr.RetryAfter)
 			}
 
 			if !shouldRetry(providerErr.StatusCode, retryOnStatus) {
@@ -374,7 +467,7 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 	http.Error(w, `{"error":"all models failed"}`, http.StatusBadGateway)
 }
 
-func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey string, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
+func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey string, req ChatCompletionRequest) (*ChatCompletionResponse, *SendRequestResult, error) {
 	var resp *ChatCompletionResponse
 	var err error
 
@@ -383,7 +476,7 @@ func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey s
 		anthReq.Model = rm.Model.Name
 		anthResp, err2 := e.anthropicClient.ChatCompletion(rm.Provider.BaseURL, apiKey, anthReq)
 		if err2 != nil {
-			return nil, err2
+			return nil, nil, err2
 		}
 		result := AnthropicToOpenAI(anthResp, rm.Model.Name)
 		resp = &result
@@ -391,20 +484,24 @@ func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey s
 		req.Model = rm.Model.Name
 		resp, err = e.openaiClient.ChatCompletion(rm.Provider.BaseURL, apiKey, req)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
+
+	result := &SendRequestResult{Response: resp}
 
 	if e.caveman.IsEnabled() && resp != nil && len(resp.Choices) > 0 {
 		if content, ok := resp.Choices[0].Message.Content.(string); ok && content != "" {
 			compressed, intercepted := e.caveman.InterceptOutput(content)
 			if intercepted {
 				resp.Choices[0].Message.Content = compressed
+				result.CavemanIntercepted = true
+				result.CavemanSavedTokens = estimateTokens(content) - estimateTokens(compressed)
 			}
 		}
 	}
 
-	return resp, nil
+	return resp, result, nil
 }
 
 func (e *Engine) sendStreamRequest(r *http.Request, rm service.ResolvedModel, apiKey string, req ChatCompletionRequest) (io.ReadCloser, *http.Response, error) {
@@ -418,7 +515,7 @@ func (e *Engine) sendStreamRequest(r *http.Request, rm service.ResolvedModel, ap
 	return e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, req)
 }
 
-func (e *Engine) streamPassthrough(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser, httpResp *http.Response) {
+func (e *Engine) streamPassthrough(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser, httpResp *http.Response) *Usage {
 	defer body.Close()
 
 	for key, values := range httpResp.Header {
@@ -427,20 +524,33 @@ func (e *Engine) streamPassthrough(w http.ResponseWriter, flusher http.Flusher, 
 		}
 	}
 
-	buf := make([]byte, 4096)
+	var usage *Usage
+	reader := bufio.NewReader(body)
 	for {
-		n, err := body.Read(buf)
-		if n > 0 {
-			w.Write(buf[:n])
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			w.Write([]byte(line))
 			flusher.Flush()
+
+			trimmed := strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(trimmed, "data: ") {
+				data := strings.TrimPrefix(trimmed, "data: ")
+				if data != "[DONE]" {
+					var chunk StreamChunk
+					if jsonErr := json.Unmarshal([]byte(data), &chunk); jsonErr == nil && chunk.Usage != nil {
+						usage = chunk.Usage
+					}
+				}
+			}
 		}
 		if err != nil {
 			break
 		}
 	}
+	return usage
 }
 
-func (e *Engine) streamAnthropicToOpenAI(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser, model string, requestID string) {
+func (e *Engine) streamAnthropicToOpenAI(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser, model string, requestID string) *Usage {
 	state := &ClaudeStreamState{
 		Model:             model,
 		RequestID:         requestID,
@@ -463,6 +573,21 @@ func (e *Engine) streamAnthropicToOpenAI(w http.ResponseWriter, flusher http.Flu
 
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
+	return state.Usage
+}
+
+func extractReasoningTokens(usage *Usage) int {
+	if usage == nil {
+		return 0
+	}
+	if usage.CompletionTokensDetails != nil && usage.CompletionTokensDetails.ReasoningTokens > 0 {
+		return usage.CompletionTokensDetails.ReasoningTokens
+	}
+	r := usage.TotalTokens - usage.PromptTokens - usage.CompletionTokens
+	if r < 0 {
+		return 0
+	}
+	return r
 }
 
 func (e *Engine) logRequest(log RequestLog) {
@@ -507,9 +632,12 @@ func shouldRetry(statusCode int, retryOnStatus []int) bool {
 	return false
 }
 
-func (e *Engine) interceptMessages(messages []Message) []Message {
+func (e *Engine) interceptMessages(messages []Message) InterceptResult {
 	result := make([]Message, len(messages))
 	copy(result, messages)
+
+	var intercepted bool
+	var savedTokens int
 
 	for i, msg := range result {
 		if msg.Role == "tool" {
@@ -536,15 +664,21 @@ func (e *Engine) interceptMessages(messages []Message) []Message {
 			}
 
 			if content != "" && toolName != "" {
-				compressed, intercepted := e.rtk.InterceptToolResult(toolName, "", content)
-				if intercepted {
+				compressed, ok := e.rtk.InterceptToolResult(toolName, "", content)
+				if ok {
 					result[i].Content = compressed
+					intercepted = true
+					savedTokens += estimateTokens(content) - estimateTokens(compressed)
 				}
 			}
 		}
 	}
 
-	return result
+	return InterceptResult{
+		Messages:       result,
+		RTKIntercepted: intercepted,
+		RTKSavedTokens: savedTokens,
+	}
 }
 
 func ForwardHeaders(dst http.ResponseWriter, src *http.Response) {
@@ -605,6 +739,14 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	e.logRequest(RequestLog{
+		Type:         "incoming",
+		Timestamp:    start,
+		RequestID:    requestID,
+		VirtualModel: anthReq.Model,
+		StatusCode:   http.StatusOK,
+	})
+
 	openReq := AnthropicRequestToOpenAI(anthReq)
 
 	var retryOnStatus []int
@@ -620,33 +762,44 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 
+		if limited, _ := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+			continue
+		}
+
 		for retry := 0; retry <= vm.MaxRetries; retry++ {
 			if retry > 0 {
 				time.Sleep(time.Duration(retry) * time.Second)
 			}
 
-			openResp, err := e.sendRequest(r, rm, apiKey, openReq)
+			openResp, reqResult, err := e.sendRequest(r, rm, apiKey, openReq)
+			if reqResult == nil {
+				reqResult = &SendRequestResult{}
+			}
 			if err == nil {
 				anthResp := OpenAIResponseToAnthropic(*openResp, rm.Model.Name)
 
 				e.logRequest(RequestLog{
-					Timestamp:    start,
-					RequestID:    requestID,
-					VirtualModel: anthReq.Model,
-					ProviderName: rm.Provider.Name,
-					ModelName:    rm.Model.Name,
-					StatusCode:   http.StatusOK,
-					Latency:      time.Since(start),
-					InputTokens:  openResp.Usage.PromptTokens,
-					OutputTokens: openResp.Usage.CompletionTokens,
+					Type:          "proxy",
+					Timestamp:     start,
+					RequestID:     requestID,
+					VirtualModel:  anthReq.Model,
+					ProviderName:  rm.Provider.Name,
+					ModelName:     rm.Model.Name,
+					StatusCode:    http.StatusOK,
+					Latency:       time.Since(start),
+					InputTokens:   openResp.Usage.PromptTokens,
+					OutputTokens:  openResp.Usage.CompletionTokens,
 					CachedTokens: func() int {
 						if openResp.Usage.PromptTokensDetails != nil {
 							return openResp.Usage.PromptTokensDetails.CachedTokens
 						}
 						return 0
 					}(),
-					FallbackCount: i,
-					RetryCount:    retry,
+					ReasoningTokens: extractReasoningTokens(&openResp.Usage),
+					CavemanIntercepted: reqResult.CavemanIntercepted,
+					CavemanSavedTokens: reqResult.CavemanSavedTokens,
+					FallbackCount:      i,
+					RetryCount:         retry,
 				})
 
 				w.Header().Set("Content-Type", "application/json")
@@ -660,15 +813,20 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 				providerErr = &ProviderError{StatusCode: 500, Message: err.Error()}
 			}
 
+			if providerErr.StatusCode == http.StatusTooManyRequests {
+				e.rateLimits.MarkLimited(rm.Provider.ID, providerErr.RetryAfter)
+			}
+
 			e.logRequest(RequestLog{
-				Timestamp:    start,
-				RequestID:    requestID,
-				VirtualModel: anthReq.Model,
-				ProviderName: rm.Provider.Name,
-				ModelName:    rm.Model.Name,
-				StatusCode:   providerErr.StatusCode,
-				Latency:      time.Since(start),
-				ErrorMessage: providerErr.Message,
+				Type:          "proxy",
+				Timestamp:     start,
+				RequestID:     requestID,
+				VirtualModel:  anthReq.Model,
+				ProviderName:  rm.Provider.Name,
+				ModelName:     rm.Model.Name,
+				StatusCode:    providerErr.StatusCode,
+				Latency:       time.Since(start),
+				ErrorMessage:  providerErr.Message,
 				FallbackCount: i,
 				RetryCount:    retry,
 			})
@@ -723,6 +881,14 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	e.logRequest(RequestLog{
+		Type:         "incoming",
+		Timestamp:    start,
+		RequestID:    requestID,
+		VirtualModel: anthReq.Model,
+		StatusCode:   http.StatusOK,
+	})
+
 	openReq := AnthropicRequestToOpenAI(anthReq)
 	openReq.Stream = true
 
@@ -737,27 +903,20 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 			continue
 		}
 
+		if limited, _ := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+			continue
+		}
+
 		for retry := 0; retry <= vm.MaxRetries; retry++ {
 			if retry > 0 {
 				time.Sleep(time.Duration(retry) * time.Second)
 			}
 
+			var lastErr error
 			if rm.Provider.APIType == models.APITypeAnthropic {
 				anthReq.Model = rm.Model.Name
 				streamBody, _, err := e.anthropicClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, anthReq)
 				if err == nil {
-					e.logRequest(RequestLog{
-						Timestamp:    start,
-						RequestID:    requestID,
-						VirtualModel: anthReq.Model,
-						ProviderName: rm.Provider.Name,
-						ModelName:    rm.Model.Name,
-						StatusCode:   http.StatusOK,
-						Latency:      time.Since(start),
-						FallbackCount: i,
-						RetryCount:    retry,
-					})
-
 					w.Header().Set("Content-Type", "text/event-stream")
 					w.Header().Set("Cache-Control", "no-cache")
 					w.Header().Set("Connection", "keep-alive")
@@ -768,25 +927,36 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 						return
 					}
 
-					e.streamAnthropicPassthrough(w, flusher, streamBody)
+					usage := e.streamAnthropicPassthrough(w, flusher, streamBody)
+
+					log := RequestLog{
+						Type:          "proxy",
+						Timestamp:     start,
+						RequestID:     requestID,
+						VirtualModel:  anthReq.Model,
+						ProviderName:  rm.Provider.Name,
+						ModelName:     rm.Model.Name,
+						StatusCode:    http.StatusOK,
+						Latency:       time.Since(start),
+						FallbackCount: i,
+						RetryCount:    retry,
+					}
+					if usage != nil {
+						log.InputTokens = usage.PromptTokens
+						log.OutputTokens = usage.CompletionTokens
+						if usage.PromptTokensDetails != nil {
+							log.CachedTokens = usage.PromptTokensDetails.CachedTokens
+						}
+						log.ReasoningTokens = extractReasoningTokens(usage)
+					}
+					e.logRequest(log)
 					return
 				}
+				lastErr = err
 			} else {
 				openReq.Model = rm.Model.Name
 				streamBody, _, err := e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, openReq)
 				if err == nil {
-					e.logRequest(RequestLog{
-						Timestamp:    start,
-						RequestID:    requestID,
-						VirtualModel: anthReq.Model,
-						ProviderName: rm.Provider.Name,
-						ModelName:    rm.Model.Name,
-						StatusCode:   http.StatusOK,
-						Latency:      time.Since(start),
-						FallbackCount: i,
-						RetryCount:    retry,
-					})
-
 					w.Header().Set("Content-Type", "text/event-stream")
 					w.Header().Set("Cache-Control", "no-cache")
 					w.Header().Set("Connection", "keep-alive")
@@ -797,9 +967,40 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 						return
 					}
 
-					e.streamOpenAIToAnthropic(w, flusher, streamBody, rm.Model.Name, requestID)
+					usage := e.streamOpenAIToAnthropic(w, flusher, streamBody, rm.Model.Name, requestID)
+
+					log := RequestLog{
+						Type:          "proxy",
+						Timestamp:     start,
+						RequestID:     requestID,
+						VirtualModel:  anthReq.Model,
+						ProviderName:  rm.Provider.Name,
+						ModelName:     rm.Model.Name,
+						StatusCode:    http.StatusOK,
+						Latency:       time.Since(start),
+						FallbackCount: i,
+						RetryCount:    retry,
+					}
+					if usage != nil {
+						log.InputTokens = usage.PromptTokens
+						log.OutputTokens = usage.CompletionTokens
+						if usage.PromptTokensDetails != nil {
+							log.CachedTokens = usage.PromptTokensDetails.CachedTokens
+						}
+						log.ReasoningTokens = extractReasoningTokens(usage)
+					}
+					e.logRequest(log)
 					return
 				}
+				lastErr = err
+			}
+
+			if providerErr, ok := lastErr.(*ProviderError); ok && providerErr.StatusCode == http.StatusTooManyRequests {
+				e.rateLimits.MarkLimited(rm.Provider.ID, providerErr.RetryAfter)
+			}
+
+			if providerErr, ok := lastErr.(*ProviderError); ok && !shouldRetry(providerErr.StatusCode, retryOnStatus) {
+				break
 			}
 		}
 	}
@@ -807,25 +1008,69 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 	http.Error(w, `{"type":"error","error":{"type":"api_error","message":"all models failed"}}`, http.StatusBadGateway)
 }
 
-func (e *Engine) streamAnthropicPassthrough(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser) {
+func (e *Engine) streamAnthropicPassthrough(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser) *Usage {
 	defer body.Close()
-	buf := make([]byte, 4096)
+
+	var inputTokens, outputTokens, cachedTokens int
+	reader := bufio.NewReader(body)
 	for {
-		n, err := body.Read(buf)
-		if n > 0 {
-			w.Write(buf[:n])
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			w.Write([]byte(line))
 			flusher.Flush()
+
+			trimmed := strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(trimmed, "data: ") {
+				data := strings.TrimPrefix(trimmed, "data: ")
+				var event AnthropicStreamEvent
+				if jsonErr := json.Unmarshal([]byte(data), &event); jsonErr == nil {
+					switch event.Type {
+					case "message_start":
+						var msg struct {
+							Usage struct {
+								InputTokens              int `json:"input_tokens"`
+								CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+								CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+							} `json:"usage"`
+						}
+						if json.Unmarshal(event.Message, &msg) == nil {
+							inputTokens = msg.Usage.InputTokens + msg.Usage.CacheReadInputTokens + msg.Usage.CacheCreationInputTokens
+							cachedTokens = msg.Usage.CacheReadInputTokens
+						}
+					case "message_delta":
+						if event.Usage != nil {
+							outputTokens = event.Usage.OutputTokens
+						}
+					}
+				}
+			}
 		}
 		if err != nil {
 			break
 		}
 	}
+
+	if inputTokens > 0 || outputTokens > 0 {
+		return &Usage{
+			PromptTokens:     inputTokens,
+			CompletionTokens: outputTokens,
+			TotalTokens:      inputTokens + outputTokens,
+			PromptTokensDetails: &PromptTokensDetails{
+				CachedTokens: cachedTokens,
+			},
+		}
+	}
+	return nil
 }
 
-func (e *Engine) streamOpenAIToAnthropic(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser, model string, requestID string) {
+func (e *Engine) streamOpenAIToAnthropic(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser, model string, requestID string) *Usage {
 	chunks := ParseSSEStream(body)
+	var usage *Usage
 
 	for chunk := range chunks {
+		if chunk.Usage != nil {
+			usage = chunk.Usage
+		}
 		events := OpenAIStreamToAnthropicEvent(chunk, requestID)
 		for _, event := range events {
 			data, _ := json.Marshal(event)
@@ -833,4 +1078,5 @@ func (e *Engine) streamOpenAIToAnthropic(w http.ResponseWriter, flusher http.Flu
 			flusher.Flush()
 		}
 	}
+	return usage
 }

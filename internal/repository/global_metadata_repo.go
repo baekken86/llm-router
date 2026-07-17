@@ -11,6 +11,7 @@ type GlobalMetadataRepository interface {
 	GetByModel(ctx context.Context, modelName string) (map[string]map[string]string, error)
 	GetByModelEffort(ctx context.Context, modelName, effort string) (map[string]string, error)
 	ListModels(ctx context.Context) ([]string, error)
+	ListAllKeys(ctx context.Context) ([]string, error)
 }
 
 type sqliteGlobalMetadataRepo struct {
@@ -107,4 +108,24 @@ func (r *sqliteGlobalMetadataRepo) ListModels(ctx context.Context) ([]string, er
 		models = append(models, name)
 	}
 	return models, nil
+}
+
+func (r *sqliteGlobalMetadataRepo) ListAllKeys(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT DISTINCT key FROM model_metadata_global ORDER BY key`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list keys: %w", err)
+	}
+	defer rows.Close()
+
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
 }

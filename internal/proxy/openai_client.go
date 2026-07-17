@@ -21,15 +21,20 @@ func NewOpenAIClient() *OpenAIClient {
 	}
 }
 
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
 type ChatCompletionRequest struct {
-	Model       string        `json:"model"`
-	Messages    []Message     `json:"messages"`
-	MaxTokens   *int          `json:"max_tokens,omitempty"`
-	Temperature *float64      `json:"temperature,omitempty"`
-	TopP        *float64      `json:"top_p,omitempty"`
-	Stream      bool          `json:"stream,omitempty"`
-	Tools       []Tool        `json:"tools,omitempty"`
-	Stop        []string      `json:"stop,omitempty"`
+	Model         string         `json:"model"`
+	Messages      []Message      `json:"messages"`
+	MaxTokens     *int           `json:"max_tokens,omitempty"`
+	Temperature   *float64       `json:"temperature,omitempty"`
+	TopP          *float64       `json:"top_p,omitempty"`
+	Stream        bool           `json:"stream,omitempty"`
+	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
+	Tools         []Tool         `json:"tools,omitempty"`
+	Stop          []string       `json:"stop,omitempty"`
 }
 
 type Message struct {
@@ -85,14 +90,19 @@ type Choice struct {
 }
 
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-	PromptTokensDetails *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	PromptTokens             int                      `json:"prompt_tokens"`
+	CompletionTokens         int                      `json:"completion_tokens"`
+	TotalTokens              int                      `json:"total_tokens"`
+	PromptTokensDetails      *PromptTokensDetails     `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails  *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 }
 
 type PromptTokensDetails struct {
 	CachedTokens int `json:"cached_tokens"`
+}
+
+type CompletionTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
 }
 
 type StreamDelta struct {
@@ -142,6 +152,7 @@ func (c *OpenAIClient) ChatCompletion(baseURL, apiKey string, req ChatCompletion
 		return nil, &ProviderError{
 			StatusCode: resp.StatusCode,
 			Message:    string(respBody),
+			RetryAfter: parseRetryAfter(resp),
 		}
 	}
 
@@ -155,6 +166,7 @@ func (c *OpenAIClient) ChatCompletion(baseURL, apiKey string, req ChatCompletion
 
 func (c *OpenAIClient) ChatCompletionStream(baseURL, apiKey string, req ChatCompletionRequest) (io.ReadCloser, *http.Response, error) {
 	req.Stream = true
+	req.StreamOptions = &StreamOptions{IncludeUsage: true}
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -181,6 +193,7 @@ func (c *OpenAIClient) ChatCompletionStream(baseURL, apiKey string, req ChatComp
 		return nil, nil, &ProviderError{
 			StatusCode: resp.StatusCode,
 			Message:    string(respBody),
+			RetryAfter: parseRetryAfter(resp),
 		}
 	}
 
@@ -222,8 +235,24 @@ func ParseSSEStream(reader io.ReadCloser) <-chan StreamChunk {
 type ProviderError struct {
 	StatusCode int
 	Message    string
+	RetryAfter time.Duration
 }
 
 func (e *ProviderError) Error() string {
 	return fmt.Sprintf("provider error %d: %s", e.StatusCode, e.Message)
+}
+
+func parseRetryAfter(resp *http.Response) time.Duration {
+	if resp == nil {
+		return 0
+	}
+	raw := resp.Header.Get("Retry-After")
+	if raw == "" {
+		return 0
+	}
+	var seconds int
+	if _, err := fmt.Sscanf(raw, "%d", &seconds); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	return 0
 }

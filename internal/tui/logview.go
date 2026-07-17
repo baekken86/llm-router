@@ -9,6 +9,7 @@ import (
 )
 
 type LogEntry struct {
+	LogType      string
 	Timestamp    time.Time
 	RequestID    string
 	VirtualModel string
@@ -42,6 +43,7 @@ func NewLogViewModel(maxSize int) LogViewModel {
 
 func (m *LogViewModel) AddEntry(log proxy.RequestLog) {
 	entry := LogEntry{
+		LogType:      log.Type,
 		Timestamp:    log.Timestamp,
 		RequestID:    log.RequestID,
 		VirtualModel: log.VirtualModel,
@@ -58,6 +60,31 @@ func (m *LogViewModel) AddEntry(log proxy.RequestLog) {
 	}
 
 	m.entries = append([]LogEntry{entry}, m.entries...)
+	if len(m.entries) > m.maxSize {
+		m.entries = m.entries[:m.maxSize]
+	}
+}
+
+func (m *LogViewModel) LoadInitial(logs []proxy.RequestLog) {
+	for i := len(logs) - 1; i >= 0; i-- {
+		entry := LogEntry{
+			LogType:      logs[i].Type,
+			Timestamp:    logs[i].Timestamp,
+			RequestID:    logs[i].RequestID,
+			VirtualModel: logs[i].VirtualModel,
+			ProviderName: logs[i].ProviderName,
+			ModelName:    logs[i].ModelName,
+			StatusCode:   logs[i].StatusCode,
+			Latency:      logs[i].Latency,
+			InputTokens:  logs[i].InputTokens,
+			OutputTokens: logs[i].OutputTokens,
+			CachedTokens: logs[i].CachedTokens,
+			ErrorMessage: logs[i].ErrorMessage,
+			Fallback:     logs[i].FallbackCount,
+			Retry:        logs[i].RetryCount,
+		}
+		m.entries = append(m.entries, entry)
+	}
 	if len(m.entries) > m.maxSize {
 		m.entries = m.entries[:m.maxSize]
 	}
@@ -95,6 +122,17 @@ func (m LogViewModel) View() string {
 func (m LogViewModel) renderEntry(e LogEntry) string {
 	ts := e.Timestamp.Format("15:04:05")
 
+	if e.LogType == "incoming" {
+		prefix := InfoStyle.Render("▸")
+		vm := InfoStyle.Render(truncate(e.VirtualModel, 20))
+		return fmt.Sprintf("%s %s %s incoming %s",
+			MutedStyle.Render(ts),
+			prefix,
+			vm,
+			MutedStyle.Render(truncate(e.RequestID, 20)),
+		)
+	}
+
 	statusStyle := SuccessStyle
 	if e.StatusCode >= 400 {
 		statusStyle = ErrorStyle
@@ -104,6 +142,7 @@ func (m LogViewModel) renderEntry(e LogEntry) string {
 
 	status := statusStyle.Render(fmt.Sprintf("%3d", e.StatusCode))
 
+	prefix := MutedStyle.Render("↪")
 	vm := InfoStyle.Render(truncate(e.VirtualModel, 20))
 	provider := MutedStyle.Render(truncate(e.ProviderName, 12))
 	model := truncate(e.ModelName, 20)
@@ -127,8 +166,9 @@ func (m LogViewModel) renderEntry(e LogEntry) string {
 		extra += " " + ErrorStyle.Render(truncate(e.ErrorMessage, 40))
 	}
 
-	return fmt.Sprintf("%s %s %s/%s %-20s %s %s%s",
+	return fmt.Sprintf("%s %s %s %s/%s %-20s %s %s%s",
 		MutedStyle.Render(ts),
+		prefix,
 		status,
 		provider,
 		vm,

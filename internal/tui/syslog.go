@@ -46,6 +46,15 @@ func (m *SysLogViewModel) AddEntry(line string) {
 	}
 }
 
+func (m *SysLogViewModel) LoadInitial(entries []SysLogEntry) {
+	for i := len(entries) - 1; i >= 0; i-- {
+		m.entries = append(m.entries, entries[i])
+	}
+	if len(m.entries) > m.maxSize {
+		m.entries = m.entries[:m.maxSize]
+	}
+}
+
 func parseLevel(line string) string {
 	if strings.Contains(line, "level=DEBUG") || strings.Contains(line, "level=debug") {
 		return "DEBUG"

@@ -434,6 +434,15 @@ func computeColumns(sortExprJSON, filterExprJSON json.RawMessage, resolvedModels
 		json.Unmarshal(sortExprJSON, &sortExprParsed)
 	}
 	for _, s := range sortExprParsed {
+		if s.IsCondition() {
+			for _, key := range s.Condition.CollectKeys() {
+				if !seen[key] {
+					seen[key] = true
+					cols = append(cols, tableCol{Key: key, Abbrev: abbrevKey(key)})
+				}
+			}
+			continue
+		}
 		if !seen[s.Key] {
 			seen[s.Key] = true
 			cols = append(cols, tableCol{Key: s.Key, Abbrev: abbrevKey(s.Key)})
@@ -441,14 +450,14 @@ func computeColumns(sortExprJSON, filterExprJSON json.RawMessage, resolvedModels
 	}
 
 	// Filter keys second
-	var filterExprParsed models.FilterExpr
+	var filterExprParsed models.FilterNode
 	if len(filterExprJSON) > 0 {
 		json.Unmarshal(filterExprJSON, &filterExprParsed)
 	}
-	for _, f := range filterExprParsed.And {
-		if !seen[f.Key] {
-			seen[f.Key] = true
-			cols = append(cols, tableCol{Key: f.Key, Abbrev: abbrevKey(f.Key)})
+	for _, key := range filterExprParsed.CollectKeys() {
+		if !seen[key] {
+			seen[key] = true
+			cols = append(cols, tableCol{Key: key, Abbrev: abbrevKey(key)})
 		}
 	}
 
@@ -630,7 +639,7 @@ func FetchVMDataLocal(vmRepo repository.VirtualModelRepository, modelRepo reposi
 
 		var items []VirtualModelInfo
 		for _, vm := range vms {
-			var filterExpr models.FilterExpr
+			var filterExpr models.FilterNode
 			if len(vm.FilterExpr) > 0 {
 				json.Unmarshal(vm.FilterExpr, &filterExpr)
 			}
@@ -652,6 +661,7 @@ func FetchVMDataLocal(vmRepo repository.VirtualModelRepository, modelRepo reposi
 				for _, effort := range efforts {
 					tags, _ := tagRepo.GetByModelEffort(ctx, m.ID, effort)
 					tagMap := make(map[string]string)
+					tagMap["m.name"] = m.Name
 					for _, t := range tags {
 						tagMap["mc."+t.Key] = t.Value
 					}
@@ -738,6 +748,18 @@ func sortResolved(resolved []ResolvedModelInfo, sortExpr models.SortExpr) {
 		tagsJ := resolved[j].Tags
 
 		for _, s := range sortExpr {
+			if s.IsCondition() {
+				iMatch := evalFilterNodeTUI(*s.Condition, tagsI)
+				jMatch := evalFilterNodeTUI(*s.Condition, tagsJ)
+				if iMatch == jMatch {
+					continue
+				}
+				if s.Direction == "desc" {
+					return !iMatch
+				}
+				return iMatch
+			}
+
 			valI := tagsI[s.Key]
 			valJ := tagsJ[s.Key]
 
@@ -787,19 +809,42 @@ func indexOf(arr []string, val string) int {
 	return len(arr)
 }
 
-func matchesFilter(tags map[string]string, filter models.FilterExpr) bool {
-	if len(filter.And) == 0 {
+func matchesFilter(tags map[string]string, filter models.FilterNode) bool {
+	if !filter.IsLeaf() && len(filter.And) == 0 && len(filter.Or) == 0 && filter.Not == nil {
 		return true
 	}
+	return evalFilterNodeTUI(filter, tags)
+}
 
-	for _, cond := range filter.And {
-		val, exists := tags[cond.Key]
+func evalFilterNodeTUI(node models.FilterNode, tags map[string]string) bool {
+	if node.IsLeaf() {
+		val, exists := tags[node.Key]
 		if !exists {
 			return false
 		}
-		if !evaluateCondition(val, cond.Op, cond.Value) {
-			return false
+		return evaluateCondition(val, node.Op, node.Value)
+	}
+
+	if len(node.And) > 0 {
+		for _, child := range node.And {
+			if !evalFilterNodeTUI(child, tags) {
+				return false
+			}
 		}
+		return true
+	}
+
+	if len(node.Or) > 0 {
+		for _, child := range node.Or {
+			if evalFilterNodeTUI(child, tags) {
+				return true
+			}
+		}
+		return false
+	}
+
+	if node.Not != nil {
+		return !evalFilterNodeTUI(*node.Not, tags)
 	}
 
 	return true
@@ -819,6 +864,19 @@ func evaluateCondition(actual string, op string, expected interface{}) bool {
 		return compareNumeric(actual, expected) < 0
 	case "lte":
 		return compareNumeric(actual, expected) <= 0
+	case "in":
+		arr, ok := expected.([]interface{})
+		if !ok {
+			return false
+		}
+		for _, v := range arr {
+			if fmt.Sprintf("%v", v) == actual {
+				return true
+			}
+		}
+		return false
+	case "contains":
+		return strings.Contains(actual, fmt.Sprintf("%v", expected))
 	default:
 		return false
 	}

@@ -11,6 +11,7 @@ import (
 type ModelRepository interface {
 	Create(ctx context.Context, m *models.Model) error
 	GetByID(ctx context.Context, id int64) (*models.Model, error)
+	GetByProviderAndName(ctx context.Context, providerID int64, name string) (*models.Model, error)
 	ListByProvider(ctx context.Context, providerID int64) ([]models.Model, error)
 	ListAll(ctx context.Context) ([]models.Model, error)
 	Delete(ctx context.Context, id int64) error
@@ -51,6 +52,20 @@ func (r *sqliteModelRepo) GetByID(ctx context.Context, id int64) (*models.Model,
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get model: %w", err)
+	}
+	return m, nil
+}
+
+func (r *sqliteModelRepo) GetByProviderAndName(ctx context.Context, providerID int64, name string) (*models.Model, error) {
+	m := &models.Model{}
+	err := r.db.QueryRowContext(ctx,
+		`SELECT id, provider_id, name, created_at FROM models WHERE provider_id = ? AND name = ?`, providerID, name,
+	).Scan(&m.ID, &m.ProviderID, &m.Name, &m.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get model by provider and name: %w", err)
 	}
 	return m, nil
 }

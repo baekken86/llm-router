@@ -12,14 +12,19 @@ import (
 )
 
 type StatsResponse struct {
-	TotalRequests  int                    `json:"total_requests"`
-	Successes      int                    `json:"successes"`
-	Failures       int                    `json:"failures"`
-	InputTokens    int                    `json:"input_tokens"`
-	OutputTokens   int                    `json:"output_tokens"`
-	CachedTokens   int                    `json:"cached_tokens"`
-	ByVirtualModel map[string]ModelStat   `json:"by_virtual_model"`
-	ByProvider     map[string]ModelStat   `json:"by_provider"`
+	TotalRequests      int                    `json:"total_requests"`
+	Successes          int                    `json:"successes"`
+	Failures           int                    `json:"failures"`
+	InputTokens        int                    `json:"input_tokens"`
+	OutputTokens       int                    `json:"output_tokens"`
+	CachedTokens       int                    `json:"cached_tokens"`
+	ReasoningTokens    int                    `json:"reasoning_tokens"`
+	RTKIntercepts      int                    `json:"rtk_intercepts"`
+	RTKSavedTokens     int                    `json:"rtk_saved_tokens"`
+	CavemanIntercepts  int                    `json:"caveman_intercepts"`
+	CavemanSavedTokens int                    `json:"caveman_saved_tokens"`
+	ByVirtualModel     map[string]ModelStat   `json:"by_virtual_model"`
+	ByProvider         map[string]ModelStat   `json:"by_provider"`
 }
 
 type ModelStat struct {

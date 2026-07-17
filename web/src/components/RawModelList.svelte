@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from 'svelte';
   import { apiFetch } from '../lib/api.js';
   import { addToast } from '../lib/stores.js';
 
@@ -81,7 +82,7 @@
     }
   }
 
-  $effect(() => { load(); });
+  onMount(() => { load(); });
 </script>
 
 <div>

@@ -40,8 +40,8 @@ func runDiscover(args []string) {
 
 	ctx := context.Background()
 
-	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, make([]byte, 32))
-	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService)
+	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, loadEncryptionKey())
+	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalRepo)
 
 	provider, err := providerRepo.GetByName(ctx, *providerName)
 	if err != nil || provider == nil {
@@ -58,26 +58,4 @@ func runDiscover(args []string) {
 	}
 
 	fmt.Printf("\n✓ Found %d models\n", len(models))
-
-	autoTagged := 0
-	for _, m := range models {
-		metadata, err := globalRepo.GetByModel(ctx, m.Name)
-		if err != nil || len(metadata) == 0 {
-			continue
-		}
-
-		for effort, tags := range metadata {
-			if err := tagRepo.Set(ctx, m.ID, effort, tags); err != nil {
-				logger.Warn("failed to auto-tag", "model", m.Name, "error", err)
-				continue
-			}
-			autoTagged++
-		}
-	}
-
-	if autoTagged > 0 {
-		fmt.Printf("✓ Auto-tagged %d models from global metadata\n", autoTagged)
-	} else {
-		fmt.Println("\nNo global metadata found. Run 'llm-router init' first to import benchmark data.")
-	}
 }

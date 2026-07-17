@@ -322,7 +322,9 @@ func runProxy(args []string) {
 		}
 	}()
 
-	engine := proxy.NewEngine(vmService, providerService, oauthRepo, logger, logChan)
+	oauthService := service.NewOAuthService(oauthRepo, providerRepo, providerService, logger)
+
+	engine := proxy.NewEngine(vmService, providerService, oauthService, logger, logChan)
 	engine.GetRTK().SetEnabled(settings.RTKEnabled)
 	engine.GetCaveman().SetEnabled(settings.CavemanEnabled)
 	engine.ApplySettings(settings.MaxRetries, settings.TimeoutSeconds, settings.MaxTokens)
@@ -334,7 +336,7 @@ func runProxy(args []string) {
 	importHandler := handlers.NewImportHandler(service.NewImportService(modelRepo, tagRepo))
 	metadataHandler := handlers.NewMetadataHandler(llmrouter.ModelsJSON, providerMetadataRepo, globalMetaRepo)
 	adminHandler := handlers.NewAdminHandler(adminService)
-	statusHandler := handlers.NewStatusHandler(engine, providerService)
+	statusHandler := handlers.NewStatusHandler(engine, providerService, oauthService)
 
 	oauthHandler := handlers.NewOAuthHandler(func(key string) int64 {
 		pk, _ := keyService.ValidateKey(context.Background(), key)

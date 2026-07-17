@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/chris/llm-router/internal/models"
-	"github.com/chris/llm-router/internal/repository"
 	"github.com/chris/llm-router/internal/service"
 )
 
@@ -55,7 +54,7 @@ type InterceptResult struct {
 type Engine struct {
 	vmService       service.VirtualModelService
 	providerService service.ProviderService
-	oauthRepo       repository.OAuthRepository
+	oauthService    service.OAuthService
 	openaiClient    *OpenAIClient
 	anthropicClient *AnthropicClient
 	logger          *slog.Logger
@@ -71,14 +70,14 @@ type Engine struct {
 func NewEngine(
 	vmService service.VirtualModelService,
 	providerService service.ProviderService,
-	oauthRepo repository.OAuthRepository,
+	oauthService service.OAuthService,
 	logger *slog.Logger,
 	logChan chan<- RequestLog,
 ) *Engine {
 	return &Engine{
 		vmService:       vmService,
 		providerService: providerService,
-		oauthRepo:       oauthRepo,
+		oauthService:    oauthService,
 		openaiClient:    NewOpenAIClient(),
 		anthropicClient: NewAnthropicClient(),
 		logger:          logger,
@@ -109,10 +108,10 @@ func (e *Engine) ClearRateLimit(providerID int64) {
 }
 
 func (e *Engine) getAPIKey(ctx context.Context, provider models.Provider) (string, error) {
-	// Check for OAuth token first
-	oauthToken, err := e.oauthRepo.GetByProviderID(ctx, provider.ID)
-	if err == nil && oauthToken != nil && oauthToken.AccessToken != "" {
-		return oauthToken.AccessToken, nil
+	// Check for OAuth token first (handles refresh automatically)
+	token, err := e.oauthService.GetValidToken(ctx, provider.ID)
+	if err == nil && token != "" {
+		return token, nil
 	}
 	// Fall back to encrypted API key
 	return e.providerService.DecryptAPIKey(provider.APIKeyEncrypted)
@@ -397,10 +396,12 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 	for i, rm := range resolvedModels {
 		apiKey, err := e.getAPIKey(r.Context(), rm.Provider)
 		if err != nil {
+			e.logger.Warn("skipping provider: no api key", "provider", rm.Provider.Name, "model", rm.Model.Name, "error", err)
 			continue
 		}
 
-		if limited, _ := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+		if limited, remaining := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+			e.logger.Warn("skipping provider: rate limited", "provider", rm.Provider.Name, "model", rm.Model.Name, "remaining", remaining.Round(time.Second))
 			continue
 		}
 
@@ -767,10 +768,12 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 	for i, rm := range resolvedModels {
 		apiKey, err := e.getAPIKey(r.Context(), rm.Provider)
 		if err != nil {
+			e.logger.Warn("skipping provider: no api key", "provider", rm.Provider.Name, "model", rm.Model.Name, "error", err)
 			continue
 		}
 
-		if limited, _ := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+		if limited, remaining := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+			e.logger.Warn("skipping provider: rate limited", "provider", rm.Provider.Name, "model", rm.Model.Name, "remaining", remaining.Round(time.Second))
 			continue
 		}
 

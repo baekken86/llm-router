@@ -182,7 +182,9 @@
             {#snippet children(sortable)}
               {#if item?.key !== undefined || item?.not?.key !== undefined}
                 <div class="flex items-center gap-2 flex-wrap">
-                  <DragHandle attachHandle={sortable.attachHandle} />
+                  {#if getItems(node).length > 1}
+                    <DragHandle attachHandle={sortable.attachHandle} />
+                  {/if}
                   <button
                     class="text-xs px-1.5 py-0.5 rounded {isNegated(item) ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}"
                     onclick={() => toggleNot(idx)}
@@ -292,7 +294,9 @@
           {#snippet children(sortable)}
             {#if item?.key !== undefined || item?.not?.key !== undefined}
               <div class="flex items-center gap-2 flex-wrap">
-                <DragHandle attachHandle={sortable.attachHandle} />
+                {#if getItems(node).length > 1}
+                  <DragHandle attachHandle={sortable.attachHandle} />
+                {/if}
                 <button
                   class="text-xs px-1.5 py-0.5 rounded {isNegated(item) ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}"
                   onclick={() => toggleNot(idx)}

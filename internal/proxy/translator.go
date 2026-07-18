@@ -150,6 +150,23 @@ func AnthropicToOpenAI(resp *AnthropicResponse, model string) ChatCompletionResp
 	return openResp
 }
 
+func anthropicThinkingToEffort(thinking *AnthropicThinking) string {
+	if thinking == nil || thinking.Type == "disabled" {
+		return "none"
+	}
+	tokens := thinking.BudgetTokens
+	switch {
+	case tokens <= 1024:
+		return "low"
+	case tokens <= 4096:
+		return "medium"
+	case tokens <= 8192:
+		return "high"
+	default:
+		return "max"
+	}
+}
+
 func mapStopReason(reason string) string {
 	switch reason {
 	case "end_turn":
@@ -405,6 +422,13 @@ func AnthropicRequestToOpenAI(req AnthropicRequest) ChatCompletionRequest {
 
 	if req.MaxTokens > 0 {
 		openReq.MaxTokens = &req.MaxTokens
+	}
+
+	if req.Effort != nil {
+		openReq.ReasoningEffort = req.Effort
+	} else if req.Thinking != nil {
+		effort := anthropicThinkingToEffort(req.Thinking)
+		openReq.ReasoningEffort = &effort
 	}
 
 	if req.System != "" {

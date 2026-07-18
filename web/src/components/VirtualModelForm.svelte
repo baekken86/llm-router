@@ -146,9 +146,9 @@
 </script>
 
 <div>
-  <button class="text-sm text-gray-400 hover:text-white mb-4" onclick={onBack}>
+  <a href="/virtual" class="text-sm text-gray-400 hover:text-white mb-4 no-underline inline-block" onclick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); onBack(); }}>
     &larr; Back to list
-  </button>
+  </a>
 
   {#if loading}
     <p class="text-gray-500">Loading...</p>
@@ -251,13 +251,14 @@
         >
           {saving ? 'Saving...' : vmId ? 'Update' : 'Create'}
         </button>
-        <button
+        <a
+          href="/virtual"
           type="button"
-          class="text-sm text-gray-400 hover:text-white px-4 py-2"
-          onclick={onBack}
+          class="text-sm text-gray-400 hover:text-white px-4 py-2 no-underline"
+          onclick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); onBack(); }}
         >
           Cancel
-        </button>
+        </a>
       </div>
     </form>
 

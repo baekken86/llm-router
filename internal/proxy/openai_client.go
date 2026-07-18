@@ -26,15 +26,16 @@ type StreamOptions struct {
 }
 
 type ChatCompletionRequest struct {
-	Model         string         `json:"model"`
-	Messages      []Message      `json:"messages"`
-	MaxTokens     *int           `json:"max_tokens,omitempty"`
-	Temperature   *float64       `json:"temperature,omitempty"`
-	TopP          *float64       `json:"top_p,omitempty"`
-	Stream        bool           `json:"stream,omitempty"`
-	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
-	Tools         []Tool         `json:"tools,omitempty"`
-	Stop          []string       `json:"stop,omitempty"`
+	Model          string         `json:"model"`
+	Messages       []Message      `json:"messages"`
+	MaxTokens      *int           `json:"max_tokens,omitempty"`
+	Temperature    *float64       `json:"temperature,omitempty"`
+	TopP           *float64       `json:"top_p,omitempty"`
+	Stream         bool           `json:"stream,omitempty"`
+	StreamOptions  *StreamOptions `json:"stream_options,omitempty"`
+	Tools          []Tool         `json:"tools,omitempty"`
+	Stop           []string       `json:"stop,omitempty"`
+	ReasoningEffort *string       `json:"reasoning_effort,omitempty"`
 }
 
 type Message struct {

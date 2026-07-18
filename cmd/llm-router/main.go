@@ -337,6 +337,8 @@ func runProxy(args []string) {
 	metadataHandler := handlers.NewMetadataHandler(llmrouter.ModelsJSON, providerMetadataRepo, globalMetaRepo)
 	adminHandler := handlers.NewAdminHandler(adminService)
 	statusHandler := handlers.NewStatusHandler(engine, providerService, oauthService)
+	syslogHandler := handlers.NewSyslogHandler(logRepo)
+	settingsHandler := handlers.NewSettingsHandler(cfg, engine)
 
 	oauthHandler := handlers.NewOAuthHandler(func(key string) int64 {
 		pk, _ := keyService.ValidateKey(context.Background(), key)
@@ -354,7 +356,7 @@ func runProxy(args []string) {
 		logger.Warn("web UI not embedded", "error", err)
 	}
 
-	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, metadataHandler, statusHandler, keyService, adminService, adminHandler, webFS)
+	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, metadataHandler, statusHandler, syslogHandler, settingsHandler, keyService, adminService, adminHandler, webFS)
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middlewareAuthOrOAuth(keyService, oauthHandler))

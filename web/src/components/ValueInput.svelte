@@ -2,7 +2,7 @@
   import { getFieldValues, getFieldMinMax } from '../lib/fields.js';
   import { metadataFields } from '../lib/stores.js';
 
-  let { fieldKey = '', fieldType = 'string', operator = '', value = '', onchange } = $props();
+  let { fieldKey = '', fieldType = 'string', operator = '', value = '', onChange } = $props();
 
   let knownValues = $derived(getFieldValues($metadataFields, fieldKey));
   let minMax = $derived(getFieldMinMax($metadataFields, fieldKey));
@@ -13,14 +13,14 @@
   function handleInput(e) {
     const v = e.target.value;
     if (fieldType === 'number') {
-      onchange(v === '' ? '' : Number(v));
+      onChange(v === '' ? '' : Number(v));
     } else {
-      onchange(v);
+      onChange(v);
     }
   }
 
   function handleToggle(val) {
-    onchange(val === 'true');
+    onChange(val === 'true');
   }
 
   function toggleInValue(val) {
@@ -28,7 +28,7 @@
     const idx = arr.indexOf(val);
     if (idx >= 0) arr.splice(idx, 1);
     else arr.push(val);
-    onchange(arr);
+    onChange(arr);
   }
 </script>
 
@@ -84,7 +84,7 @@
 {:else if knownValues}
   <select
     {value}
-    onchange={(e) => onchange(e.target.value)}
+    onchange={(e) => onChange(e.target.value)}
     class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
   >
     <option value="">Select...</option>

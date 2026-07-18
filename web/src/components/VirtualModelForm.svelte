@@ -197,14 +197,14 @@
         <div>
           <label class="block text-sm text-gray-400 mb-2">Filter Conditions</label>
           <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-            <ConditionBuilder node={filterNode} onchange={(v) => filterNode = v || { and: [] }} />
+            <ConditionBuilder node={filterNode} onChange={(v) => filterNode = v || { and: [] }} />
           </div>
         </div>
 
         <div>
           <label class="block text-sm text-gray-400 mb-2">Sort Criteria</label>
           <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-            <SortBuilder criteria={sortCriteria} onchange={(v) => sortCriteria = v} />
+            <SortBuilder criteria={sortCriteria} onChange={(v) => sortCriteria = v} />
           </div>
         </div>
       {:else}

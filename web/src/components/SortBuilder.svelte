@@ -5,18 +5,18 @@
   import OperatorSelector from './OperatorSelector.svelte';
   import ValueInput from './ValueInput.svelte';
 
-  let { criteria = [], onchange } = $props();
+  let { criteria = [], onChange } = $props();
 
   function addSort() {
-    onchange([...criteria, { key: '', direction: 'desc' }]);
+    onChange([...criteria, { key: '', direction: 'desc' }]);
   }
 
   function addCondition() {
-    onchange([...criteria, { condition: { key: '', op: 'eq', value: '' } }]);
+    onChange([...criteria, { condition: { key: '', op: 'eq', value: '' } }]);
   }
 
   function removeEntry(idx) {
-    onchange(criteria.filter((_, i) => i !== idx));
+    onChange(criteria.filter((_, i) => i !== idx));
   }
 
   function updateSort(idx, field, val) {
@@ -24,7 +24,7 @@
       if (i !== idx) return c;
       return { ...c, [field]: val };
     });
-    onchange(next);
+    onChange(next);
   }
 
   function updateConditionField(idx, field, val) {
@@ -37,7 +37,7 @@
       }
       return { ...c, condition: cond };
     });
-    onchange(next);
+    onChange(next);
   }
 
   function toggleSortMode(idx) {
@@ -50,7 +50,7 @@
         const { direction, ...rest } = cr;
         return rest;
       });
-      onchange(next);
+      onChange(next);
     } else {
       updateSort(idx, 'direction', 'desc');
       const next = criteria.map((cr, i) => {
@@ -58,7 +58,7 @@
         const { order, ...rest } = cr;
         return rest;
       });
-      onchange(next);
+      onChange(next);
     }
   }
 
@@ -66,14 +66,14 @@
     if (idx === 0) return;
     const next = [...criteria];
     [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
-    onchange(next);
+    onChange(next);
   }
 
   function moveDown(idx) {
     if (idx >= criteria.length - 1) return;
     const next = [...criteria];
     [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
-    onchange(next);
+    onChange(next);
   }
 
   function formatSummary() {
@@ -102,19 +102,19 @@
         <span class="text-xs text-amber-400 font-mono">IF</span>
         <FieldSelector
           value={entry.condition.key}
-          onchange={(v) => updateConditionField(idx, 'key', v)}
+          onChange={(v) => updateConditionField(idx, 'key', v)}
         />
         <OperatorSelector
           fieldType={getFieldType($metadataFields, entry.condition.key)}
           value={entry.condition.op}
-          onchange={(v) => updateConditionField(idx, 'op', v)}
+          onChange={(v) => updateConditionField(idx, 'op', v)}
         />
         <ValueInput
           fieldKey={entry.condition.key}
           fieldType={getFieldType($metadataFields, entry.condition.key)}
           operator={entry.condition.op}
           value={entry.condition.value}
-          onchange={(v) => updateConditionField(idx, 'value', v)}
+          onChange={(v) => updateConditionField(idx, 'value', v)}
         />
         <select
           value={entry.direction || 'asc'}
@@ -143,7 +143,7 @@
       <div class="flex items-center gap-2 flex-wrap">
         <FieldSelector
           value={entry.key || ''}
-          onchange={(v) => updateSort(idx, 'key', v)}
+          onChange={(v) => updateSort(idx, 'key', v)}
         />
 
         {#if entry.direction !== undefined}

@@ -5,7 +5,7 @@
   import { apiFetch } from '../lib/api.js';
   import { onMount } from 'svelte';
 
-  let { node = $bindable(), allVMs = [], onchange } = $props();
+  let { node = $bindable(), allVMs = [], onChange } = $props();
 
   let availableVMs = $state([]);
   let loadingVMs = $state(false);
@@ -30,7 +30,7 @@
   onMount(() => { loadVMs(); });
 
   function emit() {
-    onchange?.(node);
+    onChange?.(node);
   }
 
   function addSource() {
@@ -155,12 +155,12 @@
   </div>
   {#if expandedFilter}
     <div class="ml-4 mt-1 bg-gray-850 rounded p-2 border border-gray-800">
-      <ConditionBuilder node={node.filter_expr || { and: [] }} onchange={(v) => updateNodeFilter(v)} />
+      <ConditionBuilder node={node.filter_expr || { and: [] }} onChange={(v) => updateNodeFilter(v)} />
     </div>
   {/if}
   {#if expandedSort}
     <div class="ml-4 mt-1 bg-gray-850 rounded p-2 border border-gray-800">
-      <SortBuilder criteria={node.sort_expr || []} onchange={(v) => updateNodeSort(v)} />
+      <SortBuilder criteria={node.sort_expr || []} onChange={(v) => updateNodeSort(v)} />
     </div>
   {/if}
 
@@ -204,7 +204,7 @@
           <div class="relative">
             <div class="absolute left-0 top-0 bottom-0 w-px bg-gray-700"></div>
             <div class="pl-3">
-              <CompositionBuilder node={source} allVMs={availableVMs} onchange={(childNode) => handleSourceChange(idx, childNode)} />
+              <CompositionBuilder node={source} allVMs={availableVMs} onChange={(childNode) => handleSourceChange(idx, childNode)} />
             </div>
             <button
               class="absolute -left-1 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full {canRemoveSource() ? 'bg-gray-700 text-gray-400 hover:bg-red-900 hover:text-red-300' : 'bg-gray-800 text-gray-700 cursor-not-allowed'} text-xs flex items-center justify-center"
@@ -232,13 +232,13 @@
     {#if expandedFilter}
       <div class="ml-3 mt-1 bg-gray-850 rounded p-2 border border-gray-800">
         <p class="text-xs text-gray-500 mb-1">Post-operation filter:</p>
-        <ConditionBuilder node={node.filter_expr || { and: [] }} onchange={(v) => updateNodeFilter(v)} />
+        <ConditionBuilder node={node.filter_expr || { and: [] }} onChange={(v) => updateNodeFilter(v)} />
       </div>
     {/if}
     {#if expandedSort}
       <div class="ml-3 mt-1 bg-gray-850 rounded p-2 border border-gray-800">
         <p class="text-xs text-gray-500 mb-1">Post-operation sort:</p>
-        <SortBuilder criteria={node.sort_expr || []} onchange={(v) => updateNodeSort(v)} />
+        <SortBuilder criteria={node.sort_expr || []} onChange={(v) => updateNodeSort(v)} />
       </div>
     {/if}
   </div>

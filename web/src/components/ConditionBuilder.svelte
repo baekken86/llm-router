@@ -6,7 +6,7 @@
   import ValueInput from './ValueInput.svelte';
   import ConditionBuilder from './ConditionBuilder.svelte';
 
-  let { node = { and: [] }, onchange, depth = 0 } = $props();
+  let { node = { and: [] }, onChange, depth = 0 } = $props();
 
   let isGroup = $derived(node && !node.key && (node.and || node.or));
   let mode = $derived(node?.and ? 'and' : 'or');
@@ -27,29 +27,29 @@
     const newMode = mode === 'and' ? 'or' : 'and';
     const items = getItems(node);
     if (newMode === 'and') {
-      onchange({ and: items });
+      onChange({ and: items });
     } else {
-      onchange({ or: items });
+      onChange({ or: items });
     }
   }
 
   function addItem(type) {
     const items = getItems(node);
     if (type === 'condition') {
-      onchange(setItems(node, [...items, { key: '', op: '', value: '' }]));
+      onChange(setItems(node, [...items, { key: '', op: '', value: '' }]));
     } else {
-      onchange(setItems(node, [...items, { and: [] }]));
+      onChange(setItems(node, [...items, { and: [] }]));
     }
   }
 
   function removeItem(idx) {
     const items = getItems(node).filter((_, i) => i !== idx);
-    onchange(setItems(node, items));
+    onChange(setItems(node, items));
   }
 
   function updateItem(idx, newNode) {
     const items = getItems(node).map((item, i) => i === idx ? newNode : item);
-    onchange(setItems(node, items));
+    onChange(setItems(node, items));
   }
 
   function toggleNot(idx) {
@@ -113,7 +113,7 @@
       {#if depth > 0}
         <button
           class="text-gray-500 hover:text-red-400 text-xs px-1"
-          onclick={() => onchange(null)}
+          onclick={() => onChange(null)}
           title="Remove group"
         >
           x
@@ -133,7 +133,7 @@
           </button>
           <FieldSelector
             value={unwrapNot(item).key}
-            onchange={(v) => {
+            onChange={(v) => {
               const inner = unwrapNot(item);
               const updated = { ...inner, key: v, op: '', value: '' };
               updateItem(idx, isNegated(item) ? { not: updated } : updated);
@@ -142,7 +142,7 @@
           <OperatorSelector
             fieldType={getCondType(item)}
             value={unwrapNot(item).op}
-            onchange={(v) => {
+            onChange={(v) => {
               const inner = unwrapNot(item);
               const updated = { ...inner, op: v };
               if (v === 'in') updated.value = [];
@@ -154,7 +154,7 @@
             fieldType={getCondType(item)}
             operator={unwrapNot(item).op}
             value={unwrapNot(item).value}
-            onchange={(v) => {
+            onChange={(v) => {
               const inner = unwrapNot(item);
               updateItem(idx, isNegated(item) ? { not: { ...inner, value: v } } : { ...inner, value: v });
             }}
@@ -168,7 +168,7 @@
           </button>
         </div>
       {:else}
-        <ConditionBuilder node={item} depth={depth + 1} onchange={(v) => {
+        <ConditionBuilder node={item} depth={depth + 1} onChange={(v) => {
           if (v === null) removeItem(idx);
           else updateItem(idx, v);
         }} />
@@ -194,15 +194,15 @@
   <div class="flex items-center gap-2 flex-wrap {depth > 0 ? indentClass[depth % indentClass.length] + ' mt-2' : ''}">
     <FieldSelector
       value={node?.key || ''}
-      onchange={(v) => onchange({ key: v, op: '', value: '' })}
+      onChange={(v) => onChange({ key: v, op: '', value: '' })}
     />
     <OperatorSelector
       fieldType={getFieldType($metadataFields, node?.key)}
       value={node?.op || ''}
-      onchange={(v) => {
+      onChange={(v) => {
         const updated = { ...node, op: v };
         if (v === 'in') updated.value = [];
-        onchange(updated);
+        onChange(updated);
       }}
     />
     <ValueInput
@@ -210,7 +210,7 @@
       fieldType={getFieldType($metadataFields, node?.key)}
       operator={node?.op}
       value={node?.value}
-      onchange={(v) => onchange({ ...node, value: v })}
+      onChange={(v) => onChange({ ...node, value: v })}
     />
   </div>
 {/if}

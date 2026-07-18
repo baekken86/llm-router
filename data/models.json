@@ -212,12 +212,7 @@
       "cost_per_1m_output": 50.0,
       "has_reasoning_effort": false
     },
-    {
-      "name": "claude-haiku-4-5",
-      "cost_per_1m_input": 1.0,
-      "cost_per_1m_output": 5.0,
-      "has_reasoning_effort": false
-    },
+
     {
       "name": "claude-instant",
       "intelligence": 2.0,

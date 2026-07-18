@@ -89,7 +89,7 @@
     <a
       href="/virtual/create"
       class="bg-emerald-600 hover:bg-emerald-700 text-white rounded px-4 py-2 text-sm font-medium no-underline"
-      onclick={(e) => { handleLink(e, '/virtual/create'); if (!e.defaultPrevented) onCreate(); }}
+      onclick={(e) => { handleLink(e, '/virtual/create'); if (e.defaultPrevented) onCreate(); }}
     >
       + Create New
     </a>
@@ -124,7 +124,7 @@
               <a
                 href="/virtual/{vm.id}"
                 class="text-xs text-gray-400 hover:text-white px-2 py-1 no-underline"
-                onclick={(e) => { e.stopPropagation(); handleLink(e, `/virtual/${vm.id}`); if (!e.defaultPrevented) onEdit(vm.id); }}
+                onclick={(e) => { e.stopPropagation(); handleLink(e, `/virtual/${vm.id}`); if (e.defaultPrevented) onEdit(vm.id); }}
               >
                 Edit
               </a>

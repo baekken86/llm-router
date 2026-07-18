@@ -1,15 +1,29 @@
 <script>
   import { metadataFields } from '../lib/stores.js';
   import { getFieldType } from '../lib/fields.js';
+  import { assignStableIds, isGroup, isDescendant, moveNodeInTree, findNodeAndParent, getChildren } from '../lib/treeUtils.js';
   import FieldSelector from './FieldSelector.svelte';
   import OperatorSelector from './OperatorSelector.svelte';
   import ValueInput from './ValueInput.svelte';
   import ConditionBuilder from './ConditionBuilder.svelte';
+  import DragHandle from './DragHandle.svelte';
+  import SortableItem from './SortableItem.svelte';
+  import SortableTree from './SortableTree.svelte';
 
-  let { node = { and: [] }, onChange, depth = 0 } = $props();
+  let { node = { and: [] }, onChange, depth = 0, groupKey = 'root' } = $props();
 
-  let isGroup = $derived(node && !node.key && (node.and || node.or));
+  let isGroupNode = $derived(node && !node.key && (node.and || node.or));
   let mode = $derived(node?.and ? 'and' : 'or');
+
+  // Ensure stable IDs exist on all children
+  $effect(() => {
+    const items = getItems(node);
+    for (const item of items) {
+      if (item && !item.__id) {
+        assignStableIds(item);
+      }
+    }
+  });
 
   function getItems(n) {
     if (n?.and) return n.and;
@@ -35,11 +49,14 @@
 
   function addItem(type) {
     const items = getItems(node);
+    let newItem;
     if (type === 'condition') {
-      onChange(setItems(node, [...items, { key: '', op: '', value: '' }]));
+      newItem = { key: '', op: '', value: '' };
     } else {
-      onChange(setItems(node, [...items, { and: [] }]));
+      newItem = { and: [] };
     }
+    assignStableIds(newItem);
+    onChange(setItems(node, [...items, newItem]));
   }
 
   function removeItem(idx) {
@@ -91,6 +108,41 @@
     return parts.map(p => parts.length > 1 && p.includes(' ') ? `(${p})` : p).join(` ${op} `);
   }
 
+  function handleTreeDragEnd(event) {
+    const { operation } = event;
+    const source = operation.source;
+    const target = operation.target;
+
+    if (!source?.data?.nodeId || !target?.data?.nodeId) return;
+    if (source.data.nodeId === target.data.nodeId) return;
+
+    const sourceId = source.data.nodeId;
+    const targetId = target.data.nodeId;
+
+    // Determine drop position
+    let position = 'after';
+    if (target.data.isGroup) {
+      // Dropping on a group: insert inside
+      position = 'inside';
+    } else {
+      // SortableDraggable/SortableDroppable have .index at runtime
+      const srcIdx = /** @type {any} */ (source).index;
+      const tgtIdx = /** @type {any} */ (target).index;
+      if (srcIdx !== undefined && tgtIdx !== undefined) {
+        position = srcIdx < tgtIdx ? 'after' : 'before';
+      }
+    }
+
+    // Cycle detection for inside drops
+    if (position === 'inside' && isDescendant(node, sourceId, targetId)) return;
+
+    const newTree = moveNodeInTree(node, sourceId, targetId, position);
+    if (newTree) {
+      assignStableIds(newTree);
+      onChange(newTree);
+    }
+  }
+
   const indentClass = [
     'border-l-2 border-gray-700 pl-3',
     'border-l-2 border-emerald-800 pl-3',
@@ -100,17 +152,122 @@
   ];
 </script>
 
-{#if isGroup}
-  <div class="space-y-2 {depth > 0 ? indentClass[depth % indentClass.length] + ' mt-2' : ''}">
-    <div class="flex items-center gap-2 mb-2">
-      <button
-        class="px-2 py-0.5 text-xs font-mono rounded {mode === 'and' ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white'}"
-        onclick={toggleMode}
-        title="Toggle AND/OR"
-      >
-        {mode === 'and' ? 'AND' : 'OR'}
-      </button>
-      {#if depth > 0}
+{#if isGroupNode}
+  {#if depth === 0}
+    <!-- Top-level: wrap in SortableTree for DragDropProvider -->
+    <SortableTree onDragEnd={handleTreeDragEnd}>
+      <div class="space-y-2 {depth > 0 ? indentClass[depth % indentClass.length] + ' mt-2' : ''}">
+        <div class="flex items-center gap-2 mb-2">
+          <button
+            class="px-2 py-0.5 text-xs font-mono rounded {mode === 'and' ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white'}"
+            onclick={toggleMode}
+            title="Toggle AND/OR"
+          >
+            {mode === 'and' ? 'AND' : 'OR'}
+          </button>
+        </div>
+
+        {#each getItems(node) as item, idx (item?.__id || idx)}
+          <SortableItem
+            id={item?.__id || `item-${groupKey}-${idx}`}
+            index={idx}
+            group={groupKey}
+            data={{
+              type: 'condition-node',
+              nodeId: item?.__id,
+              isGroup: !item?.key && (item?.and || item?.or),
+              depth
+            }}
+          >
+            {#snippet children(sortable)}
+              {#if item?.key !== undefined || item?.not?.key !== undefined}
+                <div class="flex items-center gap-2 flex-wrap">
+                  <DragHandle attachHandle={sortable.attachHandle} />
+                  <button
+                    class="text-xs px-1.5 py-0.5 rounded {isNegated(item) ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}"
+                    onclick={() => toggleNot(idx)}
+                    title="Toggle NOT"
+                  >
+                    NOT
+                  </button>
+                  <FieldSelector
+                    value={unwrapNot(item).key}
+                    onChange={(v) => {
+                      const inner = unwrapNot(item);
+                      const updated = { ...inner, key: v, op: '', value: '' };
+                      updateItem(idx, isNegated(item) ? { not: updated } : updated);
+                    }}
+                  />
+                  <OperatorSelector
+                    fieldType={getCondType(item)}
+                    value={unwrapNot(item).op}
+                    onChange={(v) => {
+                      const inner = unwrapNot(item);
+                      const updated = { ...inner, op: v };
+                      if (v === 'in') updated.value = [];
+                      updateItem(idx, isNegated(item) ? { not: updated } : updated);
+                    }}
+                  />
+                  <ValueInput
+                    fieldKey={unwrapNot(item).key}
+                    fieldType={getCondType(item)}
+                    operator={unwrapNot(item).op}
+                    value={unwrapNot(item).value}
+                    onChange={(v) => {
+                      const inner = unwrapNot(item);
+                      updateItem(idx, isNegated(item) ? { not: { ...inner, value: v } } : { ...inner, value: v });
+                    }}
+                  />
+                  <button
+                    class="text-gray-500 hover:text-red-400 px-1"
+                    onclick={() => removeItem(idx)}
+                    title="Remove condition"
+                  >
+                    x
+                  </button>
+                </div>
+              {:else}
+                <ConditionBuilder
+                  node={item}
+                  depth={depth + 1}
+                  groupKey={item?.__id || `${groupKey}-${idx}`}
+                  onChange={(v) => {
+                    if (v === null) removeItem(idx);
+                    else updateItem(idx, v);
+                  }}
+                />
+              {/if}
+            {/snippet}
+          </SortableItem>
+        {/each}
+
+        <div class="flex gap-2">
+          <button
+            class="text-sm text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
+            onclick={() => addItem('condition')}
+          >
+            + Condition
+          </button>
+          <button
+            class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
+            onclick={() => addItem('group')}
+          >
+            + Group
+          </button>
+        </div>
+      </div>
+    </SortableTree>
+  {:else}
+    <!-- Nested group: shares parent's DragDropProvider -->
+    <div class="space-y-2 {indentClass[depth % indentClass.length] + ' mt-2'}">
+      <div class="flex items-center gap-2 mb-2">
+        <button
+          class="px-2 py-0.5 text-xs font-mono rounded {mode === 'and' ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white'}"
+          onclick={toggleMode}
+          title="Toggle AND/OR"
+        >
+          {mode === 'and' ? 'AND' : 'OR'}
+        </button>
         <button
           class="text-gray-500 hover:text-red-400 text-xs px-1"
           onclick={() => onChange(null)}
@@ -118,78 +275,98 @@
         >
           x
         </button>
-      {/if}
-    </div>
+      </div>
 
-    {#each getItems(node) as item, idx (idx)}
-      {#if item?.key !== undefined || item?.not?.key !== undefined}
-        <div class="flex items-center gap-2 flex-wrap">
-          <button
-            class="text-xs px-1.5 py-0.5 rounded {isNegated(item) ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}"
-            onclick={() => toggleNot(idx)}
-            title="Toggle NOT"
-          >
-            NOT
-          </button>
-          <FieldSelector
-            value={unwrapNot(item).key}
-            onChange={(v) => {
-              const inner = unwrapNot(item);
-              const updated = { ...inner, key: v, op: '', value: '' };
-              updateItem(idx, isNegated(item) ? { not: updated } : updated);
-            }}
-          />
-          <OperatorSelector
-            fieldType={getCondType(item)}
-            value={unwrapNot(item).op}
-            onChange={(v) => {
-              const inner = unwrapNot(item);
-              const updated = { ...inner, op: v };
-              if (v === 'in') updated.value = [];
-              updateItem(idx, isNegated(item) ? { not: updated } : updated);
-            }}
-          />
-          <ValueInput
-            fieldKey={unwrapNot(item).key}
-            fieldType={getCondType(item)}
-            operator={unwrapNot(item).op}
-            value={unwrapNot(item).value}
-            onChange={(v) => {
-              const inner = unwrapNot(item);
-              updateItem(idx, isNegated(item) ? { not: { ...inner, value: v } } : { ...inner, value: v });
-            }}
-          />
-          <button
-            class="text-gray-500 hover:text-red-400 px-1"
-            onclick={() => removeItem(idx)}
-            title="Remove condition"
-          >
-            x
-          </button>
-        </div>
-      {:else}
-        <ConditionBuilder node={item} depth={depth + 1} onChange={(v) => {
-          if (v === null) removeItem(idx);
-          else updateItem(idx, v);
-        }} />
-      {/if}
-    {/each}
+      {#each getItems(node) as item, idx (item?.__id || idx)}
+        <SortableItem
+          id={item?.__id || `item-${groupKey}-${idx}`}
+          index={idx}
+          group={groupKey}
+          data={{
+            type: 'condition-node',
+            nodeId: item?.__id,
+            isGroup: !item?.key && (item?.and || item?.or),
+            depth
+          }}
+        >
+          {#snippet children(sortable)}
+            {#if item?.key !== undefined || item?.not?.key !== undefined}
+              <div class="flex items-center gap-2 flex-wrap">
+                <DragHandle attachHandle={sortable.attachHandle} />
+                <button
+                  class="text-xs px-1.5 py-0.5 rounded {isNegated(item) ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}"
+                  onclick={() => toggleNot(idx)}
+                  title="Toggle NOT"
+                >
+                  NOT
+                </button>
+                <FieldSelector
+                  value={unwrapNot(item).key}
+                  onChange={(v) => {
+                    const inner = unwrapNot(item);
+                    const updated = { ...inner, key: v, op: '', value: '' };
+                    updateItem(idx, isNegated(item) ? { not: updated } : updated);
+                  }}
+                />
+                <OperatorSelector
+                  fieldType={getCondType(item)}
+                  value={unwrapNot(item).op}
+                  onChange={(v) => {
+                    const inner = unwrapNot(item);
+                    const updated = { ...inner, op: v };
+                    if (v === 'in') updated.value = [];
+                    updateItem(idx, isNegated(item) ? { not: updated } : updated);
+                  }}
+                />
+                <ValueInput
+                  fieldKey={unwrapNot(item).key}
+                  fieldType={getCondType(item)}
+                  operator={unwrapNot(item).op}
+                  value={unwrapNot(item).value}
+                  onChange={(v) => {
+                    const inner = unwrapNot(item);
+                    updateItem(idx, isNegated(item) ? { not: { ...inner, value: v } } : { ...inner, value: v });
+                  }}
+                />
+                <button
+                  class="text-gray-500 hover:text-red-400 px-1"
+                  onclick={() => removeItem(idx)}
+                  title="Remove condition"
+                >
+                  x
+                </button>
+              </div>
+            {:else}
+              <ConditionBuilder
+                node={item}
+                depth={depth + 1}
+                groupKey={item?.__id || `${groupKey}-${idx}`}
+                onChange={(v) => {
+                  if (v === null) removeItem(idx);
+                  else updateItem(idx, v);
+                }}
+              />
+            {/if}
+          {/snippet}
+        </SortableItem>
+      {/each}
 
-    <div class="flex gap-2">
-      <button
-        class="text-sm text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
-        onclick={() => addItem('condition')}
-      >
-        + Condition
-      </button>
-      <button
-        class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
-        onclick={() => addItem('group')}
-      >
-        + Group
-      </button>
+      <div class="flex gap-2">
+        <button
+          class="text-sm text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
+          onclick={() => addItem('condition')}
+        >
+          + Condition
+        </button>
+        <button
+          class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
+          onclick={() => addItem('group')}
+        >
+          + Group
+        </button>
+      </div>
     </div>
-  </div>
+  {/if}
 {:else}
   <div class="flex items-center gap-2 flex-wrap {depth > 0 ? indentClass[depth % indentClass.length] + ' mt-2' : ''}">
     <FieldSelector
@@ -215,7 +392,7 @@
   </div>
 {/if}
 
-{#if isGroup && formatSummary(node)}
+{#if isGroupNode && formatSummary(node)}
   <p class="text-xs text-gray-500 mt-2 {depth > 0 ? 'ml-4' : ''}">
     Preview: <span class="text-gray-400">{formatSummary(node)}</span>
   </p>

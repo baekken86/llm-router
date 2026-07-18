@@ -116,7 +116,9 @@
         {#snippet children(sortable)}
           {#if entry.condition}
             <div class="flex items-center gap-2 flex-wrap border-l-2 border-amber-700 pl-3">
-              <DragHandle attachHandle={sortable.attachHandle} />
+              {#if criteria.length > 1}
+                <DragHandle attachHandle={sortable.attachHandle} />
+              {/if}
               <span class="text-xs text-amber-400 font-mono">IF</span>
               <FieldSelector
                 value={entry.condition.key}
@@ -149,7 +151,9 @@
             </div>
           {:else}
             <div class="flex items-center gap-2 flex-wrap">
-              <DragHandle attachHandle={sortable.attachHandle} />
+              {#if criteria.length > 1}
+                <DragHandle attachHandle={sortable.attachHandle} />
+              {/if}
               <FieldSelector
                 value={entry.key || ''}
                 onChange={(v) => updateSort(idx, 'key', v)}

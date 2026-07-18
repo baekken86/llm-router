@@ -10,10 +10,10 @@
   } = $props();
 
   const sortable = createSortable({
-    id,
-    index,
-    group,
-    data,
+    get id() { return id; },
+    get index() { return index; },
+    get group() { return group; },
+    get data() { return data; },
   });
 </script>
 

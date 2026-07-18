@@ -4,6 +4,9 @@
   import FieldSelector from './FieldSelector.svelte';
   import OperatorSelector from './OperatorSelector.svelte';
   import ValueInput from './ValueInput.svelte';
+  import DragHandle from './DragHandle.svelte';
+  import SortableItem from './SortableItem.svelte';
+  import SortableTree from './SortableTree.svelte';
 
   let { criteria = [], onChange } = $props();
 
@@ -62,20 +65,6 @@
     }
   }
 
-  function moveUp(idx) {
-    if (idx === 0) return;
-    const next = [...criteria];
-    [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
-    onChange(next);
-  }
-
-  function moveDown(idx) {
-    if (idx >= criteria.length - 1) return;
-    const next = [...criteria];
-    [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
-    onChange(next);
-  }
-
   function formatSummary() {
     return criteria
       .map(c => {
@@ -93,119 +82,132 @@
       .filter(Boolean)
       .join(', ');
   }
+
+  function handleDragEnd(event) {
+    const { operation } = event;
+    const source = operation.source;
+    const target = operation.target;
+
+    if (!source || !target) return;
+
+    // SortableDraggable/SortableDroppable have .index at runtime
+    // even though base Draggable/Droppable types don't expose it
+    const fromIndex = /** @type {any} */ (source).index;
+    const toIndex = /** @type {any} */ (target).index;
+
+    if (fromIndex === toIndex || fromIndex === undefined || toIndex === undefined) return;
+
+    const next = [...criteria];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    onChange(next);
+  }
 </script>
 
-<div class="space-y-3">
-  {#each criteria as entry, idx}
-    {#if entry.condition}
-      <div class="flex items-center gap-2 flex-wrap border-l-2 border-amber-700 pl-3">
-        <span class="text-xs text-amber-400 font-mono">IF</span>
-        <FieldSelector
-          value={entry.condition.key}
-          onChange={(v) => updateConditionField(idx, 'key', v)}
-        />
-        <OperatorSelector
-          fieldType={getFieldType($metadataFields, entry.condition.key)}
-          value={entry.condition.op}
-          onChange={(v) => updateConditionField(idx, 'op', v)}
-        />
-        <ValueInput
-          fieldKey={entry.condition.key}
-          fieldType={getFieldType($metadataFields, entry.condition.key)}
-          operator={entry.condition.op}
-          value={entry.condition.value}
-          onChange={(v) => updateConditionField(idx, 'value', v)}
-        />
-        <select
-          value={entry.direction || 'asc'}
-          onchange={(e) => updateSort(idx, 'direction', e.target.value)}
-          class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
-        >
-          <option value="asc">true first</option>
-          <option value="desc">false first</option>
-        </select>
-        <button
-          class="text-xs text-gray-500 hover:text-gray-300 px-1"
-          onclick={() => moveUp(idx)}
-          disabled={idx === 0}
-        >^</button>
-        <button
-          class="text-xs text-gray-500 hover:text-gray-300 px-1"
-          onclick={() => moveDown(idx)}
-          disabled={idx >= criteria.length - 1}
-        >v</button>
-        <button
-          class="text-gray-500 hover:text-red-400 px-1"
-          onclick={() => removeEntry(idx)}
-        >x</button>
-      </div>
-    {:else}
-      <div class="flex items-center gap-2 flex-wrap">
-        <FieldSelector
-          value={entry.key || ''}
-          onChange={(v) => updateSort(idx, 'key', v)}
-        />
+<SortableTree onDragEnd={handleDragEnd}>
+  <div class="space-y-3">
+    {#each criteria as entry, idx (idx)}
+      <SortableItem
+        id={`sort-${idx}`}
+        index={idx}
+        group="sort-list"
+        data={{ type: 'sort-entry', index: idx }}
+      >
+        {#snippet children(sortable)}
+          {#if entry.condition}
+            <div class="flex items-center gap-2 flex-wrap border-l-2 border-amber-700 pl-3">
+              <DragHandle attachHandle={sortable.attachHandle} />
+              <span class="text-xs text-amber-400 font-mono">IF</span>
+              <FieldSelector
+                value={entry.condition.key}
+                onChange={(v) => updateConditionField(idx, 'key', v)}
+              />
+              <OperatorSelector
+                fieldType={getFieldType($metadataFields, entry.condition.key)}
+                value={entry.condition.op}
+                onChange={(v) => updateConditionField(idx, 'op', v)}
+              />
+              <ValueInput
+                fieldKey={entry.condition.key}
+                fieldType={getFieldType($metadataFields, entry.condition.key)}
+                operator={entry.condition.op}
+                value={entry.condition.value}
+                onChange={(v) => updateConditionField(idx, 'value', v)}
+              />
+              <select
+                value={entry.direction || 'asc'}
+                onchange={(e) => updateSort(idx, 'direction', e.target.value)}
+                class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+              >
+                <option value="asc">true first</option>
+                <option value="desc">false first</option>
+              </select>
+              <button
+                class="text-gray-500 hover:text-red-400 px-1"
+                onclick={() => removeEntry(idx)}
+              >x</button>
+            </div>
+          {:else}
+            <div class="flex items-center gap-2 flex-wrap">
+              <DragHandle attachHandle={sortable.attachHandle} />
+              <FieldSelector
+                value={entry.key || ''}
+                onChange={(v) => updateSort(idx, 'key', v)}
+              />
 
-        {#if entry.direction !== undefined}
-          <select
-            value={entry.direction}
-            onchange={(e) => updateSort(idx, 'direction', e.target.value)}
-            class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
-          >
-            <option value="asc">Ascending</option>
-            <option value="desc">Descending</option>
-          </select>
-        {:else if entry.order}
-          <div class="flex flex-wrap gap-1">
-            {#each entry.order as v}
-              <span class="px-2 py-1 text-xs bg-gray-700 text-gray-300 rounded">{v}</span>
-            {/each}
-          </div>
-        {/if}
+              {#if entry.direction !== undefined}
+                <select
+                  value={entry.direction}
+                  onchange={(e) => updateSort(idx, 'direction', e.target.value)}
+                  class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="asc">Ascending</option>
+                  <option value="desc">Descending</option>
+                </select>
+              {:else if entry.order}
+                <div class="flex flex-wrap gap-1">
+                  {#each entry.order as v}
+                    <span class="px-2 py-1 text-xs bg-gray-700 text-gray-300 rounded">{v}</span>
+                  {/each}
+                </div>
+              {/if}
 
-        <button
-          class="text-xs text-gray-500 hover:text-gray-300 px-1"
-          onclick={() => toggleSortMode(idx)}
-          title="Toggle direction/custom order"
-        >
-          {entry.direction !== undefined ? '[]' : '↕'}
-        </button>
-        <button
-          class="text-xs text-gray-500 hover:text-gray-300 px-1"
-          onclick={() => moveUp(idx)}
-          disabled={idx === 0}
-        >^</button>
-        <button
-          class="text-xs text-gray-500 hover:text-gray-300 px-1"
-          onclick={() => moveDown(idx)}
-          disabled={idx >= criteria.length - 1}
-        >v</button>
-        <button
-          class="text-gray-500 hover:text-red-400 px-1"
-          onclick={() => removeEntry(idx)}
-        >x</button>
-      </div>
+              <button
+                class="text-xs text-gray-500 hover:text-gray-300 px-1"
+                onclick={() => toggleSortMode(idx)}
+                title="Toggle direction/custom order"
+              >
+                {entry.direction !== undefined ? '[]' : '↕'}
+              </button>
+              <button
+                class="text-gray-500 hover:text-red-400 px-1"
+                onclick={() => removeEntry(idx)}
+              >x</button>
+            </div>
+          {/if}
+        {/snippet}
+      </SortableItem>
+    {/each}
+
+    <div class="flex gap-2">
+      <button
+        class="text-sm text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
+        onclick={addSort}
+      >
+        + Sort
+      </button>
+      <button
+        class="text-sm text-amber-400 hover:text-amber-300 flex items-center gap-1"
+        onclick={addCondition}
+      >
+        + IF condition
+      </button>
+    </div>
+
+    {#if formatSummary()}
+      <p class="text-xs text-gray-500 mt-2">
+        Preview: <span class="text-gray-400">{formatSummary()}</span>
+      </p>
     {/if}
-  {/each}
-
-  <div class="flex gap-2">
-    <button
-      class="text-sm text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
-      onclick={addSort}
-    >
-      + Sort
-    </button>
-    <button
-      class="text-sm text-amber-400 hover:text-amber-300 flex items-center gap-1"
-      onclick={addCondition}
-    >
-      + IF condition
-    </button>
   </div>
-
-  {#if formatSummary()}
-    <p class="text-xs text-gray-500 mt-2">
-      Preview: <span class="text-gray-400">{formatSummary()}</span>
-    </p>
-  {/if}
-</div>
+</SortableTree>

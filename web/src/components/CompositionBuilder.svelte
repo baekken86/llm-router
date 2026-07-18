@@ -2,6 +2,10 @@
   import ConditionBuilder from './ConditionBuilder.svelte';
   import SortBuilder from './SortBuilder.svelte';
   import CompositionBuilder from './CompositionBuilder.svelte';
+  import SortableTree from './SortableTree.svelte';
+  import SortableItem from './SortableItem.svelte';
+  import DragHandle from './DragHandle.svelte';
+  import { assignStableIds } from '../lib/treeUtils.js';
   import { apiFetch } from '../lib/api.js';
   import { onMount } from 'svelte';
 
@@ -107,6 +111,25 @@
     emit();
   }
 
+  function ensureSourceIds() {
+    if (!node.sources) return;
+    for (const s of node.sources) {
+      if (!s.__id) assignStableIds(s);
+    }
+  }
+
+  function handleDragEnd(event) {
+    const { operation } = event;
+    const fromIdx = operation.source?.index;
+    const toIdx = operation.target?.index;
+    if (fromIdx === toIdx || fromIdx == null || toIdx == null) return;
+    const next = [...node.sources];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    node.sources = next;
+    emit();
+  }
+
   const opColors = {
     union: 'border-l-blue-500',
     intersection: 'border-l-green-500',
@@ -198,24 +221,41 @@
     </div>
 
     <!-- Nested sources -->
-    <div class="space-y-2">
-      {#if node.sources}
-        {#each node.sources as source, idx}
-          <div class="relative">
-            <div class="absolute left-0 top-0 bottom-0 w-px bg-gray-700"></div>
-            <div class="pl-3">
-              <CompositionBuilder node={source} allVMs={availableVMs} onChange={(childNode) => handleSourceChange(idx, childNode)} />
-            </div>
-            <button
-              class="absolute -left-1 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full {canRemoveSource() ? 'bg-gray-700 text-gray-400 hover:bg-red-900 hover:text-red-300' : 'bg-gray-800 text-gray-700 cursor-not-allowed'} text-xs flex items-center justify-center"
-              onclick={() => canRemoveSource() && removeSource(idx)}
-              disabled={!canRemoveSource()}
-              title={canRemoveSource() ? 'Remove source' : 'Minimum 2 sources required'}
-            >&times;</button>
-          </div>
-        {/each}
-      {/if}
-    </div>
+    {#if node.sources}
+      {@const _ = ensureSourceIds()}
+      <SortableTree onDragEnd={handleDragEnd}>
+        <div class="space-y-2">
+          {#each node.sources as source, idx (source.__id || idx)}
+            <SortableItem
+              id={source.__id || `comp-src-${idx}`}
+              index={idx}
+              group={`comp-${node.__id || 'root'}`}
+              data={{ type: 'comp-source', idx }}
+            >
+              {#snippet children(sortable)}
+                <div class="relative">
+                  <div class="absolute left-0 top-0 bottom-0 w-px bg-gray-700"></div>
+                  <div class="pl-3 flex items-start gap-1">
+                    {#if node.sources.length > 1}
+                      <DragHandle attachHandle={sortable.attachHandle} />
+                    {/if}
+                    <div class="flex-1 min-w-0">
+                      <CompositionBuilder node={source} allVMs={availableVMs} onChange={(childNode) => handleSourceChange(idx, childNode)} />
+                    </div>
+                    <button
+                      class="shrink-0 self-center w-4 h-4 rounded-full {canRemoveSource() ? 'bg-gray-700 text-gray-400 hover:bg-red-900 hover:text-red-300' : 'bg-gray-800 text-gray-700 cursor-not-allowed'} text-xs flex items-center justify-center"
+                      onclick={() => canRemoveSource() && removeSource(idx)}
+                      disabled={!canRemoveSource()}
+                      title={canRemoveSource() ? 'Remove source' : 'Minimum 2 sources required'}
+                    >&times;</button>
+                  </div>
+                </div>
+              {/snippet}
+            </SortableItem>
+          {/each}
+        </div>
+      </SortableTree>
+    {/if}
 
     <!-- Add source buttons -->
     <div class="flex gap-2 ml-3">

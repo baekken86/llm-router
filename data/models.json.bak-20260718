@@ -212,6 +212,7 @@
       "cost_per_1m_output": 50.0,
       "has_reasoning_effort": false
     },
+
     {
       "name": "claude-instant",
       "intelligence": 2.0,
@@ -397,6 +398,14 @@
     {
       "name": "command-r-(mar)",
       "intelligence": 2.0,
+      "has_reasoning_effort": false
+    },
+    {
+      "name": "composer-2.5",
+      "has_reasoning_effort": false
+    },
+    {
+      "name": "composer-2.5-fast",
       "has_reasoning_effort": false
     },
     {
@@ -682,6 +691,10 @@
       "has_reasoning_effort": false
     },
     {
+      "name": "fable-5-(max)-(with-fallback)",
+      "has_reasoning_effort": false
+    },
+    {
       "name": "falcon-h1r-7b",
       "intelligence": 10.0,
       "hallucination": 89.0,
@@ -811,6 +824,10 @@
     {
       "name": "gemini-2.5-pro-(may)",
       "intelligence": 22.0,
+      "has_reasoning_effort": false
+    },
+    {
+      "name": "gemini-3-deep-think",
       "has_reasoning_effort": false
     },
     {
@@ -982,6 +999,10 @@
       "has_reasoning_effort": false
     },
     {
+      "name": "gemma-4-26b-a4b<span-class=",
+      "has_reasoning_effort": false
+    },
+    {
       "name": "gemma-4-31b",
       "intelligence": 22.0,
       "coding": 33.2,
@@ -990,6 +1011,10 @@
       "speed": 35.0,
       "cost_per_1m_input": 0.12,
       "cost_per_1m_output": 0.35,
+      "has_reasoning_effort": false
+    },
+    {
+      "name": "gemma-4-31b-(free)",
       "has_reasoning_effort": false
     },
     {
@@ -1632,6 +1657,10 @@
       "has_reasoning_effort": false
     },
     {
+      "name": "gpt-5.6-luna-(none)",
+      "has_reasoning_effort": false
+    },
+    {
       "name": "gpt-5.6-sol",
       "cost_per_1m_input": 5.0,
       "cost_per_1m_output": 30.0,
@@ -1692,6 +1721,10 @@
       "speed": 31.0,
       "cost_per_1m_input": 5.0,
       "cost_per_1m_output": 30.0,
+      "has_reasoning_effort": false
+    },
+    {
+      "name": "gpt-5.6-sol-(none)",
       "has_reasoning_effort": false
     },
     {
@@ -1758,6 +1791,10 @@
       "has_reasoning_effort": false
     },
     {
+      "name": "gpt-5.6-terra-(none)",
+      "has_reasoning_effort": false
+    },
+    {
       "name": "gpt-oss-120b",
       "cost_per_1m_input": 0.036,
       "cost_per_1m_output": 0.18,
@@ -1779,6 +1816,10 @@
           "cost_per_1m_output": 0.18
         }
       }
+    },
+    {
+      "name": "gpt-oss-120b-(free)",
+      "has_reasoning_effort": false
     },
     {
       "name": "gpt-oss-20b",
@@ -1803,6 +1844,10 @@
           "cost_per_1m_output": 0.14
         }
       }
+    },
+    {
+      "name": "gpt-oss-20b-(free)",
+      "has_reasoning_effort": false
     },
     {
       "name": "granite-3.3-8b",

@@ -25,6 +25,8 @@ func NewRouter(
 	oauthHandler *handlers.OAuthHandler,
 	metadataHandler *handlers.MetadataHandler,
 	statusHandler *handlers.StatusHandler,
+	syslogHandler *handlers.SyslogHandler,
+	settingsHandler *handlers.SettingsHandler,
 	keyService service.KeyService,
 	adminService service.AdminService,
 	adminHandler *handlers.AdminHandler,
@@ -73,6 +75,14 @@ func NewRouter(
 
 		r.Route("/metadata", func(r chi.Router) {
 			r.Get("/fields", metadataHandler.GetFields)
+		})
+
+		r.Route("/syslog", func(r chi.Router) {
+			r.Mount("/", syslogHandler.Routes())
+		})
+
+		r.Route("/settings", func(r chi.Router) {
+			r.Mount("/", settingsHandler.Routes())
 		})
 	})
 

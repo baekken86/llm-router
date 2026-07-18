@@ -1,0 +1,120 @@
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"sync"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/chris/llm-router/internal/config"
+	"github.com/chris/llm-router/internal/proxy"
+)
+
+type SettingsHandler struct {
+	cfg    *config.Config
+	engine *proxy.Engine
+	mu     sync.Mutex
+}
+
+func NewSettingsHandler(cfg *config.Config, engine *proxy.Engine) *SettingsHandler {
+	return &SettingsHandler{cfg: cfg, engine: engine}
+}
+
+func (h *SettingsHandler) Routes() chi.Router {
+	r := chi.NewRouter()
+	r.Get("/", h.GetSettings)
+	r.Put("/", h.UpdateSettings)
+	return r
+}
+
+type settingsResponse struct {
+	RTKEnabled     bool   `json:"rtk_enabled"`
+	CavemanEnabled bool   `json:"caveman_enabled"`
+	LogLevel       string `json:"log_level"`
+	MaxRetries     int    `json:"max_retries"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	MaxTokens      int    `json:"max_tokens"`
+}
+
+type settingsUpdate struct {
+	RTKEnabled     *bool   `json:"rtk_enabled,omitempty"`
+	CavemanEnabled *bool   `json:"caveman_enabled,omitempty"`
+	LogLevel       *string `json:"log_level,omitempty"`
+	MaxRetries     *int    `json:"max_retries,omitempty"`
+	TimeoutSeconds *int    `json:"timeout_seconds,omitempty"`
+	MaxTokens      *int    `json:"max_tokens,omitempty"`
+}
+
+func (h *SettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
+	s := h.cfg.Get()
+	resp := settingsResponse{
+		RTKEnabled:     s.RTKEnabled,
+		CavemanEnabled: s.CavemanEnabled,
+		LogLevel:       s.LogLevel,
+		MaxRetries:     s.MaxRetries,
+		TimeoutSeconds: s.TimeoutSeconds,
+		MaxTokens:      s.MaxTokens,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func (h *SettingsHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var update settingsUpdate
+	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	s := h.cfg.Get()
+
+	if update.RTKEnabled != nil {
+		s.RTKEnabled = *update.RTKEnabled
+		h.engine.GetRTK().SetEnabled(*update.RTKEnabled)
+	}
+	if update.CavemanEnabled != nil {
+		s.CavemanEnabled = *update.CavemanEnabled
+		h.engine.GetCaveman().SetEnabled(*update.CavemanEnabled)
+	}
+	if update.LogLevel != nil {
+		s.LogLevel = *update.LogLevel
+	}
+	if update.MaxRetries != nil {
+		s.MaxRetries = clampInt(*update.MaxRetries, 0, 10)
+	}
+	if update.TimeoutSeconds != nil {
+		s.TimeoutSeconds = clampInt(*update.TimeoutSeconds, 10, 600)
+	}
+	if update.MaxTokens != nil {
+		s.MaxTokens = clampInt(*update.MaxTokens, 256, 1000000)
+	}
+
+	h.cfg.Set(s)
+	h.engine.ApplySettings(s.MaxRetries, s.TimeoutSeconds, s.MaxTokens)
+
+	resp := settingsResponse{
+		RTKEnabled:     s.RTKEnabled,
+		CavemanEnabled: s.CavemanEnabled,
+		LogLevel:       s.LogLevel,
+		MaxRetries:     s.MaxRetries,
+		TimeoutSeconds: s.TimeoutSeconds,
+		MaxTokens:      s.MaxTokens,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}

@@ -483,6 +483,7 @@ func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey s
 	if rm.Provider.APIType == models.APITypeAnthropic {
 		anthReq := OpenAIToAnthropic(req)
 		anthReq.Model = rm.Model.Name
+		applyReasoningEffortToAnthropic(&anthReq, rm.ReasoningEffort)
 		anthResp, err2 := e.anthropicClient.ChatCompletion(rm.Provider.BaseURL, apiKey, anthReq)
 		if err2 != nil {
 			return nil, nil, err2
@@ -491,6 +492,9 @@ func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey s
 		resp = &result
 	} else {
 		req.Model = rm.Model.Name
+		if rm.ReasoningEffort != "" {
+			req.ReasoningEffort = &rm.ReasoningEffort
+		}
 		resp, err = e.openaiClient.ChatCompletion(rm.Provider.BaseURL, apiKey, req)
 		if err != nil {
 			return nil, nil, err
@@ -517,10 +521,14 @@ func (e *Engine) sendStreamRequest(r *http.Request, rm service.ResolvedModel, ap
 	if rm.Provider.APIType == models.APITypeAnthropic {
 		anthReq := OpenAIToAnthropic(req)
 		anthReq.Model = rm.Model.Name
+		applyReasoningEffortToAnthropic(&anthReq, rm.ReasoningEffort)
 		return e.anthropicClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, anthReq)
 	}
 
 	req.Model = rm.Model.Name
+	if rm.ReasoningEffort != "" {
+		req.ReasoningEffort = &rm.ReasoningEffort
+	}
 	return e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, req)
 }
 
@@ -926,6 +934,7 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 			var lastErr error
 			if rm.Provider.APIType == models.APITypeAnthropic {
 				anthReq.Model = rm.Model.Name
+				applyReasoningEffortToAnthropic(&anthReq, rm.ReasoningEffort)
 				streamBody, _, err := e.anthropicClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, anthReq)
 				if err == nil {
 					w.Header().Set("Content-Type", "text/event-stream")
@@ -1090,4 +1099,22 @@ func (e *Engine) streamOpenAIToAnthropic(w http.ResponseWriter, flusher http.Flu
 		}
 	}
 	return usage
+}
+
+func applyReasoningEffortToAnthropic(req *AnthropicRequest, effort string) {
+	switch effort {
+	case "none":
+		req.Thinking = &AnthropicThinking{Type: "disabled"}
+	case "":
+	case "low":
+		req.Thinking = &AnthropicThinking{Type: "enabled", BudgetTokens: 1024}
+	case "medium":
+		req.Thinking = &AnthropicThinking{Type: "enabled", BudgetTokens: 4096}
+	case "high":
+		req.Thinking = &AnthropicThinking{Type: "enabled", BudgetTokens: 8192}
+	case "max":
+		req.Thinking = &AnthropicThinking{Type: "enabled", BudgetTokens: 16384}
+	default:
+		req.Effort = &effort
+	}
 }

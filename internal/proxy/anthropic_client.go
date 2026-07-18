@@ -50,6 +50,13 @@ type AnthropicRequest struct {
 	Stream    bool               `json:"stream,omitempty"`
 	Tools     []AnthropicTool    `json:"tools,omitempty"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	Thinking  *AnthropicThinking `json:"thinking,omitempty"`
+	Effort    *string            `json:"effort,omitempty"`
+}
+
+type AnthropicThinking struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
 }
 
 type AnthropicMessage struct {

@@ -7,6 +7,11 @@
 
   let { onCreate, onEdit } = $props();
 
+  function handleLink(e, href) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+  }
+
   let vms = $state([]);
   let loading = $state(true);
   let expandedId = $state(null);
@@ -81,12 +86,13 @@
 <div>
   <div class="flex items-center justify-between mb-6">
     <h2 class="text-xl font-bold text-gray-100">Virtual Models</h2>
-    <button
-      class="bg-emerald-600 hover:bg-emerald-700 text-white rounded px-4 py-2 text-sm font-medium"
-      onclick={onCreate}
+    <a
+      href="/virtual/create"
+      class="bg-emerald-600 hover:bg-emerald-700 text-white rounded px-4 py-2 text-sm font-medium no-underline"
+      onclick={(e) => { handleLink(e, '/virtual/create'); if (!e.defaultPrevented) onCreate(); }}
     >
       + Create New
-    </button>
+    </a>
   </div>
 
   {#if loading}
@@ -115,12 +121,13 @@
               </div>
             </div>
             <div class="flex gap-2 ml-4">
-              <button
-                class="text-xs text-gray-400 hover:text-white px-2 py-1"
-                onclick={(e) => { e.stopPropagation(); onEdit(vm.id); }}
+              <a
+                href="/virtual/{vm.id}"
+                class="text-xs text-gray-400 hover:text-white px-2 py-1 no-underline"
+                onclick={(e) => { e.stopPropagation(); handleLink(e, `/virtual/${vm.id}`); if (!e.defaultPrevented) onEdit(vm.id); }}
               >
                 Edit
-              </button>
+              </a>
               <button
                 class="text-xs text-red-400 hover:text-red-300 px-2 py-1"
                 onclick={(e) => { e.stopPropagation(); deleteTarget = vm.id; }}

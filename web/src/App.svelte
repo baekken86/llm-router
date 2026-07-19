@@ -5,6 +5,7 @@
   import VirtualModelList from './components/VirtualModelList.svelte';
   import VirtualModelForm from './components/VirtualModelForm.svelte';
   import RawModelList from './components/RawModelList.svelte';
+  import MappingsTab from './components/MappingsTab.svelte';
   import StatusView from './components/StatusView.svelte';
   import StatsView from './components/StatsView.svelte';
   import LogsView from './components/LogsView.svelte';
@@ -20,6 +21,7 @@
 
   function parsePath(pathname) {
     if (pathname === '/raw') return { tab: 'raw', view: 'list', id: null };
+    if (pathname === '/mappings') return { tab: 'mappings', view: 'list', id: null };
     if (pathname === '/status') return { tab: 'status', view: 'list', id: null };
     if (pathname === '/stats') return { tab: 'stats', view: 'list', id: null };
     if (pathname === '/logs') return { tab: 'logs', view: 'list', id: null };
@@ -35,6 +37,7 @@
 
   function pathFor(tab, view, id) {
     if (tab === 'raw') return '/raw';
+    if (tab === 'mappings') return '/mappings';
     if (tab === 'status') return '/status';
     if (tab === 'stats') return '/stats';
     if (tab === 'logs') return '/logs';
@@ -125,6 +128,13 @@
         Raw Models
       </a>
       <a
+        href="/mappings"
+        class="text-sm no-underline {mainTab === 'mappings' ? 'text-white border-b-2 border-emerald-400 pb-1' : 'text-gray-400 hover:text-white pb-1'}"
+        onclick={(e) => handleTabClick(e, 'mappings')}
+      >
+        Mappings
+      </a>
+      <a
         href="/virtual"
         class="text-sm no-underline {mainTab === 'virtual' ? 'text-white border-b-2 border-emerald-400 pb-1' : 'text-gray-400 hover:text-white pb-1'}"
         onclick={(e) => handleTabClick(e, 'virtual')}
@@ -171,6 +181,8 @@
     <main class="max-w-6xl mx-auto p-6">
       {#if mainTab === 'raw'}
         <RawModelList />
+      {:else if mainTab === 'mappings'}
+        <MappingsTab />
       {:else if mainTab === 'status'}
         <StatusView />
       {:else if mainTab === 'stats'}

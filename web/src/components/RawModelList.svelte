@@ -2,10 +2,13 @@
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/api.js';
   import { addToast } from '../lib/stores.js';
+  import ModelPicker from './ModelPicker.svelte';
 
   let models = $state([]);
   let loading = $state(true);
   let expandedProviders = $state({});
+  let pickerModelId = $state(null);
+  let unmapConfirmId = $state(null);
 
   function abbrevKey(key) {
     const map = {
@@ -68,6 +71,30 @@
     expandedProviders[provider] = !expandedProviders[provider];
   }
 
+  async function createMapping(sourceId, targetId) {
+    try {
+      await apiFetch(`/api/v1/models/${sourceId}/mapping`, {
+        method: 'POST',
+        body: { target_model_id: targetId }
+      });
+      addToast('Mapping created', 'success');
+      await load();
+    } catch (e) {
+      addToast(e.message, 'error');
+    }
+  }
+
+  async function deleteMapping(sourceId) {
+    try {
+      await apiFetch(`/api/v1/models/${sourceId}/mapping`, { method: 'DELETE' });
+      addToast('Mapping deleted', 'success');
+      unmapConfirmId = null;
+      await load();
+    } catch (e) {
+      addToast(e.message, 'error');
+    }
+  }
+
   async function load() {
     loading = true;
     try {
@@ -84,6 +111,14 @@
 
   onMount(() => { load(); });
 </script>
+
+{#if pickerModelId !== null}
+  <ModelPicker
+    excludeModelId={pickerModelId}
+    onSelect={(targetId) => createMapping(pickerModelId, targetId)}
+    onClose={() => pickerModelId = null}
+  />
+{/if}
 
 <div>
   <div class="flex items-center justify-between mb-6">
@@ -116,6 +151,7 @@
                   <thead>
                     <tr class="text-gray-500 border-b border-gray-800">
                       <th class="text-left pr-3 py-1">model</th>
+                      <th class="text-left pr-3 py-1">mapping</th>
                       {#each columns as col}
                         <th class="text-right pr-3 py-1">{col.abbrev}</th>
                       {/each}
@@ -125,6 +161,35 @@
                     {#each grouped[provider] as m}
                       <tr class="border-b border-gray-850 hover:bg-gray-850/50">
                         <td class="text-left pr-3 py-1 text-emerald-400">{m.name}</td>
+                        <td class="text-left pr-3 py-1">
+                          {#if m.mapping_target_id}
+                            <span class="inline-flex items-center gap-1">
+                              <span class="text-xs bg-blue-900/50 text-blue-300 px-2 py-0.5 rounded">
+                                → {m.mapping_target_name}
+                              </span>
+                              {#if unmapConfirmId === m.id}
+                                <button
+                                  class="text-xs text-red-400 hover:text-red-300"
+                                  onclick={() => deleteMapping(m.id)}
+                                >Yes</button>
+                                <button
+                                  class="text-xs text-gray-500 hover:text-gray-300"
+                                  onclick={() => unmapConfirmId = null}
+                                >No</button>
+                              {:else}
+                                <button
+                                  class="text-xs text-gray-500 hover:text-red-400"
+                                  onclick={() => unmapConfirmId = m.id}
+                                >✕</button>
+                              {/if}
+                            </span>
+                          {:else}
+                            <button
+                              class="text-xs text-gray-600 hover:text-emerald-400"
+                              onclick={() => pickerModelId = m.id}
+                            >🔗 map</button>
+                          {/if}
+                        </td>
                         {#each columns as col}
                           <td class="text-right pr-3 py-1 text-gray-300">{getTagValue(m, col.key)}</td>
                         {/each}

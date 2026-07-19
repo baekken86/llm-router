@@ -113,9 +113,10 @@ Admin flags:
 
 Add-provider flags:
   --name string                   Provider name (required)
-  --type string                   API type: openai or anthropic (auto-detected)
-  --url string                    Base URL (required)
-  --key string                    API key (required)
+  --type string                   API type: openai, anthropic, cloudflare, or ollama (default openai)
+  --url string                    Base URL (required for non-ollama)
+  --key string                    API key (required; not needed for local ollama)
+  --host string                   Ollama host (default localhost:11434)
 
 Tag flags:
   --model string                  Model name (required)

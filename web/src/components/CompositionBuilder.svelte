@@ -9,7 +9,14 @@
   import { apiFetch } from '../lib/api.js';
   import { onMount } from 'svelte';
 
-  let { node = $bindable(), allVMs = [], onChange } = $props();
+  let {
+    node = $bindable(),
+    allVMs = [],
+    onChange,
+    group = 'comp-default',
+    currentPath = [],
+    onCrossContainerMove = null,
+  } = $props();
 
   let availableVMs = $state([]);
   let loadingVMs = $state(false);
@@ -137,6 +144,21 @@
 
   function handleDragEnd(event) {
     const { operation } = event;
+
+    // Check for cross-container move (canvas-level integration)
+    const targetData = operation.target?.data;
+    const sourceData = operation.source?.data;
+    if (onCrossContainerMove && targetData?.parentId !== undefined && sourceData?.parentId !== undefined) {
+      if (targetData.parentId !== sourceData.parentId) {
+        const targetIdx = targetData.path?.length > 0
+          ? targetData.path[targetData.path.length - 1]
+          : operation.target?.index ?? 0;
+        onCrossContainerMove(sourceData.__id, targetData.parentId, targetIdx);
+        return;
+      }
+    }
+
+    // Standard local reorder (existing behavior)
     const fromIdx = operation.source?.index;
     const toIdx = operation.target?.index;
     if (fromIdx === toIdx || fromIdx == null || toIdx == null) return;
@@ -285,7 +307,7 @@
               id={source.__id || `comp-src-${idx}`}
               index={idx}
               group={`comp-${node.__id || 'root'}`}
-              data={{ type: 'comp-source', idx }}
+              data={{ type: 'comp-source', idx, path: currentPath, parentId: node.__id || null }}
             >
               {#snippet children(sortable)}
                 <div class="relative">
@@ -295,7 +317,7 @@
                       <DragHandle attachHandle={sortable.attachHandle} />
                     {/if}
                     <div class="flex-1 min-w-0">
-                      <CompositionBuilder node={source} allVMs={availableVMs} onChange={(childNode) => handleSourceChange(idx, childNode)} />
+                      <CompositionBuilder node={source} allVMs={availableVMs} onChange={(childNode) => handleSourceChange(idx, childNode)} group={group} currentPath={[...currentPath, node.__id]} onCrossContainerMove={onCrossContainerMove} />
                     </div>
                     <button
                       class="shrink-0 self-center w-4 h-4 rounded-full {canRemoveSource() ? 'bg-gray-700 text-gray-400 hover:bg-red-900 hover:text-red-300' : 'bg-gray-800 text-gray-700 cursor-not-allowed'} text-xs flex items-center justify-center"

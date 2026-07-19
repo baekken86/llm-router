@@ -2,8 +2,6 @@
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/api.js';
   import { addToast } from '../lib/stores.js';
-  import ConditionBuilder from './ConditionBuilder.svelte';
-  import SortBuilder from './SortBuilder.svelte';
   import CompositionBuilder from './CompositionBuilder.svelte';
   import ResolvedPreview from './ResolvedPreview.svelte';
 
@@ -11,9 +9,6 @@
 
   let name = $state('');
   let description = $state('');
-  let mode = $state('leaf'); // 'leaf' or 'composite'
-  let filterNode = $state({ and: [] });
-  let sortCriteria = $state([]);
   let compositionNode = $state({ vm: '' });
   let includeModels = $state([]);
   let maxRetries = $state(0);
@@ -33,16 +28,13 @@
       retryOnStatus = vm.retry_on_status || [429, 500, 502, 503];
 
       if (vm.composition) {
-        mode = 'composite';
         compositionNode = vm.composition;
-      } else {
-        mode = 'leaf';
-        if (vm.filter_expr && (vm.filter_expr.and || vm.filter_expr.or)) {
-          filterNode = vm.filter_expr;
-        }
-        if (vm.sort_expr && Array.isArray(vm.sort_expr)) {
-          sortCriteria = vm.sort_expr;
-        }
+      } else if (vm.filter_expr && (vm.filter_expr.and || vm.filter_expr.or || vm.filter_expr.key)) {
+        // Auto-convert leaf VM to composition tree on edit
+        compositionNode = {
+          filter_expr: vm.filter_expr,
+          sort_expr: vm.sort_expr || []
+        };
       }
       if (vm.include_models && Array.isArray(vm.include_models)) {
         includeModels = vm.include_models;
@@ -54,43 +46,24 @@
     }
   }
 
-  function isEmptyNode(n) {
-    if (!n) return true;
-    if (n.key) return false;
-    if (n.and) return n.and.length === 0 || n.and.every(isEmptyNode);
-    if (n.or) return n.or.length === 0 || n.or.every(isEmptyNode);
-    if (n.not) return isEmptyNode(n.not);
-    return true;
-  }
-
-  function buildFilterExpr() {
-    if (isEmptyNode(filterNode)) return {};
-    return filterNode;
-  }
-
-  function buildSortExpr() {
-    return sortCriteria.filter(c => c.key || c.condition);
-  }
-
   function isValidComposition(node) {
     if (!node) return false;
     if (node.vm) return node.vm !== '';
     if (node.operation) {
       return node.sources && node.sources.length >= 2 && node.sources.every(isValidComposition);
     }
+    // Filter source — filter_expr must be set
+    if (node.filter_expr) return true;
     return false;
   }
-
-  const memoizedFilterExpr = $derived(buildFilterExpr());
-  const memoizedSortExpr = $derived(buildSortExpr());
 
   async function handleSubmit() {
     if (!name.trim()) {
       addToast('Name is required', 'error');
       return;
     }
-    if (mode === 'composite' && !isValidComposition(compositionNode)) {
-      addToast('Composition must have at least 2 sources with VMs selected', 'error');
+    if (!isValidComposition(compositionNode)) {
+      addToast('Composition must have at least 2 sources with VMs selected, or a valid filter source', 'error');
       return;
     }
     saving = true;
@@ -100,15 +73,9 @@
         description: description.trim(),
         max_retries: maxRetries,
         retry_on_status: retryOnStatus,
-        include_models: includeModels
+        include_models: includeModels,
+        composition: compositionNode
       };
-
-      if (mode === 'composite') {
-        body.composition = compositionNode;
-      } else {
-        body.filter_expr = buildFilterExpr();
-        body.sort_expr = buildSortExpr();
-      }
 
       let result;
       if (vmId) {
@@ -118,7 +85,7 @@
         });
         addToast('Updated', 'success');
       } else {
-        result = await apiFetch('/api/v1/virtual-models', {
+        result = await apiFetch('/api/virtual-models', {
           method: 'POST',
           body
         });
@@ -176,45 +143,12 @@
         ></textarea>
       </div>
 
-      <!-- Mode toggle -->
       <div>
-        <label class="block text-sm text-gray-400 mb-2">Mode</label>
-        <div class="flex gap-2">
-          <button
-            type="button"
-            class="px-4 py-2 text-sm rounded border {mode === 'leaf' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'}"
-            onclick={() => mode = 'leaf'}
-          >Leaf (Filter/Sort)</button>
-          <button
-            type="button"
-            class="px-4 py-2 text-sm rounded border {mode === 'composite' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'}"
-            onclick={() => mode = 'composite'}
-          >Composite (Combine VMs)</button>
+        <label class="block text-sm text-gray-400 mb-2">Composition</label>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+          <CompositionBuilder bind:node={compositionNode} />
         </div>
       </div>
-
-      {#if mode === 'leaf'}
-        <div>
-          <label class="block text-sm text-gray-400 mb-2">Filter Conditions</label>
-          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-            <ConditionBuilder node={filterNode} onChange={(v) => filterNode = v || { and: [] }} />
-          </div>
-        </div>
-
-        <div>
-          <label class="block text-sm text-gray-400 mb-2">Sort Criteria</label>
-          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-            <SortBuilder criteria={sortCriteria} onChange={(v) => sortCriteria = v} />
-          </div>
-        </div>
-      {:else}
-        <div>
-          <label class="block text-sm text-gray-400 mb-2">Composition</label>
-          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-            <CompositionBuilder bind:node={compositionNode} />
-          </div>
-        </div>
-      {/if}
 
       <div class="grid grid-cols-2 gap-4">
         <div>
@@ -266,11 +200,7 @@
       <h3 class="text-sm font-medium text-gray-300 mb-3">
         Resolved Models <span class="text-gray-500 text-xs">(live preview)</span>
       </h3>
-      {#if mode === 'leaf'}
-        <ResolvedPreview previewMode={true} filterExpr={memoizedFilterExpr} sortExpr={memoizedSortExpr} />
-      {:else}
-        <ResolvedPreview previewMode={true} composition={compositionNode} />
-      {/if}
+      <ResolvedPreview previewMode={true} composition={compositionNode} />
     </div>
   {/if}
 </div>

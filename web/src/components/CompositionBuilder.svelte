@@ -77,6 +77,8 @@
   function switchToVMRef() {
     delete node.operation;
     delete node.sources;
+    delete node.filter_expr;
+    delete node.sort_expr;
     node.vm = '';
     emit();
   }
@@ -85,6 +87,21 @@
     delete node.vm;
     node.operation = 'union';
     node.sources = [{ vm: '' }, { vm: '' }];
+    emit();
+  }
+
+  function switchToFilterSource() {
+    delete node.vm;
+    delete node.operation;
+    delete node.sources;
+    node.filter_expr = { and: [] };
+    node.sort_expr = [];
+    emit();
+  }
+
+  function addFilterSource() {
+    if (!node.sources) node.sources = [];
+    node.sources.push({ filter_expr: { and: [] }, sort_expr: [] });
     emit();
   }
 
@@ -143,7 +160,45 @@
   };
 </script>
 
-{#if node.vm !== undefined && !node.operation}
+{#if node.filter_expr !== undefined && !node.vm && !node.operation}
+  <!-- Inline Filter Source node -->
+  <div class="border-l-2 border-l-amber-500 pl-3 space-y-2">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-amber-400 text-xs font-medium">Filter Source</span>
+      <button
+        class="text-xs text-gray-500 hover:text-emerald-400 px-1"
+        onclick={() => { expandedFilter = !expandedFilter; }}
+        title="Toggle filter"
+      >F</button>
+      <button
+        class="text-xs text-gray-500 hover:text-blue-400 px-1"
+        onclick={() => { expandedSort = !expandedSort; }}
+        title="Toggle sort"
+      >S</button>
+      <button
+        class="text-xs text-gray-600 hover:text-emerald-400"
+        onclick={() => switchToVMRef()}
+        title="Convert to VM reference"
+      >{String.fromCharCode(0x2192)}ref</button>
+      <button
+        class="text-xs text-gray-600 hover:text-blue-400"
+        onclick={() => switchToOp()}
+        title="Convert to operation node"
+      >{String.fromCharCode(0x2192)}op</button>
+    </div>
+    {#if expandedFilter}
+      <div class="ml-4 mt-1 bg-gray-850 rounded p-2 border border-gray-800">
+        <ConditionBuilder node={node.filter_expr || { and: [] }} onChange={(v) => updateNodeFilter(v)} />
+      </div>
+    {/if}
+    {#if expandedSort}
+      <div class="ml-4 mt-1 bg-gray-850 rounded p-2 border border-gray-800">
+        <SortBuilder criteria={node.sort_expr || []} onChange={(v) => updateNodeSort(v)} />
+      </div>
+    {/if}
+  </div>
+
+{:else if node.vm !== undefined && !node.operation}
   <!-- VM Reference node -->
   <div class="flex items-center gap-2 bg-gray-800 rounded px-3 py-2 text-sm border border-gray-700">
     <span class="text-gray-500 text-xs">ref</span>
@@ -267,6 +322,10 @@
         class="text-xs text-gray-500 hover:text-blue-400 border border-gray-700 rounded px-2 py-1 hover:border-blue-600"
         onclick={addNestedOp}
       >+ Nested Op</button>
+      <button
+        class="text-xs text-amber-500 hover:text-amber-400 border border-gray-700 rounded px-2 py-1 hover:border-amber-600"
+        onclick={addFilterSource}
+      >+ Filter Source</button>
     </div>
 
     {#if expandedFilter}

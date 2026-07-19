@@ -1,0 +1,53 @@
+{
+  "id": "ADR-007",
+  "title": "Model Mapping System",
+  "status": "proposed",
+  "supersedes": ["ADR-006"],
+  "date": "2026-07-19",
+  "context": "Cloudflare Workers AI model IDs use @cf/Provider/model format. ADR-006 implemented prefix-strip alias in GetByModel lookup. This is fragile: suffix variations (-it, -instruct) still cause mismatches, and users have no visibility into why metadata is missing or how to fix it. A user-managed mapping approach allows explicit declaration that one model is identical to another.",
+  "decisions": [
+    {
+      "id": "D1",
+      "question": "How should users resolve metadata for non-matching model names?",
+      "answer": "Explicit model-to-model mapping table. Users create mappings via TUI or Web UI declaring that source model inherits target model's tags. Resolution uses live reference (redirects queries to target), not snapshot copy."
+    },
+    {
+      "id": "D2",
+      "question": "What happens to source model's own tags when mapped?",
+      "answer": "Source tags are entirely hidden while mapped. The model presents only target tags. Unmapping restores source tags."
+    },
+    {
+      "id": "D3",
+      "question": "Where do mappings appear in UI?",
+      "answer": "Dedicated Mappings tab in both TUI and Web UI showing all mappings as a table. Also inline in Raw model lists: action button to create mapping, badge showing current target."
+    }
+  ],
+  "alternatives": [
+    {
+      "id": "A1",
+      "description": "Enhanced prefix-strip with suffix normalization (ADR-006)",
+      "status": "rejected",
+      "reason": "Heuristic normalization is fragile, opaque, and doesn't scale to other providers like Ollama."
+    },
+    {
+      "id": "A2",
+      "description": "Snapshot copy at mapping time",
+      "status": "rejected",
+      "reason": "User wants live reference so target metadata changes propagate immediately to all mapped sources."
+    },
+    {
+      "id": "A3",
+      "description": "Auto-discover matching canonical names via fuzzy match",
+      "status": "rejected",
+      "reason": "Wrong matches possible, requires training data, opaque to users."
+    }
+  ],
+  "consequences": [
+    "Users can manually resolve any model name mismatch, not just Cloudflare patterns",
+    "Mappings survive provider re-creation if model IDs stay stable",
+    "TUI and Web UI both need new views and model interactions",
+    "New migration adds model_mappings table",
+    "ADR-006 prefix-strip removed from codebase",
+    "Extensible to other providers (Ollama, custom) without code changes"
+  ]
+}

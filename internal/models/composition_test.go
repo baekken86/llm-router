@@ -73,9 +73,9 @@ func TestValidateCompositionNode(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "empty node is invalid",
+			name:    "empty node is valid (all models source)",
 			node:    &CompositionNode{},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "both vm and operation",
@@ -304,31 +304,40 @@ func TestCompositionJSONRoundtrip(t *testing.T) {
 	if parsed.Sources[1].Vm != "anthropic-only" {
 		t.Errorf("Sources[1].Vm = %q, want %q", parsed.Sources[1].Vm, "anthropic-only")
 	}
+
+	// Verify new-format "collection" key also works
+	var parsed2 CompositionNode
+	if err := json.Unmarshal([]byte(`{"collection":"my-vm","filter_expr":{"key":"mc.coding","op":"gte","value":8}}`), &parsed2); err != nil {
+		t.Fatalf("Unmarshal new format: %v", err)
+	}
+	if parsed2.Vm != "my-vm" {
+		t.Errorf("Vm = %q, want my-vm", parsed2.Vm)
+	}
 	if parsed.FilterExpr == nil || parsed.FilterExpr.Key != "mc.coding" {
 		t.Errorf("FilterExpr.Key = %v, want mc.coding", parsed.FilterExpr)
 	}
 }
 
-func TestIsFilterSource(t *testing.T) {
+func TestIsSource(t *testing.T) {
 	tests := []struct {
 		name string
 		node *CompositionNode
 		want bool
 	}{
 		{
-			name: "filter source",
+			name: "filter source (all models)",
 			node: &CompositionNode{FilterExpr: &FilterNode{Key: "mc.coding", Op: "gte", Value: float64(8)}},
 			want: true,
 		},
 		{
-			name: "vm ref",
+			name: "vm ref (source with collection)",
 			node: &CompositionNode{Vm: "a"},
-			want: false,
+			want: true,
 		},
 		{
 			name: "vm ref with post-filter",
 			node: &CompositionNode{Vm: "a", FilterExpr: &FilterNode{Key: "x", Op: "eq", Value: "y"}},
-			want: false,
+			want: true,
 		},
 		{
 			name: "operation",
@@ -336,16 +345,16 @@ func TestIsFilterSource(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "empty node",
+			name: "empty node (all models, no filter)",
 			node: &CompositionNode{},
-			want: false,
+			want: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.node.IsFilterSource()
+			got := tt.node.IsSource()
 			if got != tt.want {
-				t.Errorf("IsFilterSource() = %v, want %v", got, tt.want)
+				t.Errorf("IsSource() = %v, want %v", got, tt.want)
 			}
 		})
 	}

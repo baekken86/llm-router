@@ -378,46 +378,45 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 
 // evaluateCompositionNode recursively resolves a composition tree node.
 func (s *virtualModelService) evaluateCompositionNode(ctx context.Context, node *models.CompositionNode, stack map[string]bool) ([]ResolvedModel, error) {
-	if node.IsVMRef() {
-		return s.resolveVMRef(ctx, node, stack)
-	}
 	if node.IsOperation() {
 		return s.resolveOperation(ctx, node, stack)
 	}
-	if node.IsFilterSource() {
-		return s.resolveFilterSource(ctx, node)
-	}
-	return nil, fmt.Errorf("composition node must have vm, operation, or filter_expr")
+	return s.resolveSource(ctx, node, stack)
 }
 
-// resolveFilterSource resolves an inline filter source node by querying all models and applying the node's filter+sort.
-func (s *virtualModelService) resolveFilterSource(ctx context.Context, node *models.CompositionNode) ([]ResolvedModel, error) {
-	var filter models.FilterNode
-	if node.FilterExpr != nil {
-		filter = *node.FilterExpr
-	}
-	return s.resolveModelsFiltered(ctx, filter, node.SortExpr, nil)
-}
+// resolveSource resolves a source node. If Vm is set, it resolves that VM's result set
+// (with circular detection). If Vm is empty, it queries all raw models.
+// Then applies per-node filter and sort.
+func (s *virtualModelService) resolveSource(ctx context.Context, node *models.CompositionNode, stack map[string]bool) ([]ResolvedModel, error) {
+	var result []ResolvedModel
+	var err error
 
-// resolveVMRef resolves a VM reference node, then applies its filter/sort.
-func (s *virtualModelService) resolveVMRef(ctx context.Context, node *models.CompositionNode, stack map[string]bool) ([]ResolvedModel, error) {
-	if stack[node.Vm] {
-		return nil, fmt.Errorf("circular reference detected: %s", node.Vm)
-	}
+	if node.Vm != "" {
+		// Source from a specific VM's result set
+		if stack[node.Vm] {
+			return nil, fmt.Errorf("circular reference detected: %s", node.Vm)
+		}
 
-	sourceVM, err := s.vmRepo.GetByName(ctx, node.Vm)
-	if err != nil {
-		return nil, fmt.Errorf("resolve VM %q: %w", node.Vm, err)
-	}
-	if sourceVM == nil {
-		return nil, fmt.Errorf("virtual model not found: %s", node.Vm)
-	}
+		sourceVM, err := s.vmRepo.GetByName(ctx, node.Vm)
+		if err != nil {
+			return nil, fmt.Errorf("resolve VM %q: %w", node.Vm, err)
+		}
+		if sourceVM == nil {
+			return nil, fmt.Errorf("virtual model not found: %s", node.Vm)
+		}
 
-	stack[node.Vm] = true
-	result, err := s.ResolveModels(ctx, sourceVM)
-	delete(stack, node.Vm)
-	if err != nil {
-		return nil, fmt.Errorf("resolve VM %q: %w", node.Vm, err)
+		stack[node.Vm] = true
+		result, err = s.ResolveModels(ctx, sourceVM)
+		delete(stack, node.Vm)
+		if err != nil {
+			return nil, fmt.Errorf("resolve VM %q: %w", node.Vm, err)
+		}
+	} else {
+		// Source from all raw models
+		result, err = s.resolveModelsFiltered(ctx, models.FilterNode{}, nil, nil)
+		if err != nil {
+			return nil, fmt.Errorf("list models: %w", err)
+		}
 	}
 
 	// Apply per-node filter
@@ -956,9 +955,9 @@ func validateCompositionFilterSources(node *models.CompositionNode) error {
 	if node == nil {
 		return nil
 	}
-	if node.IsFilterSource() {
+	if node.FilterExpr != nil {
 		if err := validateFilterNode(node.FilterExpr); err != nil {
-			return fmt.Errorf("filter source filter_expr: %w", err)
+			return fmt.Errorf("filter_expr: %w", err)
 		}
 	}
 	for i := range node.Sources {

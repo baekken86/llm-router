@@ -110,19 +110,39 @@ type IncludeModelRef struct {
 }
 
 // CompositionNode is a recursive tree node for composing virtual models.
-// Each node is either a VM reference (Vm set) or an operation (Operation set).
+// Each node is either a source (Collection optional, "" = all models) or an operation.
 // Every node can optionally filter and sort its results.
 type CompositionNode struct {
-	// VM Reference (leaf of the tree)
-	Vm string `json:"vm,omitempty"`
+	// Source node: optional VM name ("" = all models).
+	// Serialized as "collection" in JSON; old "vm" key accepted on read.
+	Vm string `json:"collection,omitempty"`
 
 	// Operation node (recursive)
 	Operation string            `json:"operation,omitempty"` // "union", "intersection", "difference"
 	Sources   []CompositionNode `json:"sources,omitempty"`
 
-	// Optional filter/sort - valid on ANY node type (VM ref or operation)
+	// Optional filter/sort - valid on ANY node type
 	FilterExpr *FilterNode `json:"filter_expr,omitempty"`
 	SortExpr   SortExpr    `json:"sort_expr,omitempty"`
+}
+
+// UnmarshalJSON handles both "collection" (new) and "vm" (old) field names.
+func (n *CompositionNode) UnmarshalJSON(data []byte) error {
+	type Alias CompositionNode
+	aux := &struct {
+		OldVm string `json:"vm"`
+		*Alias
+	}{
+		Alias: (*Alias)(n),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	// Fallback: old "vm" → "collection"
+	if n.Vm == "" && aux.OldVm != "" {
+		n.Vm = aux.OldVm
+	}
+	return nil
 }
 
 // IsVMRef returns true if this node references an existing VM.
@@ -135,10 +155,9 @@ func (n *CompositionNode) IsOperation() bool {
 	return n.Operation != ""
 }
 
-// IsFilterSource returns true if this node is an inline filter source
-// (no vm, no operation, but filter_expr is set).
-func (n *CompositionNode) IsFilterSource() bool {
-	return n.Vm == "" && n.Operation == "" && n.FilterExpr != nil
+// IsSource returns true if this is a non-operation source node.
+func (n *CompositionNode) IsSource() bool {
+	return n.Operation == ""
 }
 
 // CollectVMNames recursively collects all unique VM names referenced in this tree.
@@ -178,18 +197,8 @@ func ValidateCompositionNode(node *CompositionNode, depth int) error {
 	hasOp := node.Operation != ""
 
 	if hasVM && hasOp {
-		return fmt.Errorf("composition node cannot have both vm and operation")
+		return fmt.Errorf("composition node cannot have both collection and operation")
 	}
-	if !hasVM && !hasOp && node.FilterExpr == nil {
-		return fmt.Errorf("composition node must have vm, operation, or filter_expr")
-	}
-	if !hasVM && !hasOp && node.FilterExpr != nil {
-		// Inline filter source — no children allowed
-		if len(node.Sources) > 0 {
-			return fmt.Errorf("filter source node cannot have sources")
-		}
-	}
-
 	if hasOp {
 		validOps := map[string]bool{"union": true, "intersection": true, "difference": true}
 		if !validOps[node.Operation] {
@@ -203,6 +212,8 @@ func ValidateCompositionNode(node *CompositionNode, depth int) error {
 				return fmt.Errorf("source[%d]: %w", i, err)
 			}
 		}
+	} else if len(node.Sources) > 0 {
+		return fmt.Errorf("source node cannot have children")
 	}
 
 	return nil

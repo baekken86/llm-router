@@ -29,7 +29,7 @@
 
   function fmtTime(ts) {
     if (!ts) return '';
-    return new Date(ts).toLocaleTimeString();
+    return new Date(ts).toLocaleTimeString('en-GB', { hour12: false });
   }
 
   function statusColor(code) {
@@ -42,7 +42,7 @@
     loading = true;
     try {
       const all = await apiFetch('/api/v1/stats/logs');
-      logs = (all || []).filter(l => l.Type === 'proxy');
+      logs = all || [];
     } catch (e) {
       addToast(e.message, 'error');
     } finally {
@@ -56,9 +56,7 @@
     es.onmessage = (e) => {
       try {
         const log = JSON.parse(e.data);
-        if (log.Type === 'proxy') {
-          logs = [log, ...logs].slice(0, 500);
-        }
+        logs = [log, ...logs].slice(0, 500);
       } catch {}
     };
     es.onerror = () => {

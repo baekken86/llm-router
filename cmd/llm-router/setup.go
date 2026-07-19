@@ -135,7 +135,13 @@ func runSetup(args []string) {
 
 	// Substitute {host} in ollama baseURL
 	if providerCfg.apiType == "ollama" {
-		providerCfg.baseURL = strings.Replace(providerCfg.baseURL, "{host}", *host, 1)
+		isLocal := strings.HasPrefix(*host, "localhost:") || *host == "localhost"
+		if isLocal {
+			providerCfg.baseURL = "http://" + *host + "/v1"
+		} else {
+			providerCfg.baseURL = "https://" + *host + "/v1"
+			providerCfg.auth = "apikey"
+		}
 	}
 
 	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, loadEncryptionKey())

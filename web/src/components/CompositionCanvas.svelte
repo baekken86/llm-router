@@ -379,17 +379,17 @@
             {/each}
           </select>
           <button
-            class="text-xs text-gray-500 hover:text-emerald-400 px-1.5 py-0.5 rounded shrink-0"
+            class="text-xs bg-gray-700 text-emerald-400 hover:bg-emerald-800 hover:text-emerald-300 px-2 py-1 rounded shrink-0"
             onclick={(e) => { e.stopPropagation(); toggleItemFilter(item.__id); }}
             title="Toggle filter"
           >F</button>
           <button
-            class="text-xs text-gray-500 hover:text-blue-400 px-1.5 py-0.5 rounded shrink-0"
+            class="text-xs bg-gray-700 text-blue-400 hover:bg-blue-900 hover:text-blue-300 px-2 py-1 rounded shrink-0"
             onclick={(e) => { e.stopPropagation(); toggleItemSort(item.__id); }}
             title="Toggle sort"
           >S</button>
           <button
-            class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
+            class="text-xs bg-gray-700 text-red-400 hover:bg-red-900 hover:text-red-300 px-2 py-1 rounded ml-auto shrink-0"
             onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
             title="Remove source"
           >&times;</button>
@@ -419,7 +419,7 @@
           {/if}
 
           <button
-            class="text-xs text-gray-600 hover:text-red-400 ml-auto shrink-0"
+            class="text-xs bg-gray-700 text-red-400 hover:bg-red-900 hover:text-red-300 px-2 py-1 rounded ml-auto shrink-0"
             onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
             title="Remove operation"
           >&times;</button>
@@ -485,9 +485,9 @@
                   <option value={vm.name}>{vm.name}{vm.description ? ` — ${vm.description}` : ''}</option>
                 {/each}
               </select>
-              <button class="text-xs text-gray-500 hover:text-emerald-400 px-1.5 py-0.5 rounded shrink-0" onclick={(e) => { e.stopPropagation(); toggleItemFilter(source.__id); }} title="Toggle filter">F</button>
-              <button class="text-xs text-gray-500 hover:text-blue-400 px-1.5 py-0.5 rounded shrink-0" onclick={(e) => { e.stopPropagation(); toggleItemSort(source.__id); }} title="Toggle sort">S</button>
-              <button class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0" onclick={(e) => { e.stopPropagation(); removeItem(source.__id); }} title="Remove source">&times;</button>
+              <button class="text-xs bg-gray-700 text-emerald-400 hover:bg-emerald-800 hover:text-emerald-300 px-2 py-1 rounded shrink-0" onclick={(e) => { e.stopPropagation(); toggleItemFilter(source.__id); }} title="Toggle filter">F</button>
+              <button class="text-xs bg-gray-700 text-blue-400 hover:bg-blue-900 hover:text-blue-300 px-2 py-1 rounded shrink-0" onclick={(e) => { e.stopPropagation(); toggleItemSort(source.__id); }} title="Toggle sort">S</button>
+              <button class="text-xs bg-gray-700 text-red-400 hover:bg-red-900 hover:text-red-300 px-2 py-1 rounded ml-auto shrink-0" onclick={(e) => { e.stopPropagation(); removeItem(source.__id); }} title="Remove source">&times;</button>
 
             {:else if isOpNode(source)}
               <select
@@ -564,17 +564,17 @@
           {/each}
         </select>
         <button
-          class="text-xs text-gray-500 hover:text-emerald-400 px-1.5 py-0.5 rounded shrink-0"
+          class="text-xs bg-gray-700 text-emerald-400 hover:bg-emerald-800 hover:text-emerald-300 px-2 py-1 rounded shrink-0"
           onclick={(e) => { e.stopPropagation(); toggleItemFilter(item.__id); }}
           title="Toggle filter"
         >F</button>
         <button
-          class="text-xs text-gray-500 hover:text-blue-400 px-1.5 py-0.5 rounded shrink-0"
+          class="text-xs bg-gray-700 text-blue-400 hover:bg-blue-900 hover:text-blue-300 px-2 py-1 rounded shrink-0"
           onclick={(e) => { e.stopPropagation(); toggleItemSort(item.__id); }}
           title="Toggle sort"
         >S</button>
         <button
-          class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
+          class="text-xs bg-gray-700 text-red-400 hover:bg-red-900 hover:text-red-300 px-2 py-1 rounded ml-auto shrink-0"
           onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
           title="Remove source"
         >&times;</button>
@@ -594,7 +594,7 @@
           {item.sources?.length || 0} sources
         </span>
         <button
-          class="text-xs text-gray-600 hover:text-red-400 ml-auto shrink-0"
+          class="text-xs bg-gray-700 text-red-400 hover:bg-red-900 hover:text-red-300 px-2 py-1 rounded ml-auto shrink-0"
           onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
           title="Remove operation"
         >&times;</button>

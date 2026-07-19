@@ -71,6 +71,13 @@
   function formatComposition(node, depth = 0) {
     if (!node) return '';
     if (node.vm) return node.vm;
+    if (node.filter_expr && !node.vm && !node.operation) {
+      // Inline filter source — show summary
+      const summary = formatFilter(node.filter_expr);
+      const sortSummary = node.sort_expr?.length ? `, ${formatSort(node.sort_expr)}` : '';
+      const full = `Filter: ${summary}${sortSummary}`;
+      return full.length > 60 ? full.slice(0, 57) + '...' : full;
+    }
     if (node.operation) {
       const opSymbol = { union: '∪', intersection: '∩', difference: '\\' }[node.operation] || node.operation;
       const children = (node.sources || []).map(s => formatComposition(s, depth + 1));

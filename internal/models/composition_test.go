@@ -114,6 +114,55 @@ func TestValidateCompositionNode(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name:    "valid filter source",
+			node:    &CompositionNode{FilterExpr: &FilterNode{Key: "mc.coding", Op: "gte", Value: float64(8)}},
+			wantErr: false,
+		},
+		{
+			name: "filter source with sources",
+			node: &CompositionNode{
+				FilterExpr: &FilterNode{Key: "x", Op: "eq", Value: "y"},
+				Sources:    []CompositionNode{{Vm: "a"}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "vm ref with post-filter",
+			node: &CompositionNode{
+				Vm:         "a",
+				FilterExpr: &FilterNode{Key: "x", Op: "eq", Value: "y"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "mixed tree: union(VM-ref, filter-source)",
+			node: &CompositionNode{
+				Operation: "union",
+				Sources: []CompositionNode{
+					{Vm: "a"},
+					{FilterExpr: &FilterNode{Key: "mc.coding", Op: "gte", Value: float64(8)}},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "filter source at nested depth",
+			node: &CompositionNode{
+				Operation: "intersection",
+				Sources: []CompositionNode{
+					{
+						Operation: "union",
+						Sources: []CompositionNode{
+							{Vm: "a"},
+							{FilterExpr: &FilterNode{Key: "x", Op: "eq", Value: "y"}},
+						},
+					},
+					{Vm: "c"},
+				},
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -257,6 +306,48 @@ func TestCompositionJSONRoundtrip(t *testing.T) {
 	}
 	if parsed.FilterExpr == nil || parsed.FilterExpr.Key != "mc.coding" {
 		t.Errorf("FilterExpr.Key = %v, want mc.coding", parsed.FilterExpr)
+	}
+}
+
+func TestIsFilterSource(t *testing.T) {
+	tests := []struct {
+		name string
+		node *CompositionNode
+		want bool
+	}{
+		{
+			name: "filter source",
+			node: &CompositionNode{FilterExpr: &FilterNode{Key: "mc.coding", Op: "gte", Value: float64(8)}},
+			want: true,
+		},
+		{
+			name: "vm ref",
+			node: &CompositionNode{Vm: "a"},
+			want: false,
+		},
+		{
+			name: "vm ref with post-filter",
+			node: &CompositionNode{Vm: "a", FilterExpr: &FilterNode{Key: "x", Op: "eq", Value: "y"}},
+			want: false,
+		},
+		{
+			name: "operation",
+			node: &CompositionNode{Operation: "union", Sources: []CompositionNode{{Vm: "a"}, {Vm: "b"}}},
+			want: false,
+		},
+		{
+			name: "empty node",
+			node: &CompositionNode{},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.node.IsFilterSource()
+			if got != tt.want {
+				t.Errorf("IsFilterSource() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

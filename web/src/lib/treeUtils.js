@@ -316,3 +316,230 @@ export function flattenIds(tree) {
 export function resetIdCounter() {
   _idCounter = 0;
 }
+
+// ─── Composition-tree helpers ────────────────────────────────────────────────
+// Walk via `sources` arrays. Immutable (except assignCompositionIds).
+
+/**
+ * Assign stable __id to every node via DFS over composition tree (sources arrays).
+ * Mutates input tree by adding __id fields. Reuses module-level _idCounter.
+ * @param {object} node
+ * @returns {object} same node reference with __id set
+ */
+export function assignCompositionIds(node) {
+  if (!node || typeof node !== 'object') return node;
+
+  if (!node.__id) {
+    node.__id = `comp-${Date.now()}-${_idCounter++}`;
+  }
+
+  if (Array.isArray(node.sources)) {
+    for (const child of node.sources) {
+      assignCompositionIds(child);
+    }
+  }
+
+  return node;
+}
+
+/**
+ * Find a node and its parent info by __id in a composition tree.
+ * @param {object} tree - root node
+ * @param {string} id - __id to find
+ * @returns {{ node: object, parent: object|null, index: number }|null}
+ *   parent = the parent op node (or null if root), index = position in parent.sources
+ */
+export function findNodeInComposition(tree, id) {
+  if (!tree || !id) return null;
+
+  function walk(node, parent, index) {
+    if (node.__id === id) {
+      return { node, parent, index };
+    }
+    if (Array.isArray(node.sources)) {
+      for (let i = 0; i < node.sources.length; i++) {
+        const result = walk(node.sources[i], node, i);
+        if (result) return result;
+      }
+    }
+    return null;
+  }
+
+  return walk(tree, null, -1);
+}
+
+/**
+ * Remove a node from composition tree by __id (immutable). Returns new root.
+ * Returns undefined if root itself is removed.
+ * @param {object} tree
+ * @param {string} removeId
+ * @returns {object|undefined}
+ */
+export function removeNodeFromComposition(tree, removeId) {
+  if (!tree) return undefined;
+  if (tree.__id === removeId) return undefined;
+
+  if (Array.isArray(tree.sources)) {
+    const newSources = tree.sources
+      .map(child => removeNodeFromComposition(child, removeId))
+      .filter(child => child !== undefined);
+    return { ...tree, sources: newSources };
+  }
+
+  return tree;
+}
+
+/**
+ * Insert a node into a parent's sources at given index (immutable).
+ * @param {object} parentNode - op node (must have .sources array)
+ * @param {object} nodeToInsert
+ * @param {number} index
+ * @returns {object} new parent node (cloned)
+ */
+export function insertNodeIntoComposition(parentNode, nodeToInsert, index) {
+  if (!parentNode || !Array.isArray(parentNode.sources)) return parentNode;
+  const newSources = [...parentNode.sources];
+  newSources.splice(index, 0, nodeToInsert);
+  return { ...parentNode, sources: newSources };
+}
+
+/**
+ * Move a node from one position to another in composition tree (immutable).
+ * Cross-container: source and target can be in different op nodes.
+ * @param {object} tree
+ * @param {string} sourceId
+ * @param {string|null} targetParentId - __id of target op node, or null for root
+ * @param {number} targetIndex
+ * @returns {object|null} new tree, or null if invalid (cycle, not found, etc.)
+ *
+ * Cycle rule: targetParentId must NOT be a descendant of sourceId.
+ * Root case (targetParentId === null): return null (caller handles root-level moves).
+ * If source is root (parent === null), return null (cannot reparent root).
+ */
+export function moveNodeBetweenContainers(tree, sourceId, targetParentId, targetIndex) {
+  if (targetParentId === null) return null;
+
+  // Find source
+  const sourceInfo = findNodeInComposition(tree, sourceId);
+  if (!sourceInfo) return null;
+
+  // Cannot reparent root
+  if (sourceInfo.parent === null) return null;
+
+  // Cycle check: targetParent must not be a descendant of source
+  if (isDescendantComposition(tree, sourceId, targetParentId)) return null;
+
+  // Extract the source node (immutable removal)
+  const sourceNode = { ...sourceInfo.node };
+  const newTree = removeNodeFromComposition(tree, sourceId);
+  if (!newTree) return null;
+
+  // Find target parent in new tree
+  const targetInfo = findNodeInComposition(newTree, targetParentId);
+  if (!targetInfo || !Array.isArray(targetInfo.node.sources)) return null;
+
+  // Build new target parent with source inserted
+  const newSources = [...targetInfo.node.sources];
+  const clampedIndex = Math.min(targetIndex, newSources.length);
+  newSources.splice(clampedIndex, 0, sourceNode);
+  const newTargetParent = { ...targetInfo.node, sources: newSources };
+
+  // Rebuild tree path from target parent up to root
+  return replaceNode(newTree, targetParentId, newTargetParent);
+}
+
+/**
+ * Check if candidateId is a descendant of ancestorId in a composition tree.
+ * @param {object} tree
+ * @param {string} ancestorId
+ * @param {string} candidateId
+ * @returns {boolean}
+ */
+function isDescendantComposition(tree, ancestorId, candidateId) {
+  const info = findNodeInComposition(tree, ancestorId);
+  if (!info) return false;
+  const node = info.node;
+
+  function check(n) {
+    if (n.__id === candidateId) return true;
+    if (Array.isArray(n.sources)) {
+      for (const child of n.sources) {
+        if (check(child)) return true;
+      }
+    }
+    return false;
+  }
+
+  return check(node);
+}
+
+/**
+ * Replace a node in the composition tree by __id (immutable helper).
+ * @param {object} tree
+ * @param {string} replaceId
+ * @param {object} newNode
+ * @returns {object}
+ */
+function replaceNode(tree, replaceId, newNode) {
+  if (tree.__id === replaceId) return newNode;
+
+  if (Array.isArray(tree.sources)) {
+    const newSources = tree.sources.map(child =>
+      replaceNode(child, replaceId, newNode)
+    );
+    return { ...tree, sources: newSources };
+  }
+
+  return tree;
+}
+
+/**
+ * If root has 1 item, return it as-is (passthrough).
+ * If root has >1 items, wrap as {operation:"union", sources:[...]}.
+ * If root is null/undefined, return null.
+ * @param {object[]|null|undefined} rootArray
+ * @returns {object|null}
+ */
+export function autoWrap(rootArray) {
+  if (!rootArray || !Array.isArray(rootArray)) return null;
+  if (rootArray.length === 0) return null;
+  if (rootArray.length === 1) return rootArray[0];
+  return { operation: 'union', sources: [...rootArray] };
+}
+
+/**
+ * If node is a union operation with exactly 1 source, return that single source.
+ * Otherwise return node unchanged.
+ * @param {object} node
+ * @returns {object}
+ */
+export function autoUnwrap(node) {
+  if (
+    node &&
+    node.operation === 'union' &&
+    Array.isArray(node.sources) &&
+    node.sources.length === 1
+  ) {
+    return node.sources[0];
+  }
+  return node;
+}
+
+/**
+ * Get a flat list of all node __ids in composition tree (DFS order).
+ * @param {object} tree
+ * @returns {string[]}
+ */
+export function flattenCompositionIds(tree) {
+  if (!tree) return [];
+
+  const ids = [tree.__id];
+
+  if (Array.isArray(tree.sources)) {
+    for (const child of tree.sources) {
+      ids.push(...flattenCompositionIds(child));
+    }
+  }
+
+  return ids;
+}

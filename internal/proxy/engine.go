@@ -500,6 +500,20 @@ func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey s
 		}
 		result := AnthropicToOpenAI(anthResp, rm.Model.Name)
 		resp = &result
+	} else if rm.Provider.APIType == models.APITypeCloudflare {
+		// Cloudflare Workers AI: OpenAI-compatible wire format.
+		// Explicit branch (not generic else) to allow per-provider hooks
+		// without re-plumbing the engine: rate limit format, error normalization,
+		// streaming diffs, custom retry-after parsing. Body identical to OpenAI
+		// else branch today; differences will land here as needed.
+		req.Model = rm.Model.Name
+		if rm.ReasoningEffort != "" {
+			req.ReasoningEffort = &rm.ReasoningEffort
+		}
+		resp, err = e.openaiClient.ChatCompletion(rm.Provider.BaseURL, apiKey, req)
+		if err != nil {
+			return nil, nil, err
+		}
 	} else {
 		req.Model = rm.Model.Name
 		if rm.ReasoningEffort != "" {
@@ -533,6 +547,17 @@ func (e *Engine) sendStreamRequest(r *http.Request, rm service.ResolvedModel, ap
 		anthReq.Model = rm.Model.Name
 		applyReasoningEffortToAnthropic(&anthReq, rm.ReasoningEffort)
 		return e.anthropicClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, anthReq)
+	} else if rm.Provider.APIType == models.APITypeCloudflare {
+		// Cloudflare Workers AI: OpenAI-compatible wire format.
+		// Explicit branch (not generic else) to allow per-provider hooks
+		// without re-plumbing the engine: rate limit format, error normalization,
+		// streaming diffs, custom retry-after parsing. Body identical to OpenAI
+		// else branch today; differences will land here as needed.
+		req.Model = rm.Model.Name
+		if rm.ReasoningEffort != "" {
+			req.ReasoningEffort = &rm.ReasoningEffort
+		}
+		return e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, req)
 	}
 
 	req.Model = rm.Model.Name

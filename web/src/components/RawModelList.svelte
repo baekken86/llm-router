@@ -71,11 +71,11 @@
     expandedProviders[provider] = !expandedProviders[provider];
   }
 
-  async function createMapping(sourceId, targetId) {
+  async function createMapping(sourceId, targetName) {
     try {
       await apiFetch(`/api/v1/models/${sourceId}/mapping`, {
         method: 'POST',
-        body: { target_model_id: targetId }
+        body: { target_model_name: targetName }
       });
       addToast('Mapping created', 'success');
       await load();
@@ -114,8 +114,8 @@
 
 {#if pickerModelId !== null}
   <ModelPicker
-    excludeModelId={pickerModelId}
-    onSelect={(targetId) => createMapping(pickerModelId, targetId)}
+    excludeModelName={models.find(m => m.id === pickerModelId)?.name || ''}
+    onSelect={(targetName) => createMapping(pickerModelId, targetName)}
     onClose={() => pickerModelId = null}
   />
 {/if}
@@ -162,7 +162,7 @@
                       <tr class="border-b border-gray-850 hover:bg-gray-850/50">
                         <td class="text-left pr-3 py-1 text-emerald-400">{m.name}</td>
                         <td class="text-left pr-3 py-1">
-                          {#if m.mapping_target_id}
+                          {#if m.mapping_target_name}
                             <span class="inline-flex items-center gap-1">
                               <span class="text-xs bg-blue-900/50 text-blue-300 px-2 py-0.5 rounded">
                                 → {m.mapping_target_name}

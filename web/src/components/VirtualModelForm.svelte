@@ -9,7 +9,7 @@
 
   let name = $state('');
   let description = $state('');
-  let compositionNode = $state({ vm: '' });
+  let compositionNode = $state(null);
   let includeModels = $state([]);
   let maxRetries = $state(0);
   let retryOnStatus = $state([429, 500, 502, 503]);

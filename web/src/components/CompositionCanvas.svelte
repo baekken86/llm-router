@@ -315,6 +315,7 @@
         style="padding-left: {(depth * 20) + 8}px"
       >
         <button
+          type="button"
           class="cursor-grab active:cursor-grabbing text-gray-500 hover:text-gray-300 select-none p-0.5 shrink-0"
           aria-label="Drag to reorder"
           title="Drag to reorder"
@@ -342,6 +343,7 @@
             {/each}
           </select>
           <button
+            type="button"
             class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
             onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
             title="Remove VM reference"
@@ -350,16 +352,19 @@
         {:else if isFilterSource(item)}
           <span class="text-amber-400 text-xs font-medium shrink-0">Filter Source</span>
           <button
+            type="button"
             class="text-xs text-gray-500 hover:text-emerald-400 px-1.5 py-0.5 rounded shrink-0"
             onclick={(e) => { e.stopPropagation(); toggleItemFilter(item.__id); }}
             title="Toggle filter"
           >F</button>
           <button
+            type="button"
             class="text-xs text-gray-500 hover:text-blue-400 px-1.5 py-0.5 rounded shrink-0"
             onclick={(e) => { e.stopPropagation(); toggleItemSort(item.__id); }}
             title="Toggle sort"
           >S</button>
           <button
+            type="button"
             class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
             onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
             title="Remove filter source"
@@ -383,6 +388,7 @@
 
           {#if item.sources && item.sources.length > 0}
             <button
+              type="button"
               class="text-xs text-gray-500 hover:text-blue-400 px-1 shrink-0"
               onclick={(e) => { e.stopPropagation(); toggleItemExpanded(item.__id); }}
               title={item._expanded ? 'Collapse sources' : 'Expand sources'}
@@ -390,6 +396,7 @@
           {/if}
 
           <button
+            type="button"
             class="text-xs text-gray-600 hover:text-red-400 ml-auto shrink-0"
             onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
             title="Remove operation"
@@ -431,6 +438,7 @@
             style="padding-left: {(childDepth * 20) + 8}px"
           >
             <button
+              type="button"
               class="cursor-grab active:cursor-grabbing text-gray-500 hover:text-gray-300 select-none p-0.5 shrink-0"
               aria-label="Drag to reorder"
               title="Drag to reorder"
@@ -457,6 +465,7 @@
                 {/each}
               </select>
               <button
+                type="button"
                 class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
                 onclick={(e) => { e.stopPropagation(); removeItem(source.__id); }}
                 title="Remove VM reference"
@@ -464,9 +473,9 @@
 
             {:else if isFilterSource(source)}
               <span class="text-amber-400 text-xs font-medium shrink-0">Filter Source</span>
-              <button class="text-xs text-gray-500 hover:text-emerald-400 px-1.5 py-0.5 rounded shrink-0" onclick={(e) => { e.stopPropagation(); toggleItemFilter(source.__id); }} title="Toggle filter">F</button>
-              <button class="text-xs text-gray-500 hover:text-blue-400 px-1.5 py-0.5 rounded shrink-0" onclick={(e) => { e.stopPropagation(); toggleItemSort(source.__id); }} title="Toggle sort">S</button>
-              <button class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0" onclick={(e) => { e.stopPropagation(); removeItem(source.__id); }} title="Remove filter source">&times;</button>
+              <button type="button" class="text-xs text-gray-500 hover:text-emerald-400 px-1.5 py-0.5 rounded shrink-0" onclick={(e) => { e.stopPropagation(); toggleItemFilter(source.__id); }} title="Toggle filter">F</button>
+              <button type="button" class="text-xs text-gray-500 hover:text-blue-400 px-1.5 py-0.5 rounded shrink-0" onclick={(e) => { e.stopPropagation(); toggleItemSort(source.__id); }} title="Toggle sort">S</button>
+              <button type="button" class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0" onclick={(e) => { e.stopPropagation(); removeItem(source.__id); }} title="Remove filter source">&times;</button>
 
             {:else if isOpNode(source)}
               <select
@@ -517,6 +526,7 @@
       style="padding-left: 8px"
     >
       <button
+        type="button"
         class="cursor-grab active:cursor-grabbing text-gray-500 hover:text-gray-300 select-none p-0.5 shrink-0"
         aria-label="Drag to reorder"
         title="Drag to reorder"
@@ -543,6 +553,7 @@
           {/each}
         </select>
         <button
+          type="button"
           class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
           onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
           title="Remove VM reference"
@@ -551,16 +562,19 @@
       {:else if isFilterSource(item)}
         <span class="text-amber-400 text-xs font-medium shrink-0">Filter Source</span>
         <button
+          type="button"
           class="text-xs text-gray-500 hover:text-emerald-400 px-1.5 py-0.5 rounded shrink-0"
           onclick={(e) => { e.stopPropagation(); toggleItemFilter(item.__id); }}
           title="Toggle filter"
         >F</button>
         <button
+          type="button"
           class="text-xs text-gray-500 hover:text-blue-400 px-1.5 py-0.5 rounded shrink-0"
           onclick={(e) => { e.stopPropagation(); toggleItemSort(item.__id); }}
           title="Toggle sort"
         >S</button>
         <button
+          type="button"
           class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
           onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
           title="Remove filter source"
@@ -581,6 +595,7 @@
           {item.sources?.length || 0} sources
         </span>
         <button
+          type="button"
           class="text-xs text-gray-600 hover:text-red-400 ml-auto shrink-0"
           onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
           title="Remove operation"
@@ -609,14 +624,17 @@
   <!-- Root add buttons -->
   <div class="flex gap-2 mt-3" style="padding-left: 8px">
     <button
+      type="button"
       class="text-xs text-gray-500 hover:text-emerald-400 border border-gray-700 rounded px-2 py-1 hover:border-emerald-600"
       onclick={addVMRef}
     >+ VM Ref</button>
     <button
+      type="button"
       class="text-xs text-amber-500 hover:text-amber-400 border border-gray-700 rounded px-2 py-1 hover:border-amber-600"
       onclick={addFilterSource}
     >+ Filter Source</button>
     <button
+      type="button"
       class="text-xs text-blue-400 hover:text-blue-300 border border-gray-700 rounded px-2 py-1 hover:border-blue-500"
       onclick={addOperation}
     >+ Op</button>

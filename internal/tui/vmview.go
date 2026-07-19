@@ -22,8 +22,10 @@ type RawModelListMsg struct {
 }
 
 type RawModelInfo struct {
-	Name string
-	Tags map[string]string
+	Name             string
+	Tags             map[string]string
+	ID               int64
+	MappingTargetName string
 }
 
 type VirtualModelInfo struct {
@@ -62,6 +64,51 @@ type VMViewModel struct {
 	width          int
 	height         int
 	loaded         bool
+	// Model picker state
+	pickerMode     bool
+	pickerModels   []pickerModel
+	pickerCursor   int
+	pickerFilter   string
+	mappingRepo    repository.ModelMappingRepository
+	modelRepo      repository.ModelRepository
+}
+
+type pickerModel struct {
+	ID           int64
+	Name         string
+	ProviderName string
+}
+
+func (m VMViewModel) SelectedRawModel() *RawModelInfo {
+	if m.modelTab != ModelTabRaw {
+		return nil
+	}
+	idx := 0
+	for _, provider := range m.rawProviders {
+		for _, rm := range m.rawModels[provider] {
+			if idx == m.rawCursor {
+				return &rm
+			}
+			idx++
+		}
+	}
+	return nil
+}
+
+func (m VMViewModel) SelectedRawModelID() int64 {
+	rm := m.SelectedRawModel()
+	if rm == nil {
+		return 0
+	}
+	return rm.ID
+}
+
+func (m VMViewModel) SelectedRawModelHasMapping() bool {
+	rm := m.SelectedRawModel()
+	if rm == nil {
+		return false
+	}
+	return rm.MappingTargetName != ""
 }
 
 func NewVMViewModel() VMViewModel {
@@ -82,6 +129,11 @@ func (m VMViewModel) Update(msg tea.Msg) (VMViewModel, tea.Cmd) {
 		sort.Strings(m.rawProviders)
 		m.loaded = true
 	case tea.KeyMsg:
+		// Handle picker mode
+		if m.pickerMode {
+			return m.updatePicker(msg)
+		}
+
 		switch msg.String() {
 		case "left", "h":
 			if m.detailMode {
@@ -155,6 +207,10 @@ func (m VMViewModel) View() string {
 			return MutedStyle.Render("  Loading raw models...")
 		}
 		return MutedStyle.Render("  Loading virtual models...")
+	}
+
+	if m.pickerMode {
+		return m.viewPicker()
 	}
 
 	if m.modelTab == ModelTabRaw {
@@ -240,7 +296,11 @@ func (m VMViewModel) viewRawModels() string {
 			}
 
 			line := "    " + cursor
-			line += padRight(trunc(rm.Name, 20), 20)
+			modelDisplay := trunc(rm.Name, 20)
+			if rm.MappingTargetName != "" {
+				modelDisplay += MutedStyle.Render(fmt.Sprintf(" [→ %s]", rm.MappingTargetName))
+			}
+			line += padRight(modelDisplay, 20)
 			for _, key := range tagKeys {
 				val := rm.Tags[key]
 				if val == "" {
@@ -567,6 +627,65 @@ func (m *VMViewModel) SetSize(w, h int) {
 	m.height = h
 }
 
+func (m *VMViewModel) StartPicker(mappingRepo repository.ModelMappingRepository, modelRepo repository.ModelRepository, excludeID int64) {
+	m.pickerMode = true
+	m.pickerCursor = 0
+	m.pickerFilter = ""
+	m.mappingRepo = mappingRepo
+	m.modelRepo = modelRepo
+	m.refreshPickerModels(excludeID)
+}
+
+func (m *VMViewModel) refreshPickerModels(excludeID int64) {
+	if m.modelRepo == nil {
+		return
+	}
+	ctx := context.Background()
+	allModels, _ := m.modelRepo.ListAll(ctx)
+	m.pickerModels = nil
+	for _, model := range allModels {
+		if model.ID == excludeID {
+			continue
+		}
+		m.pickerModels = append(m.pickerModels, pickerModel{
+			ID:   model.ID,
+			Name: model.Name,
+		})
+	}
+}
+
+func (m *VMViewModel) FilteredPickerModels() []pickerModel {
+	if m.pickerFilter == "" {
+		return m.pickerModels
+	}
+	var filtered []pickerModel
+	for _, pm := range m.pickerModels {
+		if strings.Contains(strings.ToLower(pm.Name), strings.ToLower(m.pickerFilter)) {
+			filtered = append(filtered, pm)
+		}
+	}
+	return filtered
+}
+
+func (m *VMViewModel) ConfirmPickerSelection() (sourceID int64, targetID int64, ok bool) {
+	rm := m.SelectedRawModel()
+	if rm == nil {
+		return 0, 0, false
+	}
+	filtered := m.FilteredPickerModels()
+	if m.pickerCursor < 0 || m.pickerCursor >= len(filtered) {
+		return 0, 0, false
+	}
+	selected := filtered[m.pickerCursor]
+	return rm.ID, selected.ID, true
+}
+
+func (m *VMViewModel) ClosePicker() {
+	m.pickerMode = false
+	m.pickerModels = nil
+	m.pickerFilter = ""
+}
+
 func FetchVMData(client *APIClient) tea.Cmd {
 	return func() tea.Msg {
 		if client == nil {
@@ -706,13 +825,23 @@ func FetchVMDataLocal(vmRepo repository.VirtualModelRepository, modelRepo reposi
 	}
 }
 
-func FetchRawModelsLocal(modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository) tea.Cmd {
+func FetchRawModelsLocal(modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, mappingRepo repository.ModelMappingRepository) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
 		allModels, err := modelRepo.ListAll(ctx)
 		if err != nil {
 			return RawModelListMsg{}
+		}
+
+		// Batch-fetch all mappings
+		var mappingMap map[int64]string // sourceModelID → targetModelName
+		if mappingRepo != nil {
+			allMappings, _ := mappingRepo.GetAllJoined(ctx)
+			mappingMap = make(map[int64]string, len(allMappings))
+			for _, m := range allMappings {
+				mappingMap[m.SourceModelID] = m.TargetModelName
+			}
 		}
 
 		rawModels := make(map[string][]RawModelInfo)
@@ -729,8 +858,10 @@ func FetchRawModelsLocal(modelRepo repository.ModelRepository, tagRepo repositor
 			}
 
 			rawModels[provider.Name] = append(rawModels[provider.Name], RawModelInfo{
-				Name: m.Name,
-				Tags: tagMap,
+				Name:              m.Name,
+				Tags:              tagMap,
+				ID:                m.ID,
+				MappingTargetName: mappingMap[m.ID],
 			})
 		}
 
@@ -927,4 +1058,85 @@ func FetchRawModels(client *APIClient) tea.Cmd {
 
 		return RawModelListMsg{RawModels: rawModels}
 	}
+}
+
+func (m VMViewModel) updatePicker(msg tea.KeyMsg) (VMViewModel, tea.Cmd) {
+	filtered := m.FilteredPickerModels()
+
+	switch msg.String() {
+	case "esc":
+		m.ClosePicker()
+	case "up", "k":
+		if m.pickerCursor > 0 {
+			m.pickerCursor--
+		}
+	case "down", "j":
+		if m.pickerCursor < len(filtered)-1 {
+			m.pickerCursor++
+		}
+	case "enter":
+		sourceID, targetID, ok := m.ConfirmPickerSelection()
+		if ok && m.mappingRepo != nil {
+			ctx := context.Background()
+			m.mappingRepo.Set(ctx, sourceID, targetID)
+		}
+		m.ClosePicker()
+	case "backspace":
+		if len(m.pickerFilter) > 0 {
+			m.pickerFilter = m.pickerFilter[:len(m.pickerFilter)-1]
+			m.pickerCursor = 0
+		}
+	default:
+		if len(msg.String()) == 1 {
+			m.pickerFilter += msg.String()
+			m.pickerCursor = 0
+		}
+	}
+
+	return m, nil
+}
+
+func (m VMViewModel) viewPicker() string {
+	var b strings.Builder
+
+	rm := m.SelectedRawModel()
+	if rm == nil {
+		return MutedStyle.Render("  No model selected")
+	}
+
+	b.WriteString(InfoStyle.Render(fmt.Sprintf("  Map model: %s → select target:\n", rm.Name)))
+	b.WriteString(MutedStyle.Render(fmt.Sprintf("  Filter: %s_\n", m.pickerFilter)))
+	b.WriteString("\n")
+
+	filtered := m.FilteredPickerModels()
+	if len(filtered) == 0 {
+		b.WriteString(MutedStyle.Render("  No models match filter\n"))
+	} else {
+		limit := m.height - 8
+		if limit <= 0 {
+			limit = 20
+		}
+		for i, pm := range filtered {
+			if i >= limit {
+				b.WriteString(MutedStyle.Render(fmt.Sprintf("  ... and %d more\n", len(filtered)-limit)))
+				break
+			}
+			cursor := "  "
+			if i == m.pickerCursor {
+				cursor = SuccessStyle.Render("▸ ")
+			}
+			line := cursor + padRight(trunc(pm.Name, 40), 40)
+			if i == m.pickerCursor {
+				b.WriteString(SuccessStyle.Render(line))
+			} else {
+				b.WriteString(line)
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(HelpStyle.Render("  ↑/↓: navigate  Enter: select  type: filter  esc: cancel\n"))
+
+	return b.String()
 }

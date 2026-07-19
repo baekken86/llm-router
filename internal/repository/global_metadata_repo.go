@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 )
 
 type GlobalMetadataRepository interface {
@@ -17,16 +16,6 @@ type GlobalMetadataRepository interface {
 
 type sqliteGlobalMetadataRepo struct {
 	db *sql.DB
-}
-
-func stripCFPrefix(modelName string) string {
-	if strings.HasPrefix(modelName, "@cf/") {
-		parts := strings.SplitN(modelName, "/", 3)
-		if len(parts) == 3 {
-			return parts[2]
-		}
-	}
-	return modelName
 }
 
 func NewGlobalMetadataRepository(db *sql.DB) GlobalMetadataRepository {
@@ -59,10 +48,8 @@ func (r *sqliteGlobalMetadataRepo) Set(ctx context.Context, modelName, effort st
 }
 
 func (r *sqliteGlobalMetadataRepo) GetByModel(ctx context.Context, modelName string) (map[string]map[string]string, error) {
-	lookupName := stripCFPrefix(modelName)
-
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT reasoning_effort, key, value FROM model_metadata_global WHERE model_name = ? ORDER BY reasoning_effort, key`, lookupName,
+		`SELECT reasoning_effort, key, value FROM model_metadata_global WHERE model_name = ? ORDER BY reasoning_effort, key`, modelName,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get: %w", err)
@@ -84,9 +71,8 @@ func (r *sqliteGlobalMetadataRepo) GetByModel(ctx context.Context, modelName str
 }
 
 func (r *sqliteGlobalMetadataRepo) GetByModelEffort(ctx context.Context, modelName, effort string) (map[string]string, error) {
-	lookupName := stripCFPrefix(modelName)
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT key, value FROM model_metadata_global WHERE model_name = ? AND reasoning_effort = ? ORDER BY key`, lookupName, effort,
+		`SELECT key, value FROM model_metadata_global WHERE model_name = ? AND reasoning_effort = ? ORDER BY key`, modelName, effort,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get: %w", err)

@@ -8,14 +8,13 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestGetByModel_CFPrefixStripping(t *testing.T) {
+func TestGetByModel_DirectMatch(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	// Create table
 	_, err = db.Exec(`CREATE TABLE model_metadata_global (
 		model_name TEXT NOT NULL,
 		reasoning_effort TEXT NOT NULL,
@@ -27,7 +26,7 @@ func TestGetByModel_CFPrefixStripping(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Insert canonical model names (what CF prefix strips to)
+	// Insert with exact model names (no prefix stripping)
 	_, err = db.Exec(`INSERT INTO model_metadata_global (model_name, reasoning_effort, key, value)
 		VALUES ('llama-3.1-8b-instruct', 'default', 'intelligence', '5.0')`)
 	if err != nil {
@@ -48,28 +47,23 @@ func TestGetByModel_CFPrefixStripping(t *testing.T) {
 		expectHit bool
 	}{
 		{
-			name:      "strips @cf/meta/ prefix",
+			name:      "exact match llama",
+			input:     "llama-3.1-8b-instruct",
+			expectHit: true,
+		},
+		{
+			name:      "exact match gemma",
+			input:     "gemma-3-12b-it",
+			expectHit: true,
+		},
+		{
+			name:      "cf prefixed name no longer matches",
 			input:     "@cf/meta/llama-3.1-8b-instruct",
-			expectHit: true,
-		},
-		{
-			name:      "strips @cf/google/ prefix",
-			input:     "@cf/google/gemma-3-12b-it",
-			expectHit: true,
-		},
-		{
-			name:      "plain name unchanged",
-			input:     "llama-3.1-8b",
 			expectHit: false,
 		},
 		{
-			name:      "malformed @cf/ no parts",
-			input:     "@cf/",
-			expectHit: false,
-		},
-		{
-			name:      "only two parts unchanged",
-			input:     "@cf/meta",
+			name:      "unknown model returns empty",
+			input:     "nonexistent-model",
 			expectHit: false,
 		},
 	}
@@ -93,7 +87,7 @@ func TestGetByModel_CFPrefixStripping(t *testing.T) {
 	}
 }
 
-func TestGetByModelEffort_CFPrefixStripping(t *testing.T) {
+func TestGetByModelEffort_DirectMatch(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +105,6 @@ func TestGetByModelEffort_CFPrefixStripping(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Seed data matching what GetByModel test uses
 	_, err = db.Exec(`INSERT INTO model_metadata_global (model_name, reasoning_effort, key, value)
 		VALUES ('llama-3.1-8b-instruct', 'default', 'intelligence', '5.0')`)
 	if err != nil {
@@ -133,32 +126,26 @@ func TestGetByModelEffort_CFPrefixStripping(t *testing.T) {
 		expectHit bool
 	}{
 		{
-			name:      "strips @cf/meta/ prefix with effort",
-			model:     "@cf/meta/llama-3.1-8b-instruct",
-			effort:    "default",
-			expectHit: true,
-		},
-		{
-			name:      "strips @cf/google/ prefix with effort",
-			model:     "@cf/google/gemma-3-12b-it",
-			effort:    "high",
-			expectHit: true,
-		},
-		{
-			name:      "plain name with effort",
+			name:      "exact match with effort",
 			model:     "llama-3.1-8b-instruct",
 			effort:    "default",
 			expectHit: true,
 		},
 		{
-			name:      "CF prefix wrong effort returns empty",
+			name:      "cf prefixed no longer matches",
 			model:     "@cf/meta/llama-3.1-8b-instruct",
+			effort:    "default",
+			expectHit: false,
+		},
+		{
+			name:      "wrong effort returns empty",
+			model:     "llama-3.1-8b-instruct",
 			effort:    "high",
 			expectHit: false,
 		},
 		{
 			name:      "unknown model returns empty",
-			model:     "@cf/meta/nonexistent-model",
+			model:     "nonexistent-model",
 			effort:    "default",
 			expectHit: false,
 		},

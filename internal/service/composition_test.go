@@ -289,7 +289,7 @@ func setupFilterSourceService() (*virtualModelService, *mockVMRepo, *mockProvide
 	return svc, vmRepo, providerRepo
 }
 
-func TestResolveFilterSource_BasicFilter(t *testing.T) {
+func TestResolveSource_BasicFilter(t *testing.T) {
 	svc, _, _ := setupFilterSourceService()
 
 	// Filter: p.name == "openai"
@@ -297,9 +297,9 @@ func TestResolveFilterSource_BasicFilter(t *testing.T) {
 		FilterExpr: &models.FilterNode{Key: "p.name", Op: "eq", Value: "openai"},
 	}
 
-	result, err := svc.resolveFilterSource(context.Background(), node)
+	result, err := svc.resolveSource(context.Background(), node, make(map[string]bool))
 	if err != nil {
-		t.Fatalf("resolveFilterSource() error = %v", err)
+		t.Fatalf("resolveSource() error = %v", err)
 	}
 	if len(result) != 2 {
 		t.Fatalf("got %d models, want 2", len(result))
@@ -311,7 +311,7 @@ func TestResolveFilterSource_BasicFilter(t *testing.T) {
 	}
 }
 
-func TestResolveFilterSource_EmptyResult(t *testing.T) {
+func TestResolveSource_EmptyResult(t *testing.T) {
 	svc, _, _ := setupFilterSourceService()
 
 	// Filter matches nothing
@@ -319,16 +319,16 @@ func TestResolveFilterSource_EmptyResult(t *testing.T) {
 		FilterExpr: &models.FilterNode{Key: "p.name", Op: "eq", Value: "nonexistent"},
 	}
 
-	result, err := svc.resolveFilterSource(context.Background(), node)
+	result, err := svc.resolveSource(context.Background(), node, make(map[string]bool))
 	if err != nil {
-		t.Fatalf("resolveFilterSource() error = %v", err)
+		t.Fatalf("resolveSource() error = %v", err)
 	}
 	if len(result) != 0 {
 		t.Fatalf("got %d models, want 0", len(result))
 	}
 }
 
-func TestResolveFilterSource_WithSort(t *testing.T) {
+func TestResolveSource_WithSort(t *testing.T) {
 	svc, _, _ := setupFilterSourceService()
 
 	// Filter: all models, sort by m.name desc
@@ -337,9 +337,9 @@ func TestResolveFilterSource_WithSort(t *testing.T) {
 		SortExpr:   models.SortExpr{{Key: "m.name", Direction: "desc"}},
 	}
 
-	result, err := svc.resolveFilterSource(context.Background(), node)
+	result, err := svc.resolveSource(context.Background(), node, make(map[string]bool))
 	if err != nil {
-		t.Fatalf("resolveFilterSource() error = %v", err)
+		t.Fatalf("resolveSource() error = %v", err)
 	}
 	if len(result) != 3 {
 		t.Fatalf("got %d models, want 3", len(result))
@@ -465,7 +465,7 @@ func TestResolveFilterSource_NestedInOperation(t *testing.T) {
 	}
 }
 
-func TestResolveFilterSource_CircularRefNotPossible(t *testing.T) {
+func TestResolveSource_CircularRefNotPossible(t *testing.T) {
 	svc, _, _ := setupFilterSourceService()
 
 	// Filter source has no vm field — stack check irrelevant
@@ -473,9 +473,9 @@ func TestResolveFilterSource_CircularRefNotPossible(t *testing.T) {
 		FilterExpr: &models.FilterNode{Key: "p.name", Op: "eq", Value: "openai"},
 	}
 
-	result, err := svc.resolveFilterSource(context.Background(), node)
+	result, err := svc.resolveSource(context.Background(), node, make(map[string]bool))
 	if err != nil {
-		t.Fatalf("resolveFilterSource() error = %v", err)
+		t.Fatalf("resolveSource() error = %v", err)
 	}
 	if len(result) != 2 {
 		t.Fatalf("got %d models, want 2", len(result))

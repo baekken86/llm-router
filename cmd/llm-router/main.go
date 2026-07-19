@@ -219,8 +219,8 @@ func runProxy(args []string) {
 	oauthRepo := repository.NewOAuthRepository(database)
 
 	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, keyBytes)
-	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalMetaRepo)
-	vmService := service.NewVirtualModelService(vmRepo, modelRepo, tagRepo, providerRepo, providerMetadataRepo, globalMetaRepo)
+	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalMetaRepo, nil)
+	vmService := service.NewVirtualModelService(vmRepo, modelRepo, tagRepo, providerRepo, providerMetadataRepo, globalMetaRepo, nil)
 	keyService := service.NewKeyService(keyRepo)
 	adminService := service.NewAdminService(pass)
 

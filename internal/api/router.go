@@ -27,6 +27,7 @@ func NewRouter(
 	statusHandler *handlers.StatusHandler,
 	syslogHandler *handlers.SyslogHandler,
 	settingsHandler *handlers.SettingsHandler,
+	mappingHandler *handlers.ModelMappingHandler,
 	keyService service.KeyService,
 	adminService service.AdminService,
 	adminHandler *handlers.AdminHandler,
@@ -83,6 +84,16 @@ func NewRouter(
 
 		r.Route("/settings", func(r chi.Router) {
 			r.Mount("/", settingsHandler.Routes())
+		})
+
+		r.Route("/mappings", func(r chi.Router) {
+			r.Mount("/", mappingHandler.Routes())
+		})
+
+		r.Route("/models/{id}/mapping", func(r chi.Router) {
+			r.Post("/", mappingHandler.CreateMapping)
+			r.Get("/", mappingHandler.GetMapping)
+			r.Delete("/", mappingHandler.DeleteMapping)
 		})
 	})
 

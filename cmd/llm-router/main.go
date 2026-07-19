@@ -357,7 +357,7 @@ func runProxy(args []string) {
 		logger.Warn("web UI not embedded", "error", err)
 	}
 
-	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, metadataHandler, statusHandler, syslogHandler, settingsHandler, keyService, adminService, adminHandler, webFS)
+	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, metadataHandler, statusHandler, syslogHandler, settingsHandler, nil, keyService, adminService, adminHandler, webFS)
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middlewareAuthOrOAuth(keyService, oauthHandler))

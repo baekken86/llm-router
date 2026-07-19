@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ type Tab int
 
 const (
 	TabLog Tab = iota
+	TabMappings
 	TabSyslog
 	TabStats
 	TabStatus
@@ -37,28 +39,30 @@ const (
 )
 
 type Model struct {
-	logView      LogViewModel
-	sysLogView   SysLogViewModel
-	stats        StatsModel
-	status       StatusModel
-	vmView       VMViewModel
-	settingsView SettingsModel
-	tab          Tab
-	width        int
-	height       int
-	ready        bool
-	logChan      <-chan proxy.RequestLog
-	syslogChan   <-chan string
-	apiClient    *APIClient
-	vmRepo       repository.VirtualModelRepository
-	modelRepo    repository.ModelRepository
-	tagRepo      repository.TagRepository
-	providerRepo repository.ProviderRepository
-	oauthRepo    repository.OAuthRepository
-	config       *config.Config
+	logView       LogViewModel
+	sysLogView    SysLogViewModel
+	stats         StatsModel
+	status        StatusModel
+	vmView        VMViewModel
+	mappingsView  MappingsViewModel
+	settingsView  SettingsModel
+	tab           Tab
+	width         int
+	height        int
+	ready         bool
+	logChan       <-chan proxy.RequestLog
+	syslogChan    <-chan string
+	apiClient     *APIClient
+	vmRepo        repository.VirtualModelRepository
+	modelRepo     repository.ModelRepository
+	tagRepo       repository.TagRepository
+	providerRepo  repository.ProviderRepository
+	oauthRepo     repository.OAuthRepository
+	mappingRepo   repository.ModelMappingRepository
+	config        *config.Config
 }
 
-func New(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, oauthRepo repository.OAuthRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse) Model {
+func New(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, oauthRepo repository.OAuthRepository, mappingRepo repository.ModelMappingRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse) Model {
 	logView := NewLogViewModel(500)
 	if len(initialLogs) > 0 {
 		logView.LoadInitial(initialLogs)
@@ -75,21 +79,23 @@ func New(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repos
 	}
 
 	return Model{
-		logView:      logView,
-		sysLogView:   sysLogView,
-		stats:        stats,
-		status:       NewStatusModel(),
-		vmView:       NewVMViewModel(),
-		settingsView: NewSettingsModel(cfg),
-		tab:          TabLog,
-		logChan:      logChan,
-		syslogChan:   syslogChan,
-		vmRepo:       vmRepo,
-		modelRepo:    modelRepo,
-		tagRepo:      tagRepo,
-		providerRepo: providerRepo,
-		oauthRepo:    oauthRepo,
-		config:       cfg,
+		logView:       logView,
+		sysLogView:    sysLogView,
+		stats:         stats,
+		status:        NewStatusModel(),
+		vmView:        NewVMViewModel(),
+		mappingsView:  NewMappingsViewModel(),
+		settingsView:  NewSettingsModel(cfg),
+		tab:           TabLog,
+		logChan:       logChan,
+		syslogChan:    syslogChan,
+		vmRepo:        vmRepo,
+		modelRepo:     modelRepo,
+		tagRepo:       tagRepo,
+		providerRepo:  providerRepo,
+		oauthRepo:     oauthRepo,
+		mappingRepo:   mappingRepo,
+		config:        cfg,
 	}
 }
 
@@ -123,7 +129,10 @@ func (m Model) Init() tea.Cmd {
 	} else if m.vmRepo != nil {
 		cmds = append(cmds, FetchStatusLocal(m.providerRepo, m.oauthRepo))
 		cmds = append(cmds, FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo))
-		cmds = append(cmds, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo))
+		cmds = append(cmds, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo))
+		if m.mappingRepo != nil {
+			cmds = append(cmds, FetchMappingsLocal(m.mappingRepo))
+		}
 	}
 	return tea.Batch(cmds...)
 }
@@ -205,12 +214,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// When picker is open, route all keys to vmview
+		if m.tab == TabVM && m.vmView.pickerMode {
+			m.vmView, _ = m.vmView.Update(msg)
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "tab":
 			switch m.tab {
 			case TabLog:
+				m.tab = TabMappings
+			case TabMappings:
 				m.tab = TabSyslog
 			case TabSyslog:
 				m.tab = TabStats
@@ -227,8 +244,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.tab {
 			case TabLog:
 				m.tab = TabSettings
-			case TabSyslog:
+			case TabMappings:
 				m.tab = TabLog
+			case TabSyslog:
+				m.tab = TabMappings
 			case TabStats:
 				m.tab = TabSyslog
 			case TabStatus:
@@ -242,7 +261,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.apiClient != nil {
 					return m, tea.Batch(FetchVMData(m.apiClient), FetchRawModels(m.apiClient))
 				} else if m.vmRepo != nil {
-					return m, tea.Batch(FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo), FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo))
+					return m, tea.Batch(FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo), FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo))
 				}
 			}
 			return m, nil
@@ -259,7 +278,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if m.apiClient != nil {
 							return m, FetchRawModels(m.apiClient)
 						} else if m.vmRepo != nil {
-							return m, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo)
+							return m, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo)
 						}
 					}
 				}
@@ -298,7 +317,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.apiClient != nil {
 						return m, FetchRawModels(m.apiClient)
 					} else if m.vmRepo != nil {
-						return m, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo)
+						return m, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo)
 					}
 				} else {
 					if m.apiClient != nil {
@@ -306,6 +325,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else if m.vmRepo != nil {
 						return m, FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo)
 					}
+				}
+			} else if m.tab == TabMappings {
+				if m.mappingRepo != nil {
+					return m, FetchMappingsLocal(m.mappingRepo)
 				}
 			}
 			return m, nil
@@ -369,6 +392,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, ClearRateLimitCmd(m.apiClient, p.ID)
 				}
 			}
+		case "d":
+			if m.tab == TabMappings && m.mappingRepo != nil {
+				selected := m.mappingsView.Selected()
+				if selected >= 0 {
+					mapping := m.mappingsView.GetMapping(selected)
+					if mapping != nil {
+						m.mappingRepo.Delete(context.Background(), mapping.SourceModelID)
+						return m, FetchMappingsLocal(m.mappingRepo)
+					}
+				}
+			}
+		case "m":
+			if m.tab == TabVM && m.vmView.modelTab == ModelTabRaw && m.mappingRepo != nil {
+				if !m.vmView.pickerMode && m.vmView.SelectedRawModelID() > 0 && !m.vmView.SelectedRawModelHasMapping() {
+					m.vmView.StartPicker(m.mappingRepo, m.modelRepo, m.vmView.SelectedRawModelID())
+				}
+			}
+		case "M":
+			if m.tab == TabVM && m.vmView.modelTab == ModelTabRaw && m.mappingRepo != nil {
+				if !m.vmView.pickerMode && m.vmView.SelectedRawModelHasMapping() {
+					sourceID := m.vmView.SelectedRawModelID()
+					if sourceID > 0 {
+						m.mappingRepo.Delete(context.Background(), sourceID)
+						return m, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo)
+					}
+				}
+			}
 		}
 
 	case VMViewMsg:
@@ -377,6 +427,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case RawModelListMsg:
 		m.vmView, _ = m.vmView.Update(msg)
+		return m, nil
+
+	case MappingsViewMsg:
+		m.mappingsView, _ = m.mappingsView.Update(msg)
 		return m, nil
 
 	case LogMsg:
@@ -421,6 +475,8 @@ func (m Model) View() string {
 	switch m.tab {
 	case TabLog:
 		b.WriteString(m.logView.View())
+	case TabMappings:
+		b.WriteString(m.mappingsView.View())
 	case TabSyslog:
 		b.WriteString(m.sysLogView.View())
 	case TabStats:
@@ -440,6 +496,7 @@ func (m Model) View() string {
 
 func (m Model) renderHeader() string {
 	logTab := TabInactiveStyle.Render(" Log ")
+	mappingsTab := TabInactiveStyle.Render(" Mappings ")
 	syslogTab := TabInactiveStyle.Render(" Syslog ")
 	statsTab := TabInactiveStyle.Render(" Stats ")
 	statusTab := TabInactiveStyle.Render(" Status ")
@@ -448,6 +505,8 @@ func (m Model) renderHeader() string {
 
 	if m.tab == TabLog {
 		logTab = TabActiveStyle.Render(" Log ")
+	} else if m.tab == TabMappings {
+		mappingsTab = TabActiveStyle.Render(" Mappings ")
 	} else if m.tab == TabSyslog {
 		syslogTab = TabActiveStyle.Render(" Syslog ")
 	} else if m.tab == TabStats {
@@ -467,7 +526,7 @@ func (m Model) renderHeader() string {
 		mode = MutedStyle.Render(" [remote]")
 	}
 
-	header := fmt.Sprintf("%s%s  %s %s %s %s %s %s", title, mode, logTab, syslogTab, statsTab, statusTab, vmTab, settingsTab)
+	header := fmt.Sprintf("%s%s  %s %s %s %s %s %s %s", title, mode, logTab, mappingsTab, syslogTab, statsTab, statusTab, vmTab, settingsTab)
 
 	if m.tab == TabVM {
 		subTabSep := MutedStyle.Render("  |  ")
@@ -488,8 +547,10 @@ func (m Model) renderFooter() string {
 	help := HelpStyle.Render("tab/shift+tab: switch view  ↑/↓: scroll  ←/→: horizontal scroll  pgup/pgdown: jump  r: reset stats  q: quit")
 	if m.tab == TabStatus {
 		help = HelpStyle.Render("↑/↓: navigate  c: clear rate limit  r: refresh  tab: switch view  q: quit")
+	} else if m.tab == TabMappings {
+		help = HelpStyle.Render("↑/↓: navigate  d: delete mapping  r: refresh  tab: switch view  q: quit")
 	} else if m.tab == TabVM && m.vmView.modelTab == ModelTabRaw {
-		help = HelpStyle.Render("↑/↓: navigate  ←/→: switch to Virtual  tab: switch view  r: refresh  q: quit")
+		help = HelpStyle.Render("↑/↓: navigate  m: map model  M: unmap  ←/→: switch to Virtual  tab: switch view  r: refresh  q: quit")
 	} else if m.tab == TabVM && m.vmView.detailMode {
 		help = HelpStyle.Render("↑/↓: navigate  enter: select  esc: back  ←/→: switch tab  tab: switch view  q: quit")
 	} else if m.tab == TabVM {
@@ -498,8 +559,8 @@ func (m Model) renderFooter() string {
 	return lipgloss.Place(m.width, 1, lipgloss.Left, lipgloss.Bottom, help)
 }
 
-func Run(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, oauthRepo repository.OAuthRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse, quit chan<- struct{}) {
-	p := tea.NewProgram(New(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, oauthRepo, cfg, initialLogs, initialSyslogs, initialStats), tea.WithAltScreen())
+func Run(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, oauthRepo repository.OAuthRepository, mappingRepo repository.ModelMappingRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse, quit chan<- struct{}) {
+	p := tea.NewProgram(New(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, oauthRepo, mappingRepo, cfg, initialLogs, initialSyslogs, initialStats), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("TUI error: %v\n", err)
 	}

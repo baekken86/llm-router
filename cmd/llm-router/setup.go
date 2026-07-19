@@ -145,7 +145,7 @@ func runSetup(args []string) {
 	}
 
 	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, loadEncryptionKey())
-	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalRepo)
+	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalRepo, nil)
 
 	existing, _ := providerRepo.GetByName(ctx, *providerName)
 	if existing != nil {

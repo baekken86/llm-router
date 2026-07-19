@@ -21,7 +21,7 @@
       'mc.cost_per_1m_cache': '$/1M.cache',
       'mc.hallucination': 'hall',
       'mc.latency': 'lat',
-      'mc.context_window': 'ctx',
+      'm.context_window': 'ctx',
       'mc.cost_type': 'cost_type',
       'mc.has_reasoning_effort': 'has_effort',
       'mc.reasoning': 'reason',
@@ -37,23 +37,40 @@
       groups[provider].push(m);
     }
     for (const provider of Object.keys(groups)) {
-      groups[provider].sort((a, b) => a.name.localeCompare(b.name));
+      groups[provider].sort((a, b) => a.model_name.localeCompare(b.model_name) || a.reasoning_effort.localeCompare(b.reasoning_effort));
     }
     return groups;
   });
 
   const providers = $derived(Object.keys(grouped).sort());
 
+  const modelCount = $derived(() => {
+    const seen = new Set();
+    for (const m of models) {
+      seen.add(m.model_id);
+    }
+    return seen.size;
+  });
+
   const columns = $derived.by(() => {
     const seen = new Set();
     const cols = [];
     for (const m of models) {
       if (m.tags) {
-        for (const t of m.tags) {
-          const key = t.key;
-          if (!seen.has(key)) {
-            seen.add(key);
-            cols.push({ key, abbrev: abbrevKey(key) });
+        for (const key of Object.keys(m.tags)) {
+          const prefixed = 'mc.' + key;
+          if (!seen.has(prefixed)) {
+            seen.add(prefixed);
+            cols.push({ key: prefixed, abbrev: abbrevKey(prefixed) });
+          }
+        }
+      }
+      if (m.global_metadata) {
+        for (const key of Object.keys(m.global_metadata)) {
+          const prefixed = 'm.' + key;
+          if (!seen.has(prefixed)) {
+            seen.add(prefixed);
+            cols.push({ key: prefixed, abbrev: abbrevKey(prefixed) });
           }
         }
       }
@@ -61,10 +78,16 @@
     return cols;
   });
 
-  function getTagValue(model, key) {
-    if (!model.tags) return '-';
-    const tag = model.tags.find(t => t.key === key);
-    return tag ? tag.value : '-';
+  function getTagValue(entry, colKey) {
+    if (colKey.startsWith('mc.')) {
+      const raw = colKey.slice(3);
+      return entry.tags?.[raw] || '-';
+    }
+    if (colKey.startsWith('m.')) {
+      const raw = colKey.slice(2);
+      return entry.global_metadata?.[raw] || '-';
+    }
+    return entry.global_metadata?.[colKey] || entry.tags?.[colKey] || '-';
   }
 
   function toggleProvider(provider) {
@@ -114,7 +137,7 @@
 
 {#if pickerModelId !== null}
   <ModelPicker
-    excludeModelName={models.find(m => m.id === pickerModelId)?.name || ''}
+    excludeModelName={models.find(m => m.model_id === pickerModelId)?.model_name || ''}
     onSelect={(targetName) => createMapping(pickerModelId, targetName)}
     onClose={() => pickerModelId = null}
   />
@@ -123,7 +146,7 @@
 <div>
   <div class="flex items-center justify-between mb-6">
     <h2 class="text-xl font-bold text-gray-100">Raw Models</h2>
-    <span class="text-sm text-gray-500">{models.length} models across {providers.length} providers</span>
+    <span class="text-sm text-gray-500">{models.length} rows across {providers.length} providers ({modelCount()} models)</span>
   </div>
 
   {#if loading}
@@ -141,7 +164,7 @@
             <div class="flex items-center gap-3">
               <span class="text-gray-500">{expandedProviders[provider] ? '▼' : '▶'}</span>
               <span class="font-medium text-emerald-400">{provider}</span>
-              <span class="text-xs text-gray-500">{grouped[provider].length} models</span>
+              <span class="text-xs text-gray-500">{grouped[provider].length} rows</span>
             </div>
           </div>
           {#if expandedProviders[provider]}
@@ -151,6 +174,7 @@
                   <thead>
                     <tr class="text-gray-500 border-b border-gray-800">
                       <th class="text-left pr-3 py-1">model</th>
+                      <th class="text-left pr-3 py-1">effort</th>
                       <th class="text-left pr-3 py-1">mapping</th>
                       {#each columns as col}
                         <th class="text-right pr-3 py-1">{col.abbrev}</th>
@@ -160,17 +184,18 @@
                   <tbody>
                     {#each grouped[provider] as m}
                       <tr class="border-b border-gray-850 hover:bg-gray-850/50">
-                        <td class="text-left pr-3 py-1 text-emerald-400">{m.name}</td>
+                        <td class="text-left pr-3 py-1 text-emerald-400">{m.model_name}</td>
+                        <td class="text-left pr-3 py-1 text-gray-400">{m.reasoning_effort || '—'}</td>
                         <td class="text-left pr-3 py-1">
                           {#if m.mapping_target_name}
                             <span class="inline-flex items-center gap-1">
                               <span class="text-xs bg-blue-900/50 text-blue-300 px-2 py-0.5 rounded">
                                 → {m.mapping_target_name}
                               </span>
-                              {#if unmapConfirmId === m.id}
+                              {#if unmapConfirmId === m.model_id}
                                 <button
                                   class="text-xs text-red-400 hover:text-red-300"
-                                  onclick={() => deleteMapping(m.id)}
+                                  onclick={() => deleteMapping(m.model_id)}
                                 >Yes</button>
                                 <button
                                   class="text-xs text-gray-500 hover:text-gray-300"
@@ -179,14 +204,14 @@
                               {:else}
                                 <button
                                   class="text-xs text-gray-500 hover:text-red-400"
-                                  onclick={() => unmapConfirmId = m.id}
+                                  onclick={() => unmapConfirmId = m.model_id}
                                 >✕</button>
                               {/if}
                             </span>
                           {:else}
                             <button
                               class="text-xs text-gray-600 hover:text-emerald-400"
-                              onclick={() => pickerModelId = m.id}
+                              onclick={() => pickerModelId = m.model_id}
                             >🔗 map</button>
                           {/if}
                         </td>

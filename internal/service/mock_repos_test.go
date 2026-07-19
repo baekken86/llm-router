@@ -163,7 +163,14 @@ func (m *mockTagRepo) GetByModel(_ context.Context, modelID int64) ([]models.Tag
 }
 
 func (m *mockTagRepo) GetByModelEffort(_ context.Context, modelID int64, effort string) ([]models.Tag, error) {
-	return m.tags[modelID], nil
+	all := m.tags[modelID]
+	var filtered []models.Tag
+	for _, t := range all {
+		if t.ReasoningEffort == effort {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered, nil
 }
 
 func (m *mockTagRepo) GetAvailableEfforts(_ context.Context, modelID int64) ([]string, error) {
@@ -280,27 +287,39 @@ func (m *mockProviderMetaRepo) DeleteByProvider(_ context.Context, providerID in
 // --- Mock GlobalMetadataRepository ---
 
 type mockGlobalMetaRepo struct {
-	data map[string]map[string]string
+	data map[string]map[string]map[string]string // modelName → effort → tags
 }
 
 func newMockGlobalMetaRepo() *mockGlobalMetaRepo {
-	return &mockGlobalMetaRepo{data: make(map[string]map[string]string)}
+	return &mockGlobalMetaRepo{data: make(map[string]map[string]map[string]string)}
 }
 
 func (m *mockGlobalMetaRepo) Set(_ context.Context, modelName, effort string, tags map[string]string) error {
-	m.data[modelName] = tags
+	if m.data[modelName] == nil {
+		m.data[modelName] = make(map[string]map[string]string)
+	}
+	m.data[modelName][effort] = tags
 	return nil
 }
 
 func (m *mockGlobalMetaRepo) GetByModel(_ context.Context, modelName string) (map[string]map[string]string, error) {
-	if v, ok := m.data[modelName]; ok {
-		return map[string]map[string]string{"": v}, nil
+	d, ok := m.data[modelName]
+	if !ok {
+		return nil, nil
 	}
-	return nil, nil
+	return d, nil
 }
 
 func (m *mockGlobalMetaRepo) GetByModelEffort(_ context.Context, modelName, effort string) (map[string]string, error) {
-	return m.data[modelName], nil
+	d, ok := m.data[modelName]
+	if !ok {
+		return nil, nil
+	}
+	tags, ok := d[effort]
+	if !ok {
+		return nil, nil
+	}
+	return tags, nil
 }
 
 func (m *mockGlobalMetaRepo) ListModels(_ context.Context) ([]string, error) {

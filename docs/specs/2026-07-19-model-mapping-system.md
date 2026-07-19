@@ -141,7 +141,7 @@ New component `ModelPicker.svelte`:
 
 ### 7. Migration
 
-New migration `019_add_model_mappings.sql`.
+New migration `020_add_model_mappings.sql`.
 
 ### 8. Cleanup
 

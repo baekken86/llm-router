@@ -59,10 +59,11 @@ type Model struct {
 	providerRepo  repository.ProviderRepository
 	oauthRepo     repository.OAuthRepository
 	mappingRepo   repository.ModelMappingRepository
+	globalMetaRepo repository.GlobalMetadataRepository
 	config        *config.Config
 }
 
-func New(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, oauthRepo repository.OAuthRepository, mappingRepo repository.ModelMappingRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse) Model {
+func New(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, oauthRepo repository.OAuthRepository, mappingRepo repository.ModelMappingRepository, globalMetaRepo repository.GlobalMetadataRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse) Model {
 	logView := NewLogViewModel(500)
 	if len(initialLogs) > 0 {
 		logView.LoadInitial(initialLogs)
@@ -95,6 +96,7 @@ func New(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repos
 		providerRepo:  providerRepo,
 		oauthRepo:     oauthRepo,
 		mappingRepo:   mappingRepo,
+		globalMetaRepo: globalMetaRepo,
 		config:        cfg,
 	}
 }
@@ -406,7 +408,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "m":
 			if m.tab == TabVM && m.vmView.modelTab == ModelTabRaw && m.mappingRepo != nil {
 				if !m.vmView.pickerMode && m.vmView.SelectedRawModelID() > 0 && !m.vmView.SelectedRawModelHasMapping() {
-					m.vmView.StartPicker(m.mappingRepo, m.modelRepo, m.vmView.SelectedRawModelID())
+					m.vmView.StartPicker(m.mappingRepo, m.globalMetaRepo, m.vmView.SelectedRawModel().Name)
 				}
 			}
 		case "M":
@@ -559,8 +561,8 @@ func (m Model) renderFooter() string {
 	return lipgloss.Place(m.width, 1, lipgloss.Left, lipgloss.Bottom, help)
 }
 
-func Run(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, oauthRepo repository.OAuthRepository, mappingRepo repository.ModelMappingRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse, quit chan<- struct{}) {
-	p := tea.NewProgram(New(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, oauthRepo, mappingRepo, cfg, initialLogs, initialSyslogs, initialStats), tea.WithAltScreen())
+func Run(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, oauthRepo repository.OAuthRepository, mappingRepo repository.ModelMappingRepository, globalMetaRepo repository.GlobalMetadataRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse, quit chan<- struct{}) {
+	p := tea.NewProgram(New(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, oauthRepo, mappingRepo, globalMetaRepo, cfg, initialLogs, initialSyslogs, initialStats), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("TUI error: %v\n", err)
 	}

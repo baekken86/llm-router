@@ -15,13 +15,11 @@ type MappingsViewMsg struct {
 }
 
 type MappingEntry struct {
-	SourceModelID   int64
-	SourceModelName string
+	SourceModelID     int64
+	SourceModelName   string
 	SourceProviderName string
-	TargetModelID   int64
-	TargetModelName string
-	TargetProviderName string
-	CreatedAt       string
+	TargetModelName   string
+	CreatedAt         string
 }
 
 type MappingsViewModel struct {
@@ -73,7 +71,6 @@ func (m MappingsViewModel) View() string {
 	header += padRight("source provider", 15)
 	header += padRight("→", 3)
 	header += padRight("target model", 25)
-	header += padRight("target provider", 15)
 	header += "created"
 	b.WriteString(MutedStyle.Render(header))
 	b.WriteString("\n")
@@ -83,7 +80,6 @@ func (m MappingsViewModel) View() string {
 		strings.Repeat("-", 15) + "  " +
 		strings.Repeat("-", 3) + "  " +
 		strings.Repeat("-", 25) + "  " +
-		strings.Repeat("-", 15) + "  " +
 		strings.Repeat("-", 19)
 	b.WriteString(MutedStyle.Render(sep))
 	b.WriteString("\n")
@@ -99,7 +95,6 @@ func (m MappingsViewModel) View() string {
 		line += padRight(trunc(entry.SourceProviderName, 15), 15) + "  "
 		line += padRight("→", 3) + "  "
 		line += padRight(trunc(entry.TargetModelName, 25), 25) + "  "
-		line += padRight(trunc(entry.TargetProviderName, 15), 15) + "  "
 		line += entry.CreatedAt
 
 		if i == m.cursor {
@@ -150,9 +145,7 @@ func FetchMappingsLocal(mappingRepo repository.ModelMappingRepository) tea.Cmd {
 				SourceModelID:     j.SourceModelID,
 				SourceModelName:   j.SourceModelName,
 				SourceProviderName: j.SourceProviderName,
-				TargetModelID:     j.TargetModelID,
 				TargetModelName:   j.TargetModelName,
-				TargetProviderName: j.TargetProviderName,
 				CreatedAt:         j.CreatedAt,
 			})
 		}

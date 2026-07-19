@@ -52,7 +52,7 @@ func setupMappingHandlerTest(t *testing.T) *testMappingDB {
 		)`,
 		`CREATE TABLE model_mappings (
 			source_model_id INTEGER PRIMARY KEY REFERENCES models(id) ON DELETE CASCADE,
-			target_model_id INTEGER NOT NULL REFERENCES models(id) ON DELETE CASCADE,
+			target_model_name TEXT NOT NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
 	} {
@@ -90,7 +90,7 @@ func TestCreateMapping(t *testing.T) {
 	r := chi.NewRouter()
 	r.Post("/models/{id}/mapping", handler.CreateMapping)
 
-	body := `{"target_model_id": 2}`
+	body := `{"target_model_name": "llama"}`
 	req := httptest.NewRequest("POST", "/models/1/mapping", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -103,7 +103,7 @@ func TestCreateMapping(t *testing.T) {
 
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["source_model_id"].(float64) != 1 || resp["target_model_id"].(float64) != 2 {
+	if resp["source_model_id"].(float64) != 1 || resp["target_model_name"] != "llama" {
 		t.Errorf("unexpected response: %v", resp)
 	}
 }
@@ -118,7 +118,8 @@ func TestCreateMapping_SourceEqualsTarget(t *testing.T) {
 	r := chi.NewRouter()
 	r.Post("/models/{id}/mapping", handler.CreateMapping)
 
-	body := `{"target_model_id": 1}`
+	// Source model id=1 has name "@cf/meta/llama", target is same name
+	body := `{"target_model_name": "@cf/meta/llama"}`
 	req := httptest.NewRequest("POST", "/models/1/mapping", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -140,7 +141,7 @@ func TestCreateMapping_SourceNotFound(t *testing.T) {
 	r := chi.NewRouter()
 	r.Post("/models/{id}/mapping", handler.CreateMapping)
 
-	body := `{"target_model_id": 999}`
+	body := `{"target_model_name": "llama"}`
 	req := httptest.NewRequest("POST", "/models/999/mapping", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -152,7 +153,7 @@ func TestCreateMapping_SourceNotFound(t *testing.T) {
 	}
 }
 
-func TestCreateMapping_TargetNotFound(t *testing.T) {
+func TestCreateMapping_EmptyTarget(t *testing.T) {
 	tdb := setupMappingHandlerTest(t)
 	defer tdb.db.Close()
 	seedTestData(tdb)
@@ -162,20 +163,15 @@ func TestCreateMapping_TargetNotFound(t *testing.T) {
 	r := chi.NewRouter()
 	r.Post("/models/{id}/mapping", handler.CreateMapping)
 
-	body := `{"target_model_id": 999}`
+	body := `{"target_model_name": ""}`
 	req := httptest.NewRequest("POST", "/models/1/mapping", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
-	}
-
-	m, _ := tdb.mappingRepo.Get(context.Background(), 1)
-	if m != nil {
-		t.Error("expected mapping not to be created")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -183,7 +179,7 @@ func TestGetMapping(t *testing.T) {
 	tdb := setupMappingHandlerTest(t)
 	defer tdb.db.Close()
 	seedTestData(tdb)
-	tdb.mappingRepo.Set(context.Background(), 1, 2)
+	tdb.mappingRepo.Set(context.Background(), 1, "llama")
 
 	handler := NewModelMappingHandler(tdb.mappingRepo, tdb.modelRepo, slog.Default())
 
@@ -224,7 +220,7 @@ func TestDeleteMapping(t *testing.T) {
 	tdb := setupMappingHandlerTest(t)
 	defer tdb.db.Close()
 	seedTestData(tdb)
-	tdb.mappingRepo.Set(context.Background(), 1, 2)
+	tdb.mappingRepo.Set(context.Background(), 1, "llama")
 
 	handler := NewModelMappingHandler(tdb.mappingRepo, tdb.modelRepo, slog.Default())
 
@@ -250,7 +246,7 @@ func TestListMappings(t *testing.T) {
 	tdb := setupMappingHandlerTest(t)
 	defer tdb.db.Close()
 	seedTestData(tdb)
-	tdb.mappingRepo.Set(context.Background(), 1, 2)
+	tdb.mappingRepo.Set(context.Background(), 1, "llama")
 
 	handler := NewModelMappingHandler(tdb.mappingRepo, tdb.modelRepo, slog.Default())
 
@@ -280,7 +276,7 @@ func TestCascadeDeleteModel(t *testing.T) {
 	tdb := setupMappingHandlerTest(t)
 	defer tdb.db.Close()
 	seedTestData(tdb)
-	tdb.mappingRepo.Set(context.Background(), 1, 2)
+	tdb.mappingRepo.Set(context.Background(), 1, "llama")
 
 	tdb.db.Exec(`DELETE FROM models WHERE id = 1`)
 

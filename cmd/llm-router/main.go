@@ -388,7 +388,7 @@ func runProxy(args []string) {
 
 	if !*noTUI {
 		tuiQuit := make(chan struct{})
-		go tui.Run(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, oauthRepo, modelMappingRepo, cfg, tuiLogs, tuiSyslogs, tuiStats, tuiQuit)
+		go tui.Run(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, oauthRepo, modelMappingRepo, globalMetaRepo, cfg, tuiLogs, tuiSyslogs, tuiStats, tuiQuit)
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		select {

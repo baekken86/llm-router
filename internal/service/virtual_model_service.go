@@ -64,6 +64,9 @@ func (s *virtualModelService) Create(ctx context.Context, req models.CreateVirtu
 		if len(req.FilterExpr) > 0 && string(req.FilterExpr) != "{}" {
 			return nil, fmt.Errorf("cannot specify both composition and filter_expr at top level")
 		}
+		if err := validateCompositionFilterSources(req.Composition); err != nil {
+			return nil, fmt.Errorf("invalid composition: %w", err)
+		}
 		if err := models.ValidateCompositionNode(req.Composition, 0); err != nil {
 			return nil, fmt.Errorf("invalid composition: %w", err)
 		}
@@ -128,6 +131,9 @@ func (s *virtualModelService) Update(ctx context.Context, id int64, req models.U
 		vm.Description = *req.Description
 	}
 	if req.Composition != nil {
+		if err := validateCompositionFilterSources(req.Composition); err != nil {
+			return nil, fmt.Errorf("invalid composition: %w", err)
+		}
 		if err := models.ValidateCompositionNode(req.Composition, 0); err != nil {
 			return nil, fmt.Errorf("invalid composition: %w", err)
 		}
@@ -181,6 +187,9 @@ func (s *virtualModelService) PreviewResolve(ctx context.Context, filterExpr jso
 		if len(filterExpr) > 0 && string(filterExpr) != "{}" {
 			return nil, fmt.Errorf("cannot specify both composition and filter_expr")
 		}
+		if err := validateCompositionFilterSources(composition); err != nil {
+			return nil, fmt.Errorf("invalid composition: %w", err)
+		}
 		if err := models.ValidateCompositionNode(composition, 0); err != nil {
 			return nil, fmt.Errorf("invalid composition: %w", err)
 		}
@@ -224,11 +233,6 @@ func (s *virtualModelService) ResolveModels(ctx context.Context, vm *models.Virt
 
 // resolveLeafModels contains the original leaf VM resolution logic.
 func (s *virtualModelService) resolveLeafModels(ctx context.Context, vm *models.VirtualModel) ([]ResolvedModel, error) {
-	allModels, err := s.modelRepo.ListAll(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list models: %w", err)
-	}
-
 	var filter models.FilterNode
 	if len(vm.FilterExpr) > 0 {
 		if err := json.Unmarshal(vm.FilterExpr, &filter); err != nil {
@@ -243,15 +247,26 @@ func (s *virtualModelService) resolveLeafModels(ctx context.Context, vm *models.
 		}
 	}
 
+	return s.resolveModelsFiltered(ctx, filter, sortExpr, vm.IncludeModels)
+}
+
+// resolveModelsFiltered resolves all models matching filter, applies sort and include_models.
+// Shared by resolveLeafModels and resolveFilterSource.
+func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter models.FilterNode, sortExpr models.SortExpr, includeModels json.RawMessage) ([]ResolvedModel, error) {
+	allModels, err := s.modelRepo.ListAll(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list models: %w", err)
+	}
+
 	type includeRef struct {
 		model    models.Model
 		provider models.Provider
 	}
 	var includes []includeRef
 
-	if len(vm.IncludeModels) > 0 && string(vm.IncludeModels) != "[]" {
+	if len(includeModels) > 0 && string(includeModels) != "[]" {
 		var refs []models.IncludeModelRef
-		if err := json.Unmarshal(vm.IncludeModels, &refs); err != nil {
+		if err := json.Unmarshal(includeModels, &refs); err != nil {
 			return nil, fmt.Errorf("parse include_models: %w", err)
 		}
 		for _, ref := range refs {
@@ -369,7 +384,19 @@ func (s *virtualModelService) evaluateCompositionNode(ctx context.Context, node 
 	if node.IsOperation() {
 		return s.resolveOperation(ctx, node, stack)
 	}
-	return nil, fmt.Errorf("composition node must have either vm or operation")
+	if node.IsFilterSource() {
+		return s.resolveFilterSource(ctx, node)
+	}
+	return nil, fmt.Errorf("composition node must have vm, operation, or filter_expr")
+}
+
+// resolveFilterSource resolves an inline filter source node by querying all models and applying the node's filter+sort.
+func (s *virtualModelService) resolveFilterSource(ctx context.Context, node *models.CompositionNode) ([]ResolvedModel, error) {
+	var filter models.FilterNode
+	if node.FilterExpr != nil {
+		filter = *node.FilterExpr
+	}
+	return s.resolveModelsFiltered(ctx, filter, node.SortExpr, nil)
 }
 
 // resolveVMRef resolves a VM reference node, then applies its filter/sort.
@@ -921,6 +948,25 @@ func validateSortExpr(data json.RawMessage) error {
 	}
 	var s models.SortExpr
 	return json.Unmarshal(data, &s)
+}
+
+// validateCompositionFilterSources walks the composition tree and validates filter_expr
+// on every filter source node using the existing validateFilterNode helper.
+func validateCompositionFilterSources(node *models.CompositionNode) error {
+	if node == nil {
+		return nil
+	}
+	if node.IsFilterSource() {
+		if err := validateFilterNode(node.FilterExpr); err != nil {
+			return fmt.Errorf("filter source filter_expr: %w", err)
+		}
+	}
+	for i := range node.Sources {
+		if err := validateCompositionFilterSources(&node.Sources[i]); err != nil {
+			return fmt.Errorf("source[%d]: %w", i, err)
+		}
+	}
+	return nil
 }
 
 func validateIncludeModels(data json.RawMessage) error {

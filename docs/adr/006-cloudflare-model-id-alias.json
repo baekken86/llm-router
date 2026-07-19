@@ -1,7 +1,8 @@
 {
   "id": "ADR-006",
   "title": "Cloudflare Model ID Alias Strategy",
-  "status": "accepted",
+  "status": "superseded",
+  "superseded_by": "ADR-007",
   "date": "2026-07-19",
   "context": "Cloudflare Workers AI model IDs use @cf/Provider/model format (e.g. @cf/meta/llama-3.1-8b-instruct). The system enriches models via global_metadata_repo.GetByModel() which does exact-match against model_metadata_global (populated from data/models.json). CF IDs never match, so models get zero enrichment metadata.",
   "decisions": [

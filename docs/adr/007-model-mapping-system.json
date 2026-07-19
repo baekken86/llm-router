@@ -1,7 +1,7 @@
 {
   "id": "ADR-007",
   "title": "Model Mapping System",
-  "status": "proposed",
+  "status": "accepted",
   "supersedes": ["ADR-006"],
   "date": "2026-07-19",
   "context": "Cloudflare Workers AI model IDs use @cf/Provider/model format. ADR-006 implemented prefix-strip alias in GetByModel lookup. This is fragile: suffix variations (-it, -instruct) still cause mismatches, and users have no visibility into why metadata is missing or how to fix it. A user-managed mapping approach allows explicit declaration that one model is identical to another.",

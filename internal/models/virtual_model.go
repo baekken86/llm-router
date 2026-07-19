@@ -135,6 +135,12 @@ func (n *CompositionNode) IsOperation() bool {
 	return n.Operation != ""
 }
 
+// IsFilterSource returns true if this node is an inline filter source
+// (no vm, no operation, but filter_expr is set).
+func (n *CompositionNode) IsFilterSource() bool {
+	return n.Vm == "" && n.Operation == "" && n.FilterExpr != nil
+}
+
 // CollectVMNames recursively collects all unique VM names referenced in this tree.
 func (n *CompositionNode) CollectVMNames() []string {
 	if n == nil {
@@ -174,8 +180,14 @@ func ValidateCompositionNode(node *CompositionNode, depth int) error {
 	if hasVM && hasOp {
 		return fmt.Errorf("composition node cannot have both vm and operation")
 	}
-	if !hasVM && !hasOp {
-		return fmt.Errorf("composition node must have either vm or operation")
+	if !hasVM && !hasOp && node.FilterExpr == nil {
+		return fmt.Errorf("composition node must have vm, operation, or filter_expr")
+	}
+	if !hasVM && !hasOp && node.FilterExpr != nil {
+		// Inline filter source — no children allowed
+		if len(node.Sources) > 0 {
+			return fmt.Errorf("filter source node cannot have sources")
+		}
 	}
 
 	if hasOp {

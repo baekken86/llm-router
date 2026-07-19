@@ -57,6 +57,12 @@ var supportedProviders = map[string]providerConfig{
 		baseURL: "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai",
 		auth:    "apikey",
 	},
+	"ollama": {
+		name:    "ollama",
+		apiType: "ollama",
+		baseURL: "http://{host}/v1",
+		auth:    "none",
+	},
 }
 
 type providerConfig struct {
@@ -73,6 +79,7 @@ func runSetup(args []string) {
 	apiKey := fs.String("key", "", "API key (required for API key providers)")
 	baseURL := fs.String("url", "", "Custom base URL (optional, overrides default)")
 	accountID := fs.String("account-id", "", "Account ID (required for cloudflare)")
+	host := fs.String("host", "localhost:11434", "Ollama host (default localhost:11434)")
 	fs.Parse(args)
 
 	if *providerName == "" {
@@ -124,6 +131,11 @@ func runSetup(args []string) {
 		}
 		// Substitute {account_id} in baseURL
 		providerCfg.baseURL = strings.Replace(providerCfg.baseURL, "{account_id}", *accountID, 1)
+	}
+
+	// Substitute {host} in ollama baseURL
+	if providerCfg.apiType == "ollama" {
+		providerCfg.baseURL = strings.Replace(providerCfg.baseURL, "{host}", *host, 1)
 	}
 
 	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, loadEncryptionKey())
@@ -342,6 +354,7 @@ func printSupportedProviders() {
 	fmt.Println("    anthropic       Anthropic API (Claude)")
 	fmt.Println("    openrouter      OpenRouter (multi-provider)")
 	fmt.Println("    cloudflare      Cloudflare Workers AI (--account-id required)")
+	fmt.Println("    ollama          Ollama local models (--host, default localhost:11434)")
 	fmt.Println()
 	fmt.Println("  Custom (requires --url and --key):")
 	fmt.Println("    llm-router setup --provider my-provider --url https://api.example.com/v1 --key sk-...")

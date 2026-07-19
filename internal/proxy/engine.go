@@ -514,6 +514,19 @@ func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey s
 		if err != nil {
 			return nil, nil, err
 		}
+	} else if rm.Provider.APIType == models.APITypeOllama {
+		// Ollama local: OpenAI-compatible wire format.
+		// Explicit branch (not generic else) to allow per-provider hooks
+		// without re-plumbing the engine: tool calling parity,
+		// context-length differences, model-not-found fallback to tag-pull.
+		req.Model = rm.Model.Name
+		if rm.ReasoningEffort != "" {
+			req.ReasoningEffort = &rm.ReasoningEffort
+		}
+		resp, err = e.openaiClient.ChatCompletion(rm.Provider.BaseURL, apiKey, req)
+		if err != nil {
+			return nil, nil, err
+		}
 	} else {
 		req.Model = rm.Model.Name
 		if rm.ReasoningEffort != "" {
@@ -553,6 +566,16 @@ func (e *Engine) sendStreamRequest(r *http.Request, rm service.ResolvedModel, ap
 		// without re-plumbing the engine: rate limit format, error normalization,
 		// streaming diffs, custom retry-after parsing. Body identical to OpenAI
 		// else branch today; differences will land here as needed.
+		req.Model = rm.Model.Name
+		if rm.ReasoningEffort != "" {
+			req.ReasoningEffort = &rm.ReasoningEffort
+		}
+		return e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, req)
+	} else if rm.Provider.APIType == models.APITypeOllama {
+		// Ollama local: OpenAI-compatible wire format.
+		// Explicit branch (not generic else) to allow per-provider hooks
+		// without re-plumbing the engine: tool calling parity,
+		// context-length differences, model-not-found fallback to tag-pull.
 		req.Model = rm.Model.Name
 		if rm.ReasoningEffort != "" {
 			req.ReasoningEffort = &rm.ReasoningEffort

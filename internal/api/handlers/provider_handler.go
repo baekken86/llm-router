@@ -38,13 +38,17 @@ func (h *ProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" || req.APIType == "" || req.BaseURL == "" || req.APIKey == "" {
-		writeError(w, http.StatusBadRequest, "name, api_type, base_url, and api_key are required")
+	if req.Name == "" || req.APIType == "" || req.BaseURL == "" {
+		writeError(w, http.StatusBadRequest, "name, api_type, and base_url are required")
+		return
+	}
+	if req.APIKey == "" && req.APIType != models.APITypeOllama {
+		writeError(w, http.StatusBadRequest, "api_key is required")
 		return
 	}
 
-	if req.APIType != models.APITypeOpenAI && req.APIType != models.APITypeAnthropic && req.APIType != models.APITypeCloudflare {
-		writeError(w, http.StatusBadRequest, "api_type must be 'openai', 'anthropic', or 'cloudflare'")
+	if req.APIType != models.APITypeOpenAI && req.APIType != models.APITypeAnthropic && req.APIType != models.APITypeCloudflare && req.APIType != models.APITypeOllama {
+		writeError(w, http.StatusBadRequest, "api_type must be 'openai', 'anthropic', 'cloudflare', or 'ollama'")
 		return
 	}
 

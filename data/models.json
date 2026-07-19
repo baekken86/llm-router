@@ -184,6 +184,8 @@
       "hallucination": 26.2,
       "cost_per_task": 0.24,
       "speed": 91.0,
+      "cost_per_1m_input": 1.0,
+      "cost_per_1m_output": 5.0,
       "has_reasoning_effort": false
     },
     {
@@ -193,12 +195,6 @@
       "hallucination": 51.0,
       "cost_per_task": 0.41,
       "speed": 38.0,
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "claude-fable-5",
-      "cost_per_1m_input": 10.0,
-      "cost_per_1m_output": 50.0,
       "has_reasoning_effort": false
     },
     {
@@ -284,12 +280,6 @@
       "has_reasoning_effort": false
     },
     {
-      "name": "claude-sonnet-4",
-      "cost_per_1m_input": 3.0,
-      "cost_per_1m_output": 15.0,
-      "has_reasoning_effort": false
-    },
-    {
       "name": "claude-sonnet-4-6",
       "has_reasoning_effort": true,
       "efforts": {
@@ -301,12 +291,6 @@
           "speed": 56.0
         }
       }
-    },
-    {
-      "name": "claude-sonnet-4.5",
-      "cost_per_1m_input": 3.0,
-      "cost_per_1m_output": 15.0,
-      "has_reasoning_effort": false
     },
     {
       "name": "claude-sonnet-4.6-(non-reasoning)",
@@ -844,19 +828,6 @@
       "has_reasoning_effort": false
     },
     {
-      "name": "gemini-3.1-flash-lite-preview",
-      "cost_per_1m_input": 0.25,
-      "cost_per_1m_output": 1.5,
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "gemini-3.1-pro",
-      "has_reasoning_effort": true,
-      "efforts": {
-        "high": {}
-      }
-    },
-    {
       "name": "gemini-3.1-pro-preview",
       "intelligence": 46.0,
       "coding": 68.8,
@@ -930,12 +901,6 @@
       "hallucination": 99.0,
       "cost_per_1m_input": 0.05,
       "cost_per_1m_output": 0.1,
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "gemma-3n-4b",
-      "cost_per_1m_input": 0.06,
-      "cost_per_1m_output": 0.12,
       "has_reasoning_effort": false
     },
     {
@@ -1167,12 +1132,6 @@
     {
       "name": "gpt-4.5-(preview)",
       "intelligence": 14.0,
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "gpt-4o-(2024-05-13)",
-      "cost_per_1m_input": 5.0,
-      "cost_per_1m_output": 15.0,
       "has_reasoning_effort": false
     },
     {
@@ -1481,16 +1440,6 @@
       }
     },
     {
-      "name": "gpt-5.4-pro",
-      "has_reasoning_effort": true,
-      "efforts": {
-        "xhigh": {
-          "cost_per_1m_input": 30.0,
-          "cost_per_1m_output": 180.0
-        }
-      }
-    },
-    {
       "name": "gpt-5.5",
       "cost_per_1m_input": 5.0,
       "cost_per_1m_output": 30.0,
@@ -1556,16 +1505,6 @@
       "intelligence": 34.0,
       "hallucination": 64.0,
       "has_reasoning_effort": false
-    },
-    {
-      "name": "gpt-5.5-pro",
-      "has_reasoning_effort": true,
-      "efforts": {
-        "xhigh": {
-          "cost_per_1m_input": 30.0,
-          "cost_per_1m_output": 180.0
-        }
-      }
     },
     {
       "name": "gpt-5.6-luna",
@@ -2000,12 +1939,6 @@
       "has_reasoning_effort": false
     },
     {
-      "name": "grok-build-0.1",
-      "cost_per_1m_input": 1.0,
-      "cost_per_1m_output": 2.0,
-      "has_reasoning_effort": false
-    },
-    {
       "name": "grok-build-0.1-0616",
       "intelligence": 40.0,
       "coding": 51.5,
@@ -2388,12 +2321,6 @@
       "has_reasoning_effort": false
     },
     {
-      "name": "llama-3.1-8b-instruct",
-      "cost_per_1m_input": 0.02,
-      "cost_per_1m_output": 0.03,
-      "has_reasoning_effort": false
-    },
-    {
       "name": "llama-3.1-nemotron-70b",
       "intelligence": 8.0,
       "hallucination": 69.0,
@@ -2438,16 +2365,6 @@
       "hallucination": 85.0,
       "cost_per_task": 0.08,
       "speed": 87.0,
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "llama-3.3-70b-instruct",
-      "cost_per_1m_input": 0.1,
-      "cost_per_1m_output": 0.32,
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "llama-3.3-70b-instruct-(free)",
       "has_reasoning_effort": false
     },
     {
@@ -2690,12 +2607,6 @@
       "has_reasoning_effort": false
     },
     {
-      "name": "ministral-3-14b-2512",
-      "cost_per_1m_input": 0.2,
-      "cost_per_1m_output": 0.2,
-      "has_reasoning_effort": false
-    },
-    {
       "name": "ministral-3-3b",
       "intelligence": 7.0,
       "coding": 4.8,
@@ -2705,24 +2616,12 @@
       "has_reasoning_effort": false
     },
     {
-      "name": "ministral-3-3b-2512",
-      "cost_per_1m_input": 0.1,
-      "cost_per_1m_output": 0.1,
-      "has_reasoning_effort": false
-    },
-    {
       "name": "ministral-3-8b",
       "intelligence": 9.0,
       "coding": 9.7,
       "hallucination": 89.0,
       "cost_per_task": 0.18,
       "speed": 112.0,
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "ministral-3-8b-2512",
-      "cost_per_1m_input": 0.15,
-      "cost_per_1m_output": 0.15,
       "has_reasoning_effort": false
     },
     {
@@ -2755,12 +2654,6 @@
       "hallucination": 84.0,
       "cost_per_task": 0.06,
       "speed": 50.0,
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "mistral-large-3-2512",
-      "cost_per_1m_input": 0.5,
-      "cost_per_1m_output": 1.5,
       "has_reasoning_effort": false
     },
     {
@@ -2914,16 +2807,6 @@
       "has_reasoning_effort": false
     },
     {
-      "name": "nemotron-3-super",
-      "cost_per_1m_input": 0.08,
-      "cost_per_1m_output": 0.45,
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "nemotron-3-super-(free)",
-      "has_reasoning_effort": false
-    },
-    {
       "name": "nemotron-3-ultra",
       "intelligence": 38.0,
       "coding": 49.3,
@@ -2932,10 +2815,6 @@
       "speed": 200.0,
       "cost_per_1m_input": 0.5,
       "cost_per_1m_output": 2.2,
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "nemotron-3-ultra-(free)",
       "has_reasoning_effort": false
     },
     {
@@ -2960,16 +2839,6 @@
       "coding": 36.5,
       "hallucination": 83.0,
       "speed": 113.0,
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "north-mini-code-(free)",
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "nova-2-lite",
-      "cost_per_1m_input": 0.3,
-      "cost_per_1m_output": 2.5,
       "has_reasoning_effort": false
     },
     {
@@ -3157,12 +3026,6 @@
       }
     },
     {
-      "name": "o3-mini-high",
-      "cost_per_1m_input": 1.1,
-      "cost_per_1m_output": 4.4,
-      "has_reasoning_effort": false
-    },
-    {
       "name": "o3-pro",
       "intelligence": 33.0,
       "speed": 40.0,
@@ -3225,22 +3088,6 @@
       "name": "openchat-3.5",
       "intelligence": 3.0,
       "has_reasoning_effort": false
-    },
-    {
-      "name": "opus-4.7",
-      "has_reasoning_effort": true,
-      "efforts": {
-        "max": {},
-        "medium": {}
-      }
-    },
-    {
-      "name": "opus-4.8",
-      "has_reasoning_effort": true,
-      "efforts": {
-        "max": {},
-        "medium": {}
-      }
     },
     {
       "name": "palm-2",
@@ -3375,12 +3222,6 @@
       "has_reasoning_effort": false
     },
     {
-      "name": "qwen3-235b-a22b-thinking-2507",
-      "cost_per_1m_input": 0.1495,
-      "cost_per_1m_output": 1.495,
-      "has_reasoning_effort": false
-    },
-    {
       "name": "qwen3-30b",
       "intelligence": 7.0,
       "hallucination": 87.0,
@@ -3394,12 +3235,6 @@
       "hallucination": 95.0,
       "cost_per_task": 0.07,
       "speed": 119.0,
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "qwen3-30b-a3b-thinking-2507",
-      "cost_per_1m_input": 0.13,
-      "cost_per_1m_output": 1.56,
       "has_reasoning_effort": false
     },
     {
@@ -3492,12 +3327,6 @@
       "hallucination": 93.0,
       "cost_per_task": 0.17,
       "speed": 172.0,
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "qwen3-next-80b-a3b-thinking",
-      "cost_per_1m_input": 0.0975,
-      "cost_per_1m_output": 0.78,
       "has_reasoning_effort": false
     },
     {
@@ -3682,10 +3511,6 @@
       "has_reasoning_effort": false
     },
     {
-      "name": "qwen3.7-plus-(thinking)",
-      "has_reasoning_effort": false
-    },
-    {
       "name": "qwq-32b",
       "intelligence": 13.0,
       "speed": 31.0,
@@ -3694,12 +3519,6 @@
     {
       "name": "qwq-32b-preview",
       "intelligence": 9.0,
-      "has_reasoning_effort": false
-    },
-    {
-      "name": "r1",
-      "cost_per_1m_input": 0.7,
-      "cost_per_1m_output": 2.5,
       "has_reasoning_effort": false
     },
     {
@@ -3827,13 +3646,6 @@
       "cost_per_1m_input": 2.0,
       "cost_per_1m_output": 8.0,
       "has_reasoning_effort": false
-    },
-    {
-      "name": "sonnet-4.6",
-      "has_reasoning_effort": true,
-      "efforts": {
-        "medium": {}
-      }
     },
     {
       "name": "step-3.5-flash",

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/chris/llm-router/internal/db"
 	"github.com/chris/llm-router/internal/models"
@@ -50,6 +51,12 @@ var supportedProviders = map[string]providerConfig{
 		baseURL: "https://openrouter.ai/api/v1",
 		auth:    "apikey",
 	},
+	"cloudflare": {
+		name:    "cloudflare",
+		apiType: "cloudflare",
+		baseURL: "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai",
+		auth:    "apikey",
+	},
 }
 
 type providerConfig struct {
@@ -62,9 +69,10 @@ type providerConfig struct {
 func runSetup(args []string) {
 	fs := flag.NewFlagSet("setup", flag.ExitOnError)
 	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
-	providerName := fs.String("provider", "", "Provider name (required). Supported: claude-code, opencode-go, opencode-zen, openai, anthropic, openrouter")
+	providerName := fs.String("provider", "", "Provider name (required). Supported: claude-code, opencode-go, opencode-zen, openai, anthropic, openrouter, cloudflare")
 	apiKey := fs.String("key", "", "API key (required for API key providers)")
 	baseURL := fs.String("url", "", "Custom base URL (optional, overrides default)")
+	accountID := fs.String("account-id", "", "Account ID (required for cloudflare)")
 	fs.Parse(args)
 
 	if *providerName == "" {
@@ -108,6 +116,16 @@ func runSetup(args []string) {
 		providerCfg.baseURL = *baseURL
 	}
 
+	// Validate cloudflare account_id
+	if providerCfg.apiType == "cloudflare" {
+		if *accountID == "" {
+			logger.Error("--account-id is required for cloudflare provider")
+			os.Exit(1)
+		}
+		// Substitute {account_id} in baseURL
+		providerCfg.baseURL = strings.Replace(providerCfg.baseURL, "{account_id}", *accountID, 1)
+	}
+
 	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, loadEncryptionKey())
 	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalRepo)
 
@@ -133,10 +151,11 @@ func runSetup(args []string) {
 	}
 
 	provider, err := providerService.Create(ctx, models.CreateProviderRequest{
-		Name:    providerCfg.name,
-		APIType: models.APIType(providerCfg.apiType),
-		BaseURL: providerCfg.baseURL,
-		APIKey:  *apiKey,
+		Name:      providerCfg.name,
+		APIType:   models.APIType(providerCfg.apiType),
+		BaseURL:   providerCfg.baseURL,
+		APIKey:    *apiKey,
+		AccountID: *accountID,
 	})
 	if err != nil {
 		logger.Error("failed to create provider", "error", err)
@@ -147,7 +166,9 @@ func runSetup(args []string) {
 	fmt.Printf("  Type: %s\n", providerCfg.apiType)
 	fmt.Printf("  URL:  %s\n", providerCfg.baseURL)
 
-	if providerCfg.auth == "oauth" {
+	if providerCfg.apiType == "cloudflare" {
+		createPredefinedModels(ctx, modelRepo, tagRepo, globalRepo, provider, "cloudflare", logger)
+	} else if providerCfg.auth == "oauth" {
 		handleOAuthSetup(ctx, provider, oauthRepo, providerRepo, providerService, logger)
 		createPredefinedModels(ctx, modelRepo, tagRepo, globalRepo, provider, providerCfg.name, logger)
 	} else {
@@ -234,6 +255,17 @@ func createPredefinedModels(ctx context.Context, modelRepo repository.ModelRepos
 			"claude-opus-4-8",
 			"claude-fable-5-(with-fallback)",
 		},
+		"cloudflare": {
+			"@cf/meta/llama-3.1-8b-instruct",
+			"@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+			"@cf/mistralai/mistral-7b-instruct-v0.2",
+			"@cf/mistralai/mistral-small-3.1-24b-instruct",
+			"@cf/google/gemma-3-12b-it",
+			"@cf/google/gemma-4-26b-a4b-it",
+			"@cf/qwen/qwen2.5-coder-32b-instruct",
+			"@cf/deepseek/deepseek-r1-distill-qwen-32b",
+			"@cf/defog/sqlcoder-7b-2",
+		},
 	}
 
 	modelNames, exists := predefined[providerName]
@@ -309,6 +341,7 @@ func printSupportedProviders() {
 	fmt.Println("    openai          OpenAI (GPT-4o, o3, etc.)")
 	fmt.Println("    anthropic       Anthropic API (Claude)")
 	fmt.Println("    openrouter      OpenRouter (multi-provider)")
+	fmt.Println("    cloudflare      Cloudflare Workers AI (--account-id required)")
 	fmt.Println()
 	fmt.Println("  Custom (requires --url and --key):")
 	fmt.Println("    llm-router setup --provider my-provider --url https://api.example.com/v1 --key sk-...")

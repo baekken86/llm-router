@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -613,5 +614,121 @@ func TestHandleAnthropicMessagesStream_AllProvidersFailed_ApiKeySkipped(t *testi
 	}
 	if proxyLog.VirtualModel != vmName {
 		t.Errorf("proxy log VirtualModel = %q, want %q", proxyLog.VirtualModel, vmName)
+	}
+}
+
+func TestSendRequest_Cloudflare_ExplicitBranch(t *testing.T) {
+	// Mock test server that records request details
+	var gotPath, gotMethod, gotAuth string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"cf-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer ts.Close()
+
+	engine, _ := newTestEngine(&mockVMService{}, &mockProviderService{}, &mockOAuthService{})
+
+	rm := service.ResolvedModel{
+		Model:    models.Model{ID: 1, ProviderID: 1, Name: "@cf/meta/llama-3-8b-instruct"},
+		Provider: models.Provider{ID: 1, Name: "cloudflare", APIType: models.APITypeCloudflare, BaseURL: ts.URL},
+	}
+
+	chatReq := ChatCompletionRequest{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+	}
+
+	resp, result, err := engine.sendRequest(nil, rm, "test-key", chatReq)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Assert request hit the OpenAI-compatible endpoint via cloudflare branch
+	if gotPath != "/v1/chat/completions" {
+		t.Errorf("request path = %q, want /v1/chat/completions", gotPath)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("request method = %q, want POST", gotMethod)
+	}
+	if gotAuth != "Bearer test-key" {
+		t.Errorf("auth header = %q, want %q", gotAuth, "Bearer test-key")
+	}
+
+	// Assert response parsed correctly
+	if resp == nil {
+		t.Fatal("expected non-nil response")
+	}
+	if len(resp.Choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(resp.Choices))
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+}
+
+func TestSendStreamRequest_Cloudflare_ExplicitBranch(t *testing.T) {
+	// Mock test server that returns an SSE stream
+	var gotPath, gotMethod, gotAuth string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "data: {\"id\":\"cf-s1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n")
+		fmt.Fprintf(w, "data: {\"id\":\"cf-s2\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n")
+		fmt.Fprintf(w, "data: {\"id\":\"cf-s3\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+	}))
+	defer ts.Close()
+
+	engine, _ := newTestEngine(&mockVMService{}, &mockProviderService{}, &mockOAuthService{})
+
+	rm := service.ResolvedModel{
+		Model:    models.Model{ID: 1, ProviderID: 1, Name: "@cf/meta/llama-3-8b-instruct"},
+		Provider: models.Provider{ID: 1, Name: "cloudflare", APIType: models.APITypeCloudflare, BaseURL: ts.URL},
+	}
+
+	chatReq := ChatCompletionRequest{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+	}
+
+	body, httpResp, err := engine.sendStreamRequest(nil, rm, "test-key", chatReq)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer body.Close()
+
+	// Assert request hit the OpenAI-compatible endpoint via cloudflare branch
+	if gotPath != "/v1/chat/completions" {
+		t.Errorf("request path = %q, want /v1/chat/completions", gotPath)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("request method = %q, want POST", gotMethod)
+	}
+	if gotAuth != "Bearer test-key" {
+		t.Errorf("auth header = %q, want %q", gotAuth, "Bearer test-key")
+	}
+
+	if httpResp == nil {
+		t.Fatal("expected non-nil HTTP response")
+	}
+	if httpResp.StatusCode != http.StatusOK {
+		t.Errorf("HTTP status = %d, want %d", httpResp.StatusCode, http.StatusOK)
+	}
+
+	// Read the SSE stream and verify we get data
+	data, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("failed to read stream: %v", err)
+	}
+	streamContent := string(data)
+	if !strings.Contains(streamContent, "[DONE]") {
+		t.Errorf("stream missing [DONE] marker, got: %s", streamContent)
+	}
+	if !strings.Contains(streamContent, "chat.completion.chunk") {
+		t.Errorf("stream missing chunk objects, got: %s", streamContent)
 	}
 }

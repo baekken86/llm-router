@@ -5,8 +5,9 @@ import "time"
 type APIType string
 
 const (
-	APITypeOpenAI    APIType = "openai"
-	APITypeAnthropic APIType = "anthropic"
+	APITypeOpenAI     APIType = "openai"
+	APITypeAnthropic  APIType = "anthropic"
+	APITypeCloudflare APIType = "cloudflare"
 )
 
 type Provider struct {
@@ -15,6 +16,7 @@ type Provider struct {
 	APIType         APIType           `json:"api_type"`
 	BaseURL         string            `json:"base_url"`
 	APIKeyEncrypted string            `json:"-"`
+	AccountID       string            `json:"account_id,omitempty"`
 	Metadata        []ProviderMetadata `json:"metadata,omitempty"`
 	CreatedAt       time.Time         `json:"created_at"`
 	UpdatedAt       time.Time         `json:"updated_at"`
@@ -29,11 +31,12 @@ type ProviderMetadata struct {
 }
 
 type CreateProviderRequest struct {
-	Name     string            `json:"name"`
-	APIType  APIType           `json:"api_type"`
-	BaseURL  string            `json:"base_url"`
-	APIKey   string            `json:"api_key"`
-	Metadata map[string]string `json:"metadata,omitempty"`
+	Name      string            `json:"name"`
+	APIType   APIType           `json:"api_type"`
+	BaseURL   string            `json:"base_url"`
+	APIKey    string            `json:"api_key"`
+	AccountID string            `json:"account_id,omitempty"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
 type UpdateProviderRequest struct {

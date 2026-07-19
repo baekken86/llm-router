@@ -43,6 +43,7 @@ type ProviderStatus struct {
 	OAuthEmail       string `json:"oauth_email,omitempty"`
 	APIKeyConfigured bool   `json:"api_key_configured"`
 	BaseURL          string `json:"base_url"`
+	AccountID        string `json:"account_id,omitempty"`
 }
 
 type StatusResponse struct {
@@ -65,9 +66,10 @@ func (h *StatusHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	var result []ProviderStatus
 	for _, p := range providers {
 		ps := ProviderStatus{
-			ID:      p.ID,
-			Name:    p.Name,
-			BaseURL: p.BaseURL,
+			ID:        p.ID,
+			Name:      p.Name,
+			BaseURL:   p.BaseURL,
+			AccountID: p.AccountID,
 		}
 
 		if rl, ok := rlMap[p.ID]; ok {

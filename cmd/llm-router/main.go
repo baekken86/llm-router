@@ -217,10 +217,11 @@ func runProxy(args []string) {
 	keyRepo := repository.NewProxyKeyRepository(database)
 	globalMetaRepo := repository.NewGlobalMetadataRepository(database)
 	oauthRepo := repository.NewOAuthRepository(database)
+	modelMappingRepo := repository.NewModelMappingRepository(database)
 
 	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, keyBytes)
-	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalMetaRepo, nil)
-	vmService := service.NewVirtualModelService(vmRepo, modelRepo, tagRepo, providerRepo, providerMetadataRepo, globalMetaRepo, nil)
+	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalMetaRepo, modelMappingRepo)
+	vmService := service.NewVirtualModelService(vmRepo, modelRepo, tagRepo, providerRepo, providerMetadataRepo, globalMetaRepo, modelMappingRepo)
 	keyService := service.NewKeyService(keyRepo)
 	adminService := service.NewAdminService(pass)
 
@@ -340,6 +341,7 @@ func runProxy(args []string) {
 	statusHandler := handlers.NewStatusHandler(engine, providerService, oauthService)
 	syslogHandler := handlers.NewSyslogHandler(logRepo)
 	settingsHandler := handlers.NewSettingsHandler(cfg, engine)
+	mappingHandler := handlers.NewModelMappingHandler(modelMappingRepo, modelRepo, logger)
 
 	oauthHandler := handlers.NewOAuthHandler(func(key string) int64 {
 		pk, _ := keyService.ValidateKey(context.Background(), key)
@@ -357,7 +359,7 @@ func runProxy(args []string) {
 		logger.Warn("web UI not embedded", "error", err)
 	}
 
-	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, metadataHandler, statusHandler, syslogHandler, settingsHandler, nil, keyService, adminService, adminHandler, webFS)
+	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, metadataHandler, statusHandler, syslogHandler, settingsHandler, mappingHandler, keyService, adminService, adminHandler, webFS)
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middlewareAuthOrOAuth(keyService, oauthHandler))

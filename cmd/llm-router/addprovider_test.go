@@ -69,19 +69,21 @@ func TestAddProvider_CloudflareBaseURL(t *testing.T) {
 
 func TestAddProvider_CloudflarePredefinedModels(t *testing.T) {
 	expectedModels := []string{
-		"@cf/meta/llama-3.1-8b-instruct",
-		"@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-		"@cf/mistralai/mistral-7b-instruct-v0.2",
-		"@cf/mistralai/mistral-small-3.1-24b-instruct",
-		"@cf/google/gemma-3-12b-it",
+		"@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
 		"@cf/google/gemma-4-26b-a4b-it",
-		"@cf/qwen/qwen2.5-coder-32b-instruct",
-		"@cf/deepseek/deepseek-r1-distill-qwen-32b",
-		"@cf/defog/sqlcoder-7b-2",
+		"@cf/moonshotai/kimi-k2.6",
+		"@cf/moonshotai/kimi-k2.7-code",
+		"@cf/nvidia/nemotron-3-120b-a12b",
+		"@cf/openai/gpt-oss-120b",
+		"@cf/openai/gpt-oss-20b",
+		"@cf/qwen/qwen3-30b-a3b-fp8",
+		"@cf/qwen/qwq-32b",
+		"@cf/zai-org/glm-4.7-flash",
+		"@cf/zai-org/glm-5.2",
 	}
 
-	if len(expectedModels) != 9 {
-		t.Errorf("expected 9 predefined models, got %d", len(expectedModels))
+	if len(expectedModels) != 11 {
+		t.Errorf("expected 11 predefined models, got %d", len(expectedModels))
 	}
 
 	// Verify all model names start with @cf/

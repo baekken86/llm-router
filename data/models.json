@@ -947,6 +947,10 @@
       "has_reasoning_effort": false
     },
     {
+      "name": "gemma-4-26b-a4b-it",
+      "has_reasoning_effort": false
+    },
+    {
       "name": "gemma-4-31b",
       "intelligence": 22.0,
       "coding": 33.2,
@@ -2807,6 +2811,10 @@
       "has_reasoning_effort": false
     },
     {
+      "name": "nemotron-3-120b-a12b",
+      "has_reasoning_effort": false
+    },
+    {
       "name": "nemotron-3-ultra",
       "intelligence": 38.0,
       "coding": 49.3,
@@ -3235,6 +3243,10 @@
       "hallucination": 95.0,
       "cost_per_task": 0.07,
       "speed": 119.0,
+      "has_reasoning_effort": false
+    },
+    {
+      "name": "qwen3-30b-a3b-fp8",
       "has_reasoning_effort": false
     },
     {

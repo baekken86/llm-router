@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/chris/llm-router/internal/models"
@@ -42,8 +43,13 @@ func (h *ProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.APIType != models.APITypeOpenAI && req.APIType != models.APITypeAnthropic {
-		writeError(w, http.StatusBadRequest, "api_type must be 'openai' or 'anthropic'")
+	if req.APIType != models.APITypeOpenAI && req.APIType != models.APITypeAnthropic && req.APIType != models.APITypeCloudflare {
+		writeError(w, http.StatusBadRequest, "api_type must be 'openai', 'anthropic', or 'cloudflare'")
+		return
+	}
+
+	if req.APIType == models.APITypeCloudflare && strings.TrimSpace(req.AccountID) == "" {
+		writeError(w, http.StatusBadRequest, "account_id is required when api_type is 'cloudflare'")
 		return
 	}
 

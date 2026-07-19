@@ -31,7 +31,7 @@ func (h *ModelMappingHandler) Routes() chi.Router {
 }
 
 type createMappingRequest struct {
-	TargetModelID int64 `json:"target_model_id"`
+	TargetModelName string `json:"target_model_name"`
 }
 
 func (h *ModelMappingHandler) CreateMapping(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +47,12 @@ func (h *ModelMappingHandler) CreateMapping(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Validate target name not empty
+	if req.TargetModelName == "" {
+		writeError(w, http.StatusBadRequest, "target_model_name is required")
+		return
+	}
+
 	// Validate source exists
 	source, err := h.modelRepo.GetByID(r.Context(), id)
 	if err != nil || source == nil {
@@ -54,20 +60,13 @@ func (h *ModelMappingHandler) CreateMapping(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Validate target exists
-	target, err := h.modelRepo.GetByID(r.Context(), req.TargetModelID)
-	if err != nil || target == nil {
-		writeError(w, http.StatusNotFound, "target model not found")
-		return
-	}
-
-	// Validate source != target
-	if id == req.TargetModelID {
+	// Validate source name != target name
+	if source.Name == req.TargetModelName {
 		writeError(w, http.StatusBadRequest, "source and target must be different")
 		return
 	}
 
-	if err := h.mappingRepo.Set(r.Context(), id, req.TargetModelID); err != nil {
+	if err := h.mappingRepo.Set(r.Context(), id, req.TargetModelName); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

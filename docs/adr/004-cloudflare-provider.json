@@ -1,0 +1,23 @@
+{
+  "id": "ADR-004",
+  "title": "Cloudflare Provider Architecture",
+  "status": "accepted",
+  "date": "2026-07-19",
+  "context": "Cloudflare Workers AI uses OpenAI-compatible API. Account ID embedded in URL path. Base URL pattern: https://api.cloudflare.com/client/v4/accounts/{account_id}/ai. Final URL hit: https://api.cloudflare.com/client/v4/accounts/{id}/ai/v1/chat/completions.",
+  "decisions": [
+    {
+      "id": "Q1",
+      "question": "How to add cloudflare provider?",
+      "answer": "add-provider --type cloudflare AND setup --provider cloudflare both call createPredefinedModels() for 9 models. No discover."
+    },
+    {
+      "id": "Q2",
+      "question": "How to store account_id?",
+      "answer": "account_id as column on providers table (TEXT NOT NULL DEFAULT ''). Set at creation only. Immutable via update."
+    }
+  ],
+  "consequences": [
+    "Migration 018 adds column + relaxes CHECK",
+    "Base URL pattern + double-path trap documented"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "id": "ADR-006",
+  "title": "Cloudflare Model ID Alias Strategy",
+  "status": "accepted",
+  "date": "2026-07-19",
+  "context": "Cloudflare Workers AI model IDs use @cf/Provider/model format (e.g. @cf/meta/llama-3.1-8b-instruct). The system enriches models via global_metadata_repo.GetByModel() which does exact-match against model_metadata_global (populated from data/models.json). CF IDs never match, so models get zero enrichment metadata.",
+  "decisions": [
+    {
+      "id": "D1",
+      "question": "How to resolve CF model IDs to canonical names?",
+      "answer": "Strip @cf/Provider/ prefix in GetByModel lookup. If modelName starts with @cf/ and has exactly 3 slash-separated parts, use the 3rd component as lookupName. Otherwise use modelName unchanged."
+    }
+  ],
+  "alternatives": [
+    {
+      "id": "A1",
+      "description": "Add @cf/... entries directly to models.json",
+      "status": "rejected",
+      "reason": "Creates duplicate entries for same model under different names. Fragile if CF changes naming. The alias approach is generic and extendable to other prefixed providers."
+    }
+  ],
+  "consequences": [
+    "Simple, generic: extendable to other @-prefixed providers",
+    "Requires models.json entries to use canonical names that CF IDs strip to",
+    "No duplicate model entries in models.json",
+    "Lookup is transparent: callers pass full CF ID, get enrichment back"
+  ]
+}

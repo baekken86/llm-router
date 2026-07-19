@@ -22,14 +22,16 @@ func runAddProvider(args []string) {
 	baseURL := fs.String("url", "", "Base URL (required)")
 	apiKey := fs.String("key", "", "API key (required)")
 	accountID := fs.String("account-id", "", "Account ID (required for cloudflare providers)")
+	host := fs.String("host", "localhost:11434", "Ollama host (default localhost:11434)")
 	fs.Parse(args)
 
-	if *name == "" || *baseURL == "" || *apiKey == "" {
+	if *name == "" || (*baseURL == "" && *apiType != "ollama") || (*apiKey == "" && *apiType != "ollama") {
 		fmt.Fprintln(os.Stderr, "Usage:")
 		fmt.Fprintln(os.Stderr, "  llm-router add-provider --name opencode-go --url https://opencode.ai/zen/go --key sk-...")
 		fmt.Fprintln(os.Stderr, "  llm-router add-provider --name anthropic --type anthropic --url https://api.anthropic.com/v1 --key sk-ant-...")
+		fmt.Fprintln(os.Stderr, "  llm-router add-provider --name local --type ollama")
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "API types: openai (default), anthropic")
+		fmt.Fprintln(os.Stderr, "API types: openai (default), anthropic, cloudflare, ollama")
 		os.Exit(1)
 	}
 
@@ -41,8 +43,8 @@ func runAddProvider(args []string) {
 		}
 	}
 
-	if *apiType != "openai" && *apiType != "anthropic" && *apiType != "cloudflare" {
-		fmt.Fprintln(os.Stderr, "Error: --type must be 'openai', 'anthropic', or 'cloudflare'")
+	if *apiType != "openai" && *apiType != "anthropic" && *apiType != "cloudflare" && *apiType != "ollama" {
+		fmt.Fprintln(os.Stderr, "Error: --type must be 'openai', 'anthropic', 'cloudflare', or 'ollama'")
 		os.Exit(1)
 	}
 
@@ -85,6 +87,14 @@ func runAddProvider(args []string) {
 			APIKey:    *apiKey,
 			AccountID: *accountID,
 		}
+	} else if *apiType == "ollama" {
+		ollamaURL := fmt.Sprintf("http://%s/v1", *host)
+		createReq = models.CreateProviderRequest{
+			Name:    *name,
+			APIType: models.APITypeOllama,
+			BaseURL: ollamaURL,
+			APIKey:  "",
+		}
 	} else {
 		createReq = models.CreateProviderRequest{
 			Name:    *name,
@@ -115,6 +125,15 @@ func runAddProvider(args []string) {
 		tagRepo := repository.NewTagRepository(database)
 		globalRepo := repository.NewGlobalMetadataRepository(database)
 		createPredefinedModels(ctx, modelRepo, tagRepo, globalRepo, provider, "cloudflare", logger)
+	} else if *apiType == "ollama" {
+		// Discover models from Ollama (graceful failure — 0 models if Ollama not running)
+		modelRepo := repository.NewModelRepository(database)
+		tagRepo := repository.NewTagRepository(database)
+		providerMetadataRepo := repository.NewProviderMetadataRepository(database)
+		providerService := service.NewProviderService(providerRepo, providerMetadataRepo, loadEncryptionKey())
+		globalRepo := repository.NewGlobalMetadataRepository(database)
+		modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalRepo)
+		discoverModels(ctx, modelService, provider, logger)
 	} else {
 		fmt.Println("Next steps:")
 		fmt.Printf("  1. Discover models: llm-router discover --provider %s\n", *name)

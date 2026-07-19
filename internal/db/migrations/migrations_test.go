@@ -126,6 +126,139 @@ func TestMigration018_CloudflareAPIType(t *testing.T) {
 	}
 }
 
+// TestMigration019_OllamaAPIType tests migration 019 in isolation.
+// Creates the post-018 schema (with cloudflare + account_id), inserts data,
+// then applies migration 019 to add ollama to the CHECK constraint.
+func TestMigration019_OllamaAPIType(t *testing.T) {
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer database.Close()
+
+	// Create providers table as it exists AFTER migration 018 (with cloudflare + account_id)
+	_, err = database.Exec(`
+		CREATE TABLE providers (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			api_type TEXT NOT NULL CHECK(api_type IN ('openai', 'anthropic', 'cloudflare')),
+			base_url TEXT NOT NULL,
+			api_key_encrypted TEXT NOT NULL,
+			account_id TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_name ON providers(name);
+	`)
+	if err != nil {
+		t.Fatalf("failed to create base table: %v", err)
+	}
+
+	// Insert pre-existing providers
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted, account_id)
+		VALUES ('existing-openai', 'openai', 'https://api.openai.com/v1', 'key1', '')`)
+	if err != nil {
+		t.Fatalf("failed to insert openai provider: %v", err)
+	}
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted, account_id)
+		VALUES ('existing-cloudflare', 'cloudflare', 'https://api.cloudflare.com/test', 'key2', 'acct-123')`)
+	if err != nil {
+		t.Fatalf("failed to insert cloudflare provider: %v", err)
+	}
+
+	// Verify ollama is NOT accepted before migration 019
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted, account_id)
+		VALUES ('test-ollama', 'ollama', 'http://localhost:11434/v1', '', '')`)
+	if err == nil {
+		t.Error("ollama api_type should be rejected before migration 019")
+	}
+
+	// Apply migration 019 UP (recreate table with ollama CHECK)
+	_, err = database.Exec(`
+		CREATE TABLE providers_new (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			api_type TEXT NOT NULL CHECK(api_type IN ('openai', 'anthropic', 'cloudflare', 'ollama')),
+			base_url TEXT NOT NULL,
+			api_key_encrypted TEXT NOT NULL,
+			account_id TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		INSERT INTO providers_new (id, name, api_type, base_url, api_key_encrypted, account_id, created_at, updated_at)
+			SELECT id, name, api_type, base_url, api_key_encrypted, account_id, created_at, updated_at FROM providers;
+		DROP TABLE providers;
+		ALTER TABLE providers_new RENAME TO providers;
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_name ON providers(name);
+	`)
+	if err != nil {
+		t.Fatalf("failed to apply migration 019 up: %v", err)
+	}
+
+	// Verify ollama is NOW accepted
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted, account_id)
+		VALUES ('test-ollama', 'ollama', 'http://localhost:11434/v1', '', '')`)
+	if err != nil {
+		t.Fatalf("ollama api_type should be accepted after migration 019: %v", err)
+	}
+
+	// Verify pre-existing data survived
+	var count int
+	err = database.QueryRow("SELECT COUNT(*) FROM providers").Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count providers: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("expected 3 providers, got %d", count)
+	}
+
+	// Verify cloudflare data survived
+	var cfAccountID string
+	err = database.QueryRow("SELECT account_id FROM providers WHERE name = 'existing-cloudflare'").Scan(&cfAccountID)
+	if err != nil {
+		t.Fatalf("failed to query cloudflare provider: %v", err)
+	}
+	if cfAccountID != "acct-123" {
+		t.Errorf("expected cloudflare account_id 'acct-123', got '%s'", cfAccountID)
+	}
+
+	// Apply migration 019 DOWN (revert to cloudflare-only CHECK)
+	// Must delete ollama rows first (down migration drops ollama from CHECK constraint;
+	// copying ollama rows into old table would violate CHECK)
+	_, err = database.Exec(`DELETE FROM providers WHERE api_type = 'ollama'`)
+	if err != nil {
+		t.Fatalf("failed to delete ollama providers before down migration: %v", err)
+	}
+
+	_, err = database.Exec(`
+		CREATE TABLE providers_old (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			api_type TEXT NOT NULL CHECK(api_type IN ('openai', 'anthropic', 'cloudflare')),
+			base_url TEXT NOT NULL,
+			api_key_encrypted TEXT NOT NULL,
+			account_id TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		INSERT INTO providers_old (id, name, api_type, base_url, api_key_encrypted, account_id, created_at, updated_at)
+			SELECT id, name, api_type, base_url, api_key_encrypted, account_id, created_at, updated_at FROM providers;
+		DROP TABLE providers;
+		ALTER TABLE providers_old RENAME TO providers;
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_name ON providers(name);
+	`)
+	if err != nil {
+		t.Fatalf("failed to apply migration 019 down: %v", err)
+	}
+
+	// Verify ollama is rejected after down migration
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted, account_id)
+		VALUES ('test-ollama2', 'ollama', 'http://localhost:11434/v1', '', '')`)
+	if err == nil {
+		t.Error("ollama api_type should be rejected after migration 019 down")
+	}
+}
+
 func columnExists(t *testing.T, db *sql.DB, table, column string) bool {
 	t.Helper()
 	rows, err := db.Query("PRAGMA table_info(" + table + ")")

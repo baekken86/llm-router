@@ -71,7 +71,12 @@ func setupMappingTestService(
 	}
 
 	globalMetaRepo := newMockGlobalMetaRepo()
-	globalMetaRepo.data = globalMeta
+	// Wrap single-effort (map[string]map[string]string) into 3-level map under effort ""
+	wrapped := make(map[string]map[string]map[string]string)
+	for modelName, tags := range globalMeta {
+		wrapped[modelName] = map[string]map[string]string{"": tags}
+	}
+	globalMetaRepo.data = wrapped
 
 	return NewVirtualModelService(
 		newMockVMRepo(),
@@ -118,13 +123,18 @@ func TestResolveModelsFiltered_MappingHidesSourceTags(t *testing.T) {
 		efforts: sourceTagEfforts,
 	}
 	// Rebuild service with our tag repo
+	// Wrap single-effort globalMeta into 3-level map under effort ""
+	wrappedGlobalMeta := make(map[string]map[string]map[string]string)
+	for modelName, tags := range globalMeta {
+		wrappedGlobalMeta[modelName] = map[string]map[string]string{"": tags}
+	}
 	svc = NewVirtualModelService(
 		newMockVMRepo(),
 		&mockModelRepo{models: []models.Model{sourceModel}},
 		tagRepo,
 		&mockProviderRepo{providers: map[int64]*models.Provider{1: {ID: 1, Name: "prov"}}, byName: map[string]*models.Provider{"prov": {ID: 1, Name: "prov"}}},
 		newMockProviderMetaRepo(),
-		&mockGlobalMetaRepo{data: globalMeta},
+		&mockGlobalMetaRepo{data: wrappedGlobalMeta},
 		&mockMappingRepo{mappings: mappings},
 	)
 

@@ -131,7 +131,7 @@ func (m Model) Init() tea.Cmd {
 	} else if m.vmRepo != nil {
 		cmds = append(cmds, FetchStatusLocal(m.providerRepo, m.oauthRepo))
 		cmds = append(cmds, FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo))
-		cmds = append(cmds, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo))
+		cmds = append(cmds, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo, m.globalMetaRepo))
 		if m.mappingRepo != nil {
 			cmds = append(cmds, FetchMappingsLocal(m.mappingRepo))
 		}
@@ -263,7 +263,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.apiClient != nil {
 					return m, tea.Batch(FetchVMData(m.apiClient), FetchRawModels(m.apiClient))
 				} else if m.vmRepo != nil {
-					return m, tea.Batch(FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo), FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo))
+					return m, tea.Batch(FetchVMDataLocal(m.vmRepo, m.modelRepo, m.tagRepo, m.providerRepo), FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo, m.globalMetaRepo))
 				}
 			}
 			return m, nil
@@ -280,7 +280,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if m.apiClient != nil {
 							return m, FetchRawModels(m.apiClient)
 						} else if m.vmRepo != nil {
-							return m, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo)
+							return m, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo, m.globalMetaRepo)
 						}
 					}
 				}
@@ -319,7 +319,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.apiClient != nil {
 						return m, FetchRawModels(m.apiClient)
 					} else if m.vmRepo != nil {
-						return m, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo)
+						return m, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo, m.globalMetaRepo)
 					}
 				} else {
 					if m.apiClient != nil {
@@ -417,7 +417,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					sourceID := m.vmView.SelectedRawModelID()
 					if sourceID > 0 {
 						m.mappingRepo.Delete(context.Background(), sourceID)
-						return m, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo)
+						return m, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo, m.globalMetaRepo)
 					}
 				}
 			}

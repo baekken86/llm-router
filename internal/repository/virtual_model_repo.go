@@ -43,7 +43,7 @@ func (r *sqliteVirtualModelRepo) scanVM(row interface{ Scan(...interface{}) erro
 	vm.RetryOnStatus = jsonRawMessageOrDefault(retryStr, "[]")
 	if compositionNull.Valid && compositionNull.String != "" && compositionNull.String != "null" {
 		node := &models.CompositionNode{}
-		if err := models.ParseCompositionJSON([]byte(compositionNull.String), node); err == nil && (node.Vm != "" || node.Operation != "") {
+		if err := models.ParseCompositionJSON([]byte(compositionNull.String), node); err == nil && (node.Vm != "" || node.Operation != "" || node.FilterExpr != nil || len(node.SortExpr) > 0) {
 			vm.Composition = node
 		}
 	}

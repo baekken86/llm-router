@@ -49,13 +49,11 @@
 
   function isValidComposition(node) {
     if (!node) return false;
-    if (node.vm) return node.vm !== '';
     if (node.operation) {
       return node.sources && node.sources.length >= 2 && node.sources.every(isValidComposition);
     }
-    // Filter source — filter_expr must be set
-    if (node.filter_expr) return true;
-    return false;
+    // Source node — always valid (all models default, optional collection/filter/sort)
+    return true;
   }
 
   async function handleSubmit() {
@@ -87,7 +85,7 @@
         });
         addToast('Updated', 'success');
       } else {
-        result = await apiFetch('/api/virtual-models', {
+        result = await apiFetch('/api/v1/virtual-models', {
           method: 'POST',
           body
         });

@@ -45,11 +45,26 @@
   }
 
   /**
+   * Normalize backend response: "collection" → "vm" for internal use.
+   */
+  function normalizeFromAPI(node) {
+    if (!node || typeof node !== 'object') return node;
+    if (node.collection !== undefined && node.vm === undefined) {
+      node.vm = node.collection;
+      delete node.collection;
+    }
+    if (Array.isArray(node.sources)) {
+      node.sources = node.sources.map(normalizeFromAPI);
+    }
+    return node;
+  }
+
+  /**
    * Initialize tree from prop — never mutates the bindable prop.
    */
   function initTree(source) {
     if (!source) { tree = null; return; }
-    const copy = { ...source };
+    const copy = normalizeFromAPI({ ...source });
     tree = autoUnwrap(copy);
     untrack(() => assignCompositionIds(tree));
   }
@@ -70,9 +85,10 @@
     }
   });
 
-  function addVMRef() {
-    // Bug 2 fix: if tree is a leaf node (no .sources), wrap it first
-    if (tree && !tree.sources) {
+  function addFilterSource() {
+    if (!tree) {
+      tree = { sources: [] };
+    } else if (!tree.sources) {
       tree = { sources: [tree] };
     }
     tree.sources.push({ vm: '' });
@@ -80,17 +96,10 @@
     node = tree;
   }
 
-  function addFilterSource() {
-    if (tree && !tree.sources) {
-      tree = { sources: [tree] };
-    }
-    tree.sources.push({ filter_expr: { and: [] }, sort_expr: [] });
-    assignCompositionIds(tree);
-    node = tree;
-  }
-
   function addOperation() {
-    if (tree && !tree.sources) {
+    if (!tree) {
+      tree = { sources: [] };
+    } else if (!tree.sources) {
       tree = { sources: [tree] };
     }
     tree.sources.push({ operation: 'union', sources: [{ vm: '' }, { vm: '' }] });
@@ -180,12 +189,45 @@
   }
 
   /**
+   * Strip internal fields + empty filter/sort from composition tree.
+   * Normalize "vm" → "collection" for API serialization.
+   * Returns null for nodes that aren't recognizable by the backend.
+   */
+  function cleanNode(node) {
+    if (!node || typeof node !== 'object') return null;
+    const cleaned = { ...node };
+    if (Array.isArray(cleaned.sources)) {
+      cleaned.sources = cleaned.sources.map(cleanNode).filter(Boolean);
+    }
+    delete cleaned.__id;
+    delete cleaned._expanded;
+    delete cleaned._expandedFilter;
+    delete cleaned._expandedSort;
+    if (cleaned.vm !== undefined) {
+      cleaned.collection = cleaned.vm;
+      delete cleaned.vm;
+    }
+    if (cleaned.filter_expr && typeof cleaned.filter_expr === 'object') {
+      const fe = cleaned.filter_expr;
+      const hasContent = fe.key || (Array.isArray(fe.and) && fe.and.length > 0) || (Array.isArray(fe.or) && fe.or.length > 0) || fe.not;
+      if (!hasContent) delete cleaned.filter_expr;
+    }
+    if (cleaned.sort_expr && Array.isArray(cleaned.sort_expr) && cleaned.sort_expr.length === 0) {
+      delete cleaned.sort_expr;
+    }
+    if (!cleaned.operation && cleaned.collection === undefined && !cleaned.filter_expr && !(Array.isArray(cleaned.sort_expr) && cleaned.sort_expr.length > 0)) return null;
+    return cleaned;
+  }
+
+  /**
    * Expose for parent to call on save.
-   * Returns auto-wrapped composition.
+   * Returns auto-wrapped composition (cleaned, no internal fields).
    */
   export function getComposition() {
     if (!tree) return null;
-    const rootItems = tree.sources || [tree];
+    const cleaned = cleanNode(tree);
+    if (!cleaned) return null;
+    const rootItems = cleaned.sources || [cleaned];
     return autoWrap(rootItems);
   }
 
@@ -279,12 +321,8 @@
     dragSourceId = null;
   }
 
-  function isVMRef(item) {
-    return item.vm !== undefined && !item.operation;
-  }
-
-  function isFilterSource(item) {
-    return item.filter_expr !== undefined && !item.vm && !item.operation;
+  function isSource(item) {
+    return !item.operation;
   }
 
   function isOpNode(item) {
@@ -327,28 +365,19 @@
           </svg>
         </button>
 
-        {#if isVMRef(item)}
-          <!-- VM Reference -->
-          <span class="text-gray-500 text-xs shrink-0">ref</span>
+        {#if isSource(item)}
+          <span class="text-gray-500 text-xs shrink-0">src</span>
           <select
             class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-gray-100 flex-1 min-w-0 focus:outline-none focus:border-emerald-500"
-            value={item.vm || ''}
+            value={item.vm ?? ''}
             onchange={(e) => { e.stopPropagation(); setItemVM(item.__id, e.target.value); }}
             onclick={(e) => e.stopPropagation()}
           >
-            <option value="">Select a virtual model...</option>
+            <option value="">All Models</option>
             {#each availableVMs as vm}
               <option value={vm.name}>{vm.name}{vm.description ? ` — ${vm.description}` : ''}</option>
             {/each}
           </select>
-          <button
-            class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
-            onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
-            title="Remove VM reference"
-          >&times;</button>
-
-        {:else if isFilterSource(item)}
-          <span class="text-amber-400 text-xs font-medium shrink-0">Filter Source</span>
           <button
             class="text-xs text-gray-500 hover:text-emerald-400 px-1.5 py-0.5 rounded shrink-0"
             onclick={(e) => { e.stopPropagation(); toggleItemFilter(item.__id); }}
@@ -362,7 +391,7 @@
           <button
             class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
             onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
-            title="Remove filter source"
+            title="Remove source"
           >&times;</button>
 
         {:else if isOpNode(item)}
@@ -397,7 +426,7 @@
         {/if}
       </div>
 
-      {#if isFilterSource(item) && item._expandedFilter}
+      {#if isSource(item) && item._expandedFilter}
         <div class="ml-4 mt-1 bg-gray-900/50 rounded p-2 border border-gray-800">
           <ConditionBuilder
             node={item.filter_expr || { and: [] }}
@@ -405,7 +434,7 @@
           />
         </div>
       {/if}
-      {#if isFilterSource(item) && item._expandedSort}
+      {#if isSource(item) && item._expandedSort}
         <div class="ml-4 mt-1 bg-gray-900/50 rounded p-2 border border-gray-800">
           <SortBuilder
             criteria={item.sort_expr || []}
@@ -443,30 +472,22 @@
               </svg>
             </button>
 
-            {#if isVMRef(source)}
-              <span class="text-gray-500 text-xs shrink-0">ref</span>
+            {#if isSource(source)}
+              <span class="text-gray-500 text-xs shrink-0">src</span>
               <select
                 class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-gray-100 flex-1 min-w-0 focus:outline-none focus:border-emerald-500"
-                value={source.vm || ''}
+                value={source.vm ?? ''}
                 onchange={(e) => { e.stopPropagation(); setItemVM(source.__id, e.target.value); }}
                 onclick={(e) => e.stopPropagation()}
               >
-                <option value="">Select a virtual model...</option>
+                <option value="">All Models</option>
                 {#each availableVMs as vm}
                   <option value={vm.name}>{vm.name}{vm.description ? ` — ${vm.description}` : ''}</option>
                 {/each}
               </select>
-              <button
-                class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
-                onclick={(e) => { e.stopPropagation(); removeItem(source.__id); }}
-                title="Remove VM reference"
-              >&times;</button>
-
-            {:else if isFilterSource(source)}
-              <span class="text-amber-400 text-xs font-medium shrink-0">Filter Source</span>
               <button class="text-xs text-gray-500 hover:text-emerald-400 px-1.5 py-0.5 rounded shrink-0" onclick={(e) => { e.stopPropagation(); toggleItemFilter(source.__id); }} title="Toggle filter">F</button>
               <button class="text-xs text-gray-500 hover:text-blue-400 px-1.5 py-0.5 rounded shrink-0" onclick={(e) => { e.stopPropagation(); toggleItemSort(source.__id); }} title="Toggle sort">S</button>
-              <button class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0" onclick={(e) => { e.stopPropagation(); removeItem(source.__id); }} title="Remove filter source">&times;</button>
+              <button class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0" onclick={(e) => { e.stopPropagation(); removeItem(source.__id); }} title="Remove source">&times;</button>
 
             {:else if isOpNode(source)}
               <select
@@ -485,12 +506,12 @@
             {/if}
           </div>
 
-          {#if isFilterSource(source) && source._expandedFilter}
+          {#if isSource(source) && source._expandedFilter}
             <div class="ml-4 mt-1 bg-gray-900/50 rounded p-2 border border-gray-800">
               <ConditionBuilder node={source.filter_expr || { and: [] }} onChange={(v) => setItemFilter(source.__id, v)} />
             </div>
           {/if}
-          {#if isFilterSource(source) && source._expandedSort}
+          {#if isSource(source) && source._expandedSort}
             <div class="ml-4 mt-1 bg-gray-900/50 rounded p-2 border border-gray-800">
               <SortBuilder criteria={source.sort_expr || []} onChange={(v) => setItemSort(source.__id, v)} />
             </div>
@@ -529,27 +550,19 @@
         </svg>
       </button>
 
-      {#if isVMRef(item)}
-        <span class="text-gray-500 text-xs shrink-0">ref</span>
+      {#if isSource(item)}
+        <span class="text-gray-500 text-xs shrink-0">src</span>
         <select
           class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-gray-100 flex-1 min-w-0 focus:outline-none focus:border-emerald-500"
-          value={item.vm || ''}
+          value={item.vm ?? ''}
           onchange={(e) => { e.stopPropagation(); setItemVM(item.__id, e.target.value); }}
           onclick={(e) => e.stopPropagation()}
         >
-          <option value="">Select a virtual model...</option>
+          <option value="">All Models</option>
           {#each availableVMs as vm}
             <option value={vm.name}>{vm.name}{vm.description ? ` — ${vm.description}` : ''}</option>
           {/each}
         </select>
-        <button
-          class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
-          onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
-          title="Remove VM reference"
-        >&times;</button>
-
-      {:else if isFilterSource(item)}
-        <span class="text-amber-400 text-xs font-medium shrink-0">Filter Source</span>
         <button
           class="text-xs text-gray-500 hover:text-emerald-400 px-1.5 py-0.5 rounded shrink-0"
           onclick={(e) => { e.stopPropagation(); toggleItemFilter(item.__id); }}
@@ -563,7 +576,7 @@
         <button
           class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
           onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
-          title="Remove filter source"
+          title="Remove source"
         >&times;</button>
 
       {:else if isOpNode(item)}
@@ -588,7 +601,7 @@
       {/if}
     </div>
 
-    {#if isFilterSource(item) && item._expandedFilter}
+    {#if isSource(item) && item._expandedFilter}
       <div class="ml-4 mt-1 bg-gray-900/50 rounded p-2 border border-gray-800">
         <ConditionBuilder
           node={item.filter_expr || { and: [] }}
@@ -596,7 +609,7 @@
         />
       </div>
     {/if}
-    {#if isFilterSource(item) && item._expandedSort}
+    {#if isSource(item) && item._expandedSort}
       <div class="ml-4 mt-1 bg-gray-900/50 rounded p-2 border border-gray-800">
         <SortBuilder
           criteria={item.sort_expr || []}
@@ -609,14 +622,12 @@
   <!-- Root add buttons -->
   <div class="flex gap-2 mt-3" style="padding-left: 8px">
     <button
-      class="text-xs text-gray-500 hover:text-emerald-400 border border-gray-700 rounded px-2 py-1 hover:border-emerald-600"
-      onclick={addVMRef}
-    >+ VM Ref</button>
-    <button
+      type="button"
       class="text-xs text-amber-500 hover:text-amber-400 border border-gray-700 rounded px-2 py-1 hover:border-amber-600"
       onclick={addFilterSource}
-    >+ Filter Source</button>
+    >+ Source</button>
     <button
+      type="button"
       class="text-xs text-blue-400 hover:text-blue-300 border border-gray-700 rounded px-2 py-1 hover:border-blue-500"
       onclick={addOperation}
     >+ Op</button>

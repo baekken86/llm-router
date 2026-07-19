@@ -473,6 +473,16 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	e.logRequest(RequestLog{
+		Type:         "proxy",
+		Timestamp:    start,
+		RequestID:    requestID,
+		VirtualModel: req.Model,
+		StatusCode:   http.StatusBadGateway,
+		Latency:      time.Since(start),
+		ErrorMessage: "all models failed",
+	})
+
 	http.Error(w, `{"error":"all models failed"}`, http.StatusBadGateway)
 }
 
@@ -908,6 +918,7 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 		StatusCode:   http.StatusOK,
 	})
 
+	virtualModel := anthReq.Model
 	openReq := AnthropicRequestToOpenAI(anthReq)
 	openReq.Stream = true
 
@@ -1024,6 +1035,16 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 			}
 		}
 	}
+
+	e.logRequest(RequestLog{
+		Type:         "proxy",
+		Timestamp:    start,
+		RequestID:    requestID,
+		VirtualModel: virtualModel,
+		StatusCode:   http.StatusBadGateway,
+		Latency:      time.Since(start),
+		ErrorMessage: "all models failed",
+	})
 
 	http.Error(w, `{"type":"error","error":{"type":"api_error","message":"all models failed"}}`, http.StatusBadGateway)
 }

@@ -152,6 +152,33 @@ func TestCreateMapping_SourceNotFound(t *testing.T) {
 	}
 }
 
+func TestCreateMapping_TargetNotFound(t *testing.T) {
+	tdb := setupMappingHandlerTest(t)
+	defer tdb.db.Close()
+	seedTestData(tdb)
+
+	handler := NewModelMappingHandler(tdb.mappingRepo, tdb.modelRepo, slog.Default())
+
+	r := chi.NewRouter()
+	r.Post("/models/{id}/mapping", handler.CreateMapping)
+
+	body := `{"target_model_id": 999}`
+	req := httptest.NewRequest("POST", "/models/1/mapping", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+
+	m, _ := tdb.mappingRepo.Get(context.Background(), 1)
+	if m != nil {
+		t.Error("expected mapping not to be created")
+	}
+}
+
 func TestGetMapping(t *testing.T) {
 	tdb := setupMappingHandlerTest(t)
 	defer tdb.db.Close()

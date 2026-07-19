@@ -5,8 +5,9 @@ import "time"
 type APIType string
 
 const (
-	APITypeOpenAI    APIType = "openai"
-	APITypeAnthropic APIType = "anthropic"
+	APITypeOpenAI     APIType = "openai"
+	APITypeAnthropic  APIType = "anthropic"
+	APITypeCloudflare APIType = "cloudflare"
 )
 
 type Provider struct {

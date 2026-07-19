@@ -41,7 +41,7 @@ func runDiscover(args []string) {
 	ctx := context.Background()
 
 	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, loadEncryptionKey())
-	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalRepo)
+	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalRepo, nil)
 
 	provider, err := providerRepo.GetByName(ctx, *providerName)
 	if err != nil || provider == nil {

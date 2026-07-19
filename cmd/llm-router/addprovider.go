@@ -141,7 +141,7 @@ func runAddProvider(args []string) {
 		providerMetadataRepo := repository.NewProviderMetadataRepository(database)
 		providerService := service.NewProviderService(providerRepo, providerMetadataRepo, loadEncryptionKey())
 		globalRepo := repository.NewGlobalMetadataRepository(database)
-		modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalRepo)
+		modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalRepo, nil)
 		discoverModels(ctx, modelService, provider, logger)
 	} else {
 		fmt.Println("Next steps:")

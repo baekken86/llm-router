@@ -285,6 +285,7 @@ func setupFilterSourceService() (*virtualModelService, *mockVMRepo, *mockProvide
 		providerRepo:     providerRepo,
 		providerMetaRepo: newMockProviderMetaRepo(),
 		globalMetaRepo:   newMockGlobalMetaRepo(),
+		mappingRepo:      newMockMappingRepo(),
 	}
 	return svc, vmRepo, providerRepo
 }

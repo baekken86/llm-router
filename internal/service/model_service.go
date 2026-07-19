@@ -14,7 +14,9 @@ import (
 
 type ModelWithProvider struct {
 	models.Model
-	ProviderName string `json:"provider_name"`
+	ProviderName      string  `json:"provider_name"`
+	MappingTargetID   *int64  `json:"mapping_target_id,omitempty"`
+	MappingTargetName *string `json:"mapping_target_name,omitempty"`
 }
 
 type ModelService interface {
@@ -33,6 +35,7 @@ type modelService struct {
 	providerRepo   repository.ProviderRepository
 	provService    ProviderService
 	globalMetaRepo repository.GlobalMetadataRepository
+	mappingRepo    repository.ModelMappingRepository
 }
 
 func NewModelService(
@@ -41,6 +44,7 @@ func NewModelService(
 	providerRepo repository.ProviderRepository,
 	provService ProviderService,
 	globalMetaRepo repository.GlobalMetadataRepository,
+	mappingRepo repository.ModelMappingRepository,
 ) ModelService {
 	return &modelService{
 		modelRepo:      modelRepo,
@@ -48,6 +52,7 @@ func NewModelService(
 		providerRepo:   providerRepo,
 		provService:    provService,
 		globalMetaRepo: globalMetaRepo,
+		mappingRepo:    mappingRepo,
 	}
 }
 
@@ -175,6 +180,16 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelWithProvider, error)
 		return nil, err
 	}
 
+	// Batch-fetch all mappings
+	var mappingMap map[int64]*repository.ModelMapping
+	if s.mappingRepo != nil {
+		allMappings, _ := s.mappingRepo.GetAll(ctx)
+		mappingMap = make(map[int64]*repository.ModelMapping, len(allMappings))
+		for i := range allMappings {
+			mappingMap[allMappings[i].SourceModelID] = &allMappings[i]
+		}
+	}
+
 	var result []ModelWithProvider
 	for _, m := range allModels {
 		tags, err := s.tagRepo.GetByModel(ctx, m.ID)
@@ -192,10 +207,25 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelWithProvider, error)
 			providerName = provider.Name
 		}
 
-		result = append(result, ModelWithProvider{
+		mp := ModelWithProvider{
 			Model:        m,
 			ProviderName: providerName,
-		})
+		}
+
+		// Populate mapping info
+		if mappingMap != nil {
+			if mapping, ok := mappingMap[m.ID]; ok {
+				mp.MappingTargetID = &mapping.TargetModelID
+				// Fetch target model name
+				targetModel, _ := s.modelRepo.GetByID(ctx, mapping.TargetModelID)
+				if targetModel != nil {
+					name := targetModel.Name
+					mp.MappingTargetName = &name
+				}
+			}
+		}
+
+		result = append(result, mp)
 	}
 
 	return result, nil

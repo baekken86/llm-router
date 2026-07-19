@@ -39,6 +39,7 @@ type virtualModelService struct {
 	providerRepo     repository.ProviderRepository
 	providerMetaRepo repository.ProviderMetadataRepository
 	globalMetaRepo   repository.GlobalMetadataRepository
+	mappingRepo      repository.ModelMappingRepository
 }
 
 func NewVirtualModelService(
@@ -48,6 +49,7 @@ func NewVirtualModelService(
 	providerRepo repository.ProviderRepository,
 	providerMetaRepo repository.ProviderMetadataRepository,
 	globalMetaRepo repository.GlobalMetadataRepository,
+	mappingRepo repository.ModelMappingRepository,
 ) VirtualModelService {
 	return &virtualModelService{
 		vmRepo:           vmRepo,
@@ -56,6 +58,7 @@ func NewVirtualModelService(
 		providerRepo:     providerRepo,
 		providerMetaRepo: providerMetaRepo,
 		globalMetaRepo:   globalMetaRepo,
+		mappingRepo:      mappingRepo,
 	}
 }
 
@@ -258,6 +261,16 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 		return nil, fmt.Errorf("list models: %w", err)
 	}
 
+	// Batch-fetch all mappings for O(1) lookup per model
+	var mappingMap map[int64]*repository.ModelMapping
+	if s.mappingRepo != nil {
+		allMappings, _ := s.mappingRepo.GetAll(ctx)
+		mappingMap = make(map[int64]*repository.ModelMapping, len(allMappings))
+		for i := range allMappings {
+			mappingMap[allMappings[i].SourceModelID] = &allMappings[i]
+		}
+	}
+
 	type includeRef struct {
 		model    models.Model
 		provider models.Provider
@@ -292,11 +305,42 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 			efforts = []string{""}
 		}
 
+		// Check for mapping: if mapped, use target's tags + global metadata
+		var mapping *repository.ModelMapping
+		if mappingMap != nil {
+			mapping = mappingMap[m.ID]
+		}
+
 		for _, effort := range efforts {
-			tags, err := s.tagRepo.GetByModelEffort(ctx, m.ID, effort)
-			if err != nil {
-				return nil, err
+			var tags []models.Tag
+			var globalMeta map[string]string
+
+			if mapping != nil {
+				// Mapped: use target model's tags and global metadata
+				tags, err = s.tagRepo.GetByModelEffort(ctx, mapping.TargetModelID, effort)
+				if err != nil {
+					return nil, err
+				}
+
+				targetModel, _ := s.modelRepo.GetByID(ctx, mapping.TargetModelID)
+				if targetModel != nil {
+					globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, targetModel.Name, effort)
+					if len(globalMeta) == 0 {
+						globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, targetModel.Name, "")
+					}
+				}
+			} else {
+				// Unmapped: use source model's own tags and global metadata
+				tags, err = s.tagRepo.GetByModelEffort(ctx, m.ID, effort)
+				if err != nil {
+					return nil, err
+				}
+				globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, m.Name, effort)
+				if len(globalMeta) == 0 {
+					globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, m.Name, "")
+				}
 			}
+
 			m.Tags = tags
 
 			provider, err := s.providerRepo.GetByID(ctx, m.ProviderID)
@@ -308,11 +352,6 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 			}
 
 			providerMeta, _ := s.providerMetaRepo.GetByProvider(ctx, provider.ID)
-
-			globalMeta, _ := s.globalMetaRepo.GetByModelEffort(ctx, m.Name, effort)
-			if len(globalMeta) == 0 {
-				globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, m.Name, "")
-			}
 
 			if !matchesFilter(m.Tags, m.Name, filter, provider.Name, providerMeta, globalMeta) {
 				continue
@@ -513,6 +552,16 @@ func (s *virtualModelService) applyIncludeModels(ctx context.Context, resolved [
 		existing[r.Provider.Name+"/"+r.Model.Name] = true
 	}
 
+	// Batch-fetch mappings for include models
+	var mappingMap map[int64]*repository.ModelMapping
+	if s.mappingRepo != nil {
+		allMappings, _ := s.mappingRepo.GetAll(ctx)
+		mappingMap = make(map[int64]*repository.ModelMapping, len(allMappings))
+		for i := range allMappings {
+			mappingMap[allMappings[i].SourceModelID] = &allMappings[i]
+		}
+	}
+
 	var includeResolved []ResolvedModel
 	for _, ref := range refs {
 		key := ref.Provider + "/" + ref.Model
@@ -530,7 +579,18 @@ func (s *virtualModelService) applyIncludeModels(ctx context.Context, resolved [
 		}
 
 		providerMeta, _ := s.providerMetaRepo.GetByProvider(ctx, provider.ID)
-		globalMeta, _ := s.globalMetaRepo.GetByModelEffort(ctx, m.Name, "")
+
+		// Check for mapping on included model
+		var globalMeta map[string]string
+		if mappingMap != nil && mappingMap[m.ID] != nil {
+			mapping := mappingMap[m.ID]
+			targetModel, _ := s.modelRepo.GetByID(ctx, mapping.TargetModelID)
+			if targetModel != nil {
+				globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, targetModel.Name, "")
+			}
+		} else {
+			globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, m.Name, "")
+		}
 
 		pMetaMap := make(map[string]string)
 		pMetaMap["p.name"] = provider.Name

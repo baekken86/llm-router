@@ -15,7 +15,6 @@ import (
 type ModelWithProvider struct {
 	models.Model
 	ProviderName      string  `json:"provider_name"`
-	MappingTargetID   *int64  `json:"mapping_target_id,omitempty"`
 	MappingTargetName *string `json:"mapping_target_name,omitempty"`
 }
 
@@ -215,13 +214,8 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelWithProvider, error)
 		// Populate mapping info
 		if mappingMap != nil {
 			if mapping, ok := mappingMap[m.ID]; ok {
-				mp.MappingTargetID = &mapping.TargetModelID
-				// Fetch target model name
-				targetModel, _ := s.modelRepo.GetByID(ctx, mapping.TargetModelID)
-				if targetModel != nil {
-					name := targetModel.Name
-					mp.MappingTargetName = &name
-				}
+				name := mapping.TargetModelName
+				mp.MappingTargetName = &name
 			}
 		}
 

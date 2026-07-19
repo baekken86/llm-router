@@ -76,6 +76,7 @@ func NewRouter(
 
 		r.Route("/metadata", func(r chi.Router) {
 			r.Get("/fields", metadataHandler.GetFields)
+			r.Get("/models", metadataHandler.ListModels)
 		})
 
 		r.Route("/syslog", func(r chi.Router) {

@@ -3,6 +3,8 @@
   import { apiFetch } from '../lib/api.js';
   import { assignCompositionIds, autoUnwrap, autoWrap, moveNodeBetweenContainers, removeNodeFromComposition, findNodeInComposition, flattenCompositionIds } from '../lib/treeUtils.js';
   import CompositionBuilder from './CompositionBuilder.svelte';
+  import ConditionBuilder from './ConditionBuilder.svelte';
+  import SortBuilder from './SortBuilder.svelte';
 
   let {
     node = $bindable(),
@@ -133,6 +135,46 @@
     const info = findNodeInComposition(tree, id);
     if (info?.node) {
       info.node._expanded = !info.node._expanded;
+      node = tree;
+    }
+  }
+
+  function toggleItemFilter(id) {
+    const info = findNodeInComposition(tree, id);
+    if (info?.node) {
+      info.node._expandedFilter = !info.node._expandedFilter;
+      node = tree;
+    }
+  }
+
+  function toggleItemSort(id) {
+    const info = findNodeInComposition(tree, id);
+    if (info?.node) {
+      info.node._expandedSort = !info.node._expandedSort;
+      node = tree;
+    }
+  }
+
+  function setItemFilter(id, filterExpr) {
+    const info = findNodeInComposition(tree, id);
+    if (info?.node) {
+      if (filterExpr && (filterExpr.and || filterExpr.or || filterExpr.key)) {
+        info.node.filter_expr = filterExpr;
+      } else {
+        delete info.node.filter_expr;
+      }
+      node = tree;
+    }
+  }
+
+  function setItemSort(id, sortCriteria) {
+    const info = findNodeInComposition(tree, id);
+    if (info?.node) {
+      if (sortCriteria && sortCriteria.length > 0) {
+        info.node.sort_expr = sortCriteria;
+      } else {
+        delete info.node.sort_expr;
+      }
       node = tree;
     }
   }
@@ -299,10 +341,24 @@
               <option value={vm.name}>{vm.name}{vm.description ? ` — ${vm.description}` : ''}</option>
             {/each}
           </select>
+          <button
+            class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
+            onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
+            title="Remove VM reference"
+          >&times;</button>
 
         {:else if isFilterSource(item)}
-          <!-- Filter Source -->
           <span class="text-amber-400 text-xs font-medium shrink-0">Filter Source</span>
+          <button
+            class="text-xs text-gray-500 hover:text-emerald-400 px-1.5 py-0.5 rounded shrink-0"
+            onclick={(e) => { e.stopPropagation(); toggleItemFilter(item.__id); }}
+            title="Toggle filter"
+          >F</button>
+          <button
+            class="text-xs text-gray-500 hover:text-blue-400 px-1.5 py-0.5 rounded shrink-0"
+            onclick={(e) => { e.stopPropagation(); toggleItemSort(item.__id); }}
+            title="Toggle sort"
+          >S</button>
           <button
             class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
             onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
@@ -340,6 +396,23 @@
           >&times;</button>
         {/if}
       </div>
+
+      {#if isFilterSource(item) && item._expandedFilter}
+        <div class="ml-4 mt-1 bg-gray-900/50 rounded p-2 border border-gray-800">
+          <ConditionBuilder
+            node={item.filter_expr || { and: [] }}
+            onChange={(v) => setItemFilter(item.__id, v)}
+          />
+        </div>
+      {/if}
+      {#if isFilterSource(item) && item._expandedSort}
+        <div class="ml-4 mt-1 bg-gray-900/50 rounded p-2 border border-gray-800">
+          <SortBuilder
+            criteria={item.sort_expr || []}
+            onChange={(v) => setItemSort(item.__id, v)}
+          />
+        </div>
+      {/if}
 
       {#if isOpNode(item) && item._expanded && item.sources}
         {#each item.sources as source, idx (source.__id || idx)}
@@ -383,9 +456,17 @@
                   <option value={vm.name}>{vm.name}{vm.description ? ` — ${vm.description}` : ''}</option>
                 {/each}
               </select>
+              <button
+                class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
+                onclick={(e) => { e.stopPropagation(); removeItem(source.__id); }}
+                title="Remove VM reference"
+              >&times;</button>
 
             {:else if isFilterSource(source)}
               <span class="text-amber-400 text-xs font-medium shrink-0">Filter Source</span>
+              <button class="text-xs text-gray-500 hover:text-emerald-400 px-1.5 py-0.5 rounded shrink-0" onclick={(e) => { e.stopPropagation(); toggleItemFilter(source.__id); }} title="Toggle filter">F</button>
+              <button class="text-xs text-gray-500 hover:text-blue-400 px-1.5 py-0.5 rounded shrink-0" onclick={(e) => { e.stopPropagation(); toggleItemSort(source.__id); }} title="Toggle sort">S</button>
+              <button class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0" onclick={(e) => { e.stopPropagation(); removeItem(source.__id); }} title="Remove filter source">&times;</button>
 
             {:else if isOpNode(source)}
               <select
@@ -403,6 +484,18 @@
               </span>
             {/if}
           </div>
+
+          {#if isFilterSource(source) && source._expandedFilter}
+            <div class="ml-4 mt-1 bg-gray-900/50 rounded p-2 border border-gray-800">
+              <ConditionBuilder node={source.filter_expr || { and: [] }} onChange={(v) => setItemFilter(source.__id, v)} />
+            </div>
+          {/if}
+          {#if isFilterSource(source) && source._expandedSort}
+            <div class="ml-4 mt-1 bg-gray-900/50 rounded p-2 border border-gray-800">
+              <SortBuilder criteria={source.sort_expr || []} onChange={(v) => setItemSort(source.__id, v)} />
+            </div>
+          {/if}
+
         {/each}
       {/if}
     {/each}
@@ -449,9 +542,24 @@
             <option value={vm.name}>{vm.name}{vm.description ? ` — ${vm.description}` : ''}</option>
           {/each}
         </select>
+        <button
+          class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
+          onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
+          title="Remove VM reference"
+        >&times;</button>
 
       {:else if isFilterSource(item)}
         <span class="text-amber-400 text-xs font-medium shrink-0">Filter Source</span>
+        <button
+          class="text-xs text-gray-500 hover:text-emerald-400 px-1.5 py-0.5 rounded shrink-0"
+          onclick={(e) => { e.stopPropagation(); toggleItemFilter(item.__id); }}
+          title="Toggle filter"
+        >F</button>
+        <button
+          class="text-xs text-gray-500 hover:text-blue-400 px-1.5 py-0.5 rounded shrink-0"
+          onclick={(e) => { e.stopPropagation(); toggleItemSort(item.__id); }}
+          title="Toggle sort"
+        >S</button>
         <button
           class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
           onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
@@ -479,6 +587,23 @@
         >&times;</button>
       {/if}
     </div>
+
+    {#if isFilterSource(item) && item._expandedFilter}
+      <div class="ml-4 mt-1 bg-gray-900/50 rounded p-2 border border-gray-800">
+        <ConditionBuilder
+          node={item.filter_expr || { and: [] }}
+          onChange={(v) => setItemFilter(item.__id, v)}
+        />
+      </div>
+    {/if}
+    {#if isFilterSource(item) && item._expandedSort}
+      <div class="ml-4 mt-1 bg-gray-900/50 rounded p-2 border border-gray-800">
+        <SortBuilder
+          criteria={item.sort_expr || []}
+          onChange={(v) => setItemSort(item.__id, v)}
+        />
+      </div>
+    {/if}
   {/if}
 
   <!-- Root add buttons -->

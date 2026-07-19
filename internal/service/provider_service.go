@@ -48,6 +48,7 @@ func (s *providerService) Create(ctx context.Context, req models.CreateProviderR
 		APIType:         req.APIType,
 		BaseURL:         req.BaseURL,
 		APIKeyEncrypted: encrypted,
+		AccountID:       req.AccountID,
 	}
 
 	if err := s.repo.Create(ctx, p); err != nil {

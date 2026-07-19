@@ -316,18 +316,11 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 			var globalMeta map[string]string
 
 			if mapping != nil {
-				// Mapped: use target model's tags and global metadata
-				tags, err = s.tagRepo.GetByModelEffort(ctx, mapping.TargetModelID, effort)
-				if err != nil {
-					return nil, err
-				}
-
-				targetModel, _ := s.modelRepo.GetByID(ctx, mapping.TargetModelID)
-				if targetModel != nil {
-					globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, targetModel.Name, effort)
-					if len(globalMeta) == 0 {
-						globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, targetModel.Name, "")
-					}
+				// Mapped: hide source instance tags, use target's global metadata by name
+				tags = nil
+				globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, mapping.TargetModelName, effort)
+				if len(globalMeta) == 0 {
+					globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, mapping.TargetModelName, "")
 				}
 			} else {
 				// Unmapped: use source model's own tags and global metadata
@@ -584,10 +577,7 @@ func (s *virtualModelService) applyIncludeModels(ctx context.Context, resolved [
 		var globalMeta map[string]string
 		if mappingMap != nil && mappingMap[m.ID] != nil {
 			mapping := mappingMap[m.ID]
-			targetModel, _ := s.modelRepo.GetByID(ctx, mapping.TargetModelID)
-			if targetModel != nil {
-				globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, targetModel.Name, "")
-			}
+			globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, mapping.TargetModelName, "")
 		} else {
 			globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, m.Name, "")
 		}

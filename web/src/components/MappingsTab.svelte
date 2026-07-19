@@ -69,7 +69,6 @@
             <th class="text-left px-4 py-3">Source Provider</th>
             <th class="text-center px-4 py-3"></th>
             <th class="text-left px-4 py-3">Target Model</th>
-            <th class="text-left px-4 py-3">Target Provider</th>
             <th class="text-left px-4 py-3">Created</th>
             <th class="text-right px-4 py-3">Actions</th>
           </tr>
@@ -81,7 +80,6 @@
               <td class="px-4 py-2.5 text-gray-300">{m.source_provider_name}</td>
               <td class="px-4 py-2.5 text-center text-gray-500">→</td>
               <td class="px-4 py-2.5 text-blue-400 font-mono">{m.target_model_name}</td>
-              <td class="px-4 py-2.5 text-gray-300">{m.target_provider_name}</td>
               <td class="px-4 py-2.5 text-gray-500 text-xs">{m.created_at}</td>
               <td class="px-4 py-2.5 text-right">
                 {#if deleteConfirmId === m.source_model_id}

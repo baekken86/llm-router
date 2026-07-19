@@ -70,13 +70,11 @@ type VMViewModel struct {
 	pickerCursor   int
 	pickerFilter   string
 	mappingRepo    repository.ModelMappingRepository
-	modelRepo      repository.ModelRepository
+	globalMetaRepo repository.GlobalMetadataRepository
 }
 
 type pickerModel struct {
-	ID           int64
-	Name         string
-	ProviderName string
+	Name string
 }
 
 func (m VMViewModel) SelectedRawModel() *RawModelInfo {
@@ -627,29 +625,28 @@ func (m *VMViewModel) SetSize(w, h int) {
 	m.height = h
 }
 
-func (m *VMViewModel) StartPicker(mappingRepo repository.ModelMappingRepository, modelRepo repository.ModelRepository, excludeID int64) {
+func (m *VMViewModel) StartPicker(mappingRepo repository.ModelMappingRepository, globalMetaRepo repository.GlobalMetadataRepository, excludeName string) {
 	m.pickerMode = true
 	m.pickerCursor = 0
 	m.pickerFilter = ""
 	m.mappingRepo = mappingRepo
-	m.modelRepo = modelRepo
-	m.refreshPickerModels(excludeID)
+	m.globalMetaRepo = globalMetaRepo
+	m.refreshPickerModels(excludeName)
 }
 
-func (m *VMViewModel) refreshPickerModels(excludeID int64) {
-	if m.modelRepo == nil {
+func (m *VMViewModel) refreshPickerModels(excludeName string) {
+	if m.globalMetaRepo == nil {
 		return
 	}
 	ctx := context.Background()
-	allModels, _ := m.modelRepo.ListAll(ctx)
+	names, _ := m.globalMetaRepo.ListModels(ctx)
 	m.pickerModels = nil
-	for _, model := range allModels {
-		if model.ID == excludeID {
+	for _, name := range names {
+		if name == excludeName {
 			continue
 		}
 		m.pickerModels = append(m.pickerModels, pickerModel{
-			ID:   model.ID,
-			Name: model.Name,
+			Name: name,
 		})
 	}
 }
@@ -667,17 +664,17 @@ func (m *VMViewModel) FilteredPickerModels() []pickerModel {
 	return filtered
 }
 
-func (m *VMViewModel) ConfirmPickerSelection() (sourceID int64, targetID int64, ok bool) {
+func (m *VMViewModel) ConfirmPickerSelection() (sourceID int64, targetName string, ok bool) {
 	rm := m.SelectedRawModel()
 	if rm == nil {
-		return 0, 0, false
+		return 0, "", false
 	}
 	filtered := m.FilteredPickerModels()
 	if m.pickerCursor < 0 || m.pickerCursor >= len(filtered) {
-		return 0, 0, false
+		return 0, "", false
 	}
 	selected := filtered[m.pickerCursor]
-	return rm.ID, selected.ID, true
+	return rm.ID, selected.Name, true
 }
 
 func (m *VMViewModel) ClosePicker() {
@@ -1075,10 +1072,10 @@ func (m VMViewModel) updatePicker(msg tea.KeyMsg) (VMViewModel, tea.Cmd) {
 			m.pickerCursor++
 		}
 	case "enter":
-		sourceID, targetID, ok := m.ConfirmPickerSelection()
+		sourceID, targetName, ok := m.ConfirmPickerSelection()
 		if ok && m.mappingRepo != nil {
 			ctx := context.Background()
-			m.mappingRepo.Set(ctx, sourceID, targetID)
+			m.mappingRepo.Set(ctx, sourceID, targetName)
 		}
 		m.ClosePicker()
 	case "backspace":

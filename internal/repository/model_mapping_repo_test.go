@@ -35,7 +35,7 @@ func setupMappingTestDB(t *testing.T) *sql.DB {
 		)`,
 		`CREATE TABLE model_mappings (
 			source_model_id INTEGER PRIMARY KEY REFERENCES models(id) ON DELETE CASCADE,
-			target_model_id INTEGER NOT NULL REFERENCES models(id) ON DELETE CASCADE,
+			target_model_name TEXT NOT NULL,
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		)`,
 	} {
@@ -55,9 +55,8 @@ func TestSetAndGetMapping(t *testing.T) {
 	// Insert test data
 	db.Exec(`INSERT INTO providers (name, base_url) VALUES ('p1', 'http://localhost')`)
 	db.Exec(`INSERT INTO models (provider_id, name) VALUES (1, 'model-a')`)
-	db.Exec(`INSERT INTO models (provider_id, name) VALUES (1, 'model-b')`)
 
-	if err := repo.Set(ctx, 1, 2); err != nil {
+	if err := repo.Set(ctx, 1, "llama-3.1"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,8 +67,8 @@ func TestSetAndGetMapping(t *testing.T) {
 	if m == nil {
 		t.Fatal("expected mapping, got nil")
 	}
-	if m.SourceModelID != 1 || m.TargetModelID != 2 {
-		t.Errorf("expected 1->2, got %d->%d", m.SourceModelID, m.TargetModelID)
+	if m.SourceModelID != 1 || m.TargetModelName != "llama-3.1" {
+		t.Errorf("expected 1->llama-3.1, got %d->%s", m.SourceModelID, m.TargetModelName)
 	}
 }
 
@@ -96,15 +95,13 @@ func TestSetOverwriteMapping(t *testing.T) {
 
 	db.Exec(`INSERT INTO providers (name, base_url) VALUES ('p1', 'http://localhost')`)
 	db.Exec(`INSERT INTO models (provider_id, name) VALUES (1, 'model-a')`)
-	db.Exec(`INSERT INTO models (provider_id, name) VALUES (1, 'model-b')`)
-	db.Exec(`INSERT INTO models (provider_id, name) VALUES (1, 'model-c')`)
 
-	repo.Set(ctx, 1, 2)
-	repo.Set(ctx, 1, 3)
+	repo.Set(ctx, 1, "llama-3.1")
+	repo.Set(ctx, 1, "gpt-4o")
 
 	m, _ := repo.Get(ctx, 1)
-	if m.TargetModelID != 3 {
-		t.Errorf("expected target 3, got %d", m.TargetModelID)
+	if m.TargetModelName != "gpt-4o" {
+		t.Errorf("expected target gpt-4o, got %s", m.TargetModelName)
 	}
 }
 
@@ -116,9 +113,8 @@ func TestDeleteMapping(t *testing.T) {
 
 	db.Exec(`INSERT INTO providers (name, base_url) VALUES ('p1', 'http://localhost')`)
 	db.Exec(`INSERT INTO models (provider_id, name) VALUES (1, 'model-a')`)
-	db.Exec(`INSERT INTO models (provider_id, name) VALUES (1, 'model-b')`)
 
-	repo.Set(ctx, 1, 2)
+	repo.Set(ctx, 1, "llama-3.1")
 	repo.Delete(ctx, 1)
 
 	m, _ := repo.Get(ctx, 1)
@@ -136,10 +132,9 @@ func TestGetAll(t *testing.T) {
 	db.Exec(`INSERT INTO providers (name, base_url) VALUES ('p1', 'http://localhost')`)
 	db.Exec(`INSERT INTO models (provider_id, name) VALUES (1, 'model-a')`)
 	db.Exec(`INSERT INTO models (provider_id, name) VALUES (1, 'model-b')`)
-	db.Exec(`INSERT INTO models (provider_id, name) VALUES (1, 'model-c')`)
 
-	repo.Set(ctx, 1, 2)
-	repo.Set(ctx, 2, 3)
+	repo.Set(ctx, 1, "llama-3.1")
+	repo.Set(ctx, 2, "gpt-4o")
 
 	all, err := repo.GetAll(ctx)
 	if err != nil {
@@ -157,11 +152,9 @@ func TestGetAllJoined(t *testing.T) {
 	repo := NewModelMappingRepository(db)
 
 	db.Exec(`INSERT INTO providers (name, base_url) VALUES ('p1', 'http://localhost')`)
-	db.Exec(`INSERT INTO providers (name, base_url) VALUES ('p2', 'http://localhost')`)
 	db.Exec(`INSERT INTO models (provider_id, name) VALUES (1, '@cf/meta/llama')`)
-	db.Exec(`INSERT INTO models (provider_id, name) VALUES (2, 'llama')`)
 
-	repo.Set(ctx, 1, 2)
+	repo.Set(ctx, 1, "llama")
 
 	joined, err := repo.GetAllJoined(ctx)
 	if err != nil {
@@ -180,9 +173,6 @@ func TestGetAllJoined(t *testing.T) {
 	if j.SourceProviderName != "p1" {
 		t.Errorf("expected source provider p1, got %s", j.SourceProviderName)
 	}
-	if j.TargetProviderName != "p2" {
-		t.Errorf("expected target provider p2, got %s", j.TargetProviderName)
-	}
 }
 
 func TestFKCascade(t *testing.T) {
@@ -193,9 +183,8 @@ func TestFKCascade(t *testing.T) {
 
 	db.Exec(`INSERT INTO providers (name, base_url) VALUES ('p1', 'http://localhost')`)
 	db.Exec(`INSERT INTO models (provider_id, name) VALUES (1, 'model-a')`)
-	db.Exec(`INSERT INTO models (provider_id, name) VALUES (1, 'model-b')`)
 
-	repo.Set(ctx, 1, 2)
+	repo.Set(ctx, 1, "llama-3.1")
 
 	// Delete source model - mapping should cascade
 	db.Exec(`DELETE FROM models WHERE id = 1`)

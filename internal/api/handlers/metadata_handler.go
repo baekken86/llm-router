@@ -96,6 +96,16 @@ func (h *MetadataHandler) GetFields(w http.ResponseWriter, r *http.Request) {
 	w.Write(append([]byte(`{"fields":`), append(data, '}')...))
 }
 
+func (h *MetadataHandler) ListModels(w http.ResponseWriter, r *http.Request) {
+	models, err := h.globalMetaRepo.ListModels(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(models)
+}
+
 func inferType(key string) string {
 	switch key {
 	case "intelligence", "hallucination", "coding", "speed", "latency",

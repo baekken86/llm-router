@@ -14,11 +14,11 @@ func newMockMappingRepo() *mockMappingRepo {
 	return &mockMappingRepo{mappings: make(map[int64]*repository.ModelMapping)}
 }
 
-func (r *mockMappingRepo) Set(ctx context.Context, sourceModelID, targetModelID int64) error {
+func (r *mockMappingRepo) Set(ctx context.Context, sourceModelID int64, targetModelName string) error {
 	r.mappings[sourceModelID] = &repository.ModelMapping{
-		SourceModelID: sourceModelID,
-		TargetModelID: targetModelID,
-		CreatedAt:     "2026-07-19 00:00:00",
+		SourceModelID:   sourceModelID,
+		TargetModelName: targetModelName,
+		CreatedAt:       "2026-07-19 00:00:00",
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 type GlobalMetadataRepository interface {
@@ -48,8 +49,16 @@ func (r *sqliteGlobalMetadataRepo) Set(ctx context.Context, modelName, effort st
 }
 
 func (r *sqliteGlobalMetadataRepo) GetByModel(ctx context.Context, modelName string) (map[string]map[string]string, error) {
+	lookupName := modelName
+	if strings.HasPrefix(modelName, "@cf/") {
+		parts := strings.SplitN(modelName, "/", 3)
+		if len(parts) == 3 {
+			lookupName = parts[2]
+		}
+	}
+
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT reasoning_effort, key, value FROM model_metadata_global WHERE model_name = ? ORDER BY reasoning_effort, key`, modelName,
+		`SELECT reasoning_effort, key, value FROM model_metadata_global WHERE model_name = ? ORDER BY reasoning_effort, key`, lookupName,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get: %w", err)

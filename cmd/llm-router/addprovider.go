@@ -18,11 +18,11 @@ func runAddProvider(args []string) {
 	fs := flag.NewFlagSet("add-provider", flag.ExitOnError)
 	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
 	name := fs.String("name", "", "Provider name (required)")
-	apiType := fs.String("type", "", "API type: openai or anthropic (auto-detected if not set)")
+	apiType := fs.String("type", "", "API type: openai, anthropic, cloudflare, or ollama (default openai)")
 	baseURL := fs.String("url", "", "Base URL (required)")
 	apiKey := fs.String("key", "", "API key (required)")
 	accountID := fs.String("account-id", "", "Account ID (required for cloudflare providers)")
-	host := fs.String("host", "localhost:11434", "Ollama host (default localhost:11434)")
+	host := fs.String("host", "localhost:11434", "Ollama host (default localhost:11434; use ollama.com for hosted)")
 	fs.Parse(args)
 
 	if *name == "" || (*baseURL == "" && *apiType != "ollama") || (*apiKey == "" && *apiType != "ollama") {
@@ -36,11 +36,7 @@ func runAddProvider(args []string) {
 	}
 
 	if *apiType == "" {
-		if contains(*baseURL, "anthropic") || contains(*baseURL, "/messages") {
-			*apiType = "anthropic"
-		} else {
-			*apiType = "openai"
-		}
+		*apiType = "openai"
 	}
 
 	if *apiType != "openai" && *apiType != "anthropic" && *apiType != "cloudflare" && *apiType != "ollama" {
@@ -88,12 +84,25 @@ func runAddProvider(args []string) {
 			AccountID: *accountID,
 		}
 	} else if *apiType == "ollama" {
-		ollamaURL := fmt.Sprintf("http://%s/v1", *host)
+		isLocal := strings.HasPrefix(*host, "localhost:") || *host == "localhost"
+		var ollamaURL string
+		var ollamaKey string
+		if isLocal {
+			ollamaURL = fmt.Sprintf("http://%s/v1", *host)
+			ollamaKey = ""
+		} else {
+			if *apiKey == "" {
+				fmt.Fprintln(os.Stderr, "Error: --key is required for hosted Ollama (non-localhost)")
+				os.Exit(1)
+			}
+			ollamaURL = fmt.Sprintf("https://%s/v1", *host)
+			ollamaKey = *apiKey
+		}
 		createReq = models.CreateProviderRequest{
 			Name:    *name,
 			APIType: models.APITypeOllama,
 			BaseURL: ollamaURL,
-			APIKey:  "",
+			APIKey:  ollamaKey,
 		}
 	} else {
 		createReq = models.CreateProviderRequest{

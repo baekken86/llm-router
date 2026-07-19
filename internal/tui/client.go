@@ -61,20 +61,15 @@ type ResolvedResponse struct {
 	Models       []ResolvedModelResponse  `json:"models"`
 }
 
-type ModelWithProviderResponse struct {
-	ID           int64       `json:"id"`
-	ProviderID   int64       `json:"provider_id"`
-	ProviderName string      `json:"provider_name"`
-	Name         string      `json:"name"`
-	Tags         []TagResponse `json:"tags,omitempty"`
-}
-
-type TagResponse struct {
-	ID              int64  `json:"id"`
-	ModelID         int64  `json:"model_id"`
-	ReasoningEffort string `json:"reasoning_effort"`
-	Key             string `json:"key"`
-	Value           string `json:"value"`
+type ModelEffortResponse struct {
+	ModelID           int64             `json:"model_id"`
+	ModelName         string            `json:"model_name"`
+	ProviderID        int64             `json:"provider_id"`
+	ProviderName      string            `json:"provider_name"`
+	ReasoningEffort   string            `json:"reasoning_effort"`
+	Tags              map[string]string `json:"tags"`
+	GlobalMetadata    map[string]string `json:"global_metadata"`
+	MappingTargetName *string           `json:"mapping_target_name,omitempty"`
 }
 
 type APIClient struct {
@@ -179,8 +174,8 @@ func (c *APIClient) GetResolvedModels(vmID int64) ([]ResolvedModelResponse, erro
 	return resp.Models, nil
 }
 
-func (c *APIClient) GetModels() ([]ModelWithProviderResponse, error) {
-	var models []ModelWithProviderResponse
+func (c *APIClient) GetModels() ([]ModelEffortResponse, error) {
+	var models []ModelEffortResponse
 	if err := c.doGET("/api/v1/models", &models); err != nil {
 		return nil, err
 	}

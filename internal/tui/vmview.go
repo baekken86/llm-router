@@ -22,9 +22,11 @@ type RawModelListMsg struct {
 }
 
 type RawModelInfo struct {
-	Name             string
-	Tags             map[string]string
-	ID               int64
+	Name              string
+	Effort            string
+	Tags              map[string]string
+	GlobalMetadata    map[string]string
+	ID                int64
 	MappingTargetName string
 }
 
@@ -231,20 +233,29 @@ func (m VMViewModel) viewRawModels() string {
 		return MutedStyle.Render("  No raw models found. Discover models from providers first.")
 	}
 
-	// Collect all tag keys across all raw models for column headers
+	// Collect all tag keys + global metadata keys across all raw models for column headers
 	seen := make(map[string]bool)
 	var tagKeys []string
+	var gmKeys []string
 	for _, models := range m.rawModels {
 		for _, rm := range models {
 			for k := range rm.Tags {
 				if !seen[k] {
 					seen[k] = true
-					tagKeys = append(tagKeys, k)
+					tagKeys = append(tagKeys, "mc."+k)
+				}
+			}
+			for k := range rm.GlobalMetadata {
+				if !seen["m."+k] {
+					seen["m."+k] = true
+					gmKeys = append(gmKeys, "m."+k)
 				}
 			}
 		}
 	}
 	sort.Strings(tagKeys)
+	sort.Strings(gmKeys)
+	allKeys := append(tagKeys, gmKeys...)
 
 	// Build a flat list with provider info for cursor tracking
 	type rawEntry struct {
@@ -264,7 +275,7 @@ func (m VMViewModel) viewRawModels() string {
 	cursorIdx := 0
 	for _, provider := range m.rawProviders {
 		models := m.rawModels[provider]
-		b.WriteString(fmt.Sprintf("  %s%s (%d models)\n",
+		b.WriteString(fmt.Sprintf("  %s%s (%d rows)\n",
 			InfoStyle.Render(provider),
 			MutedStyle.Render(fmt.Sprintf("")),
 			len(models),
@@ -273,15 +284,16 @@ func (m VMViewModel) viewRawModels() string {
 		// Column header
 		header := "    "
 		header += padRight("model", 20)
-		for _, key := range tagKeys {
+		header += "  " + padRight("effort", 8)
+		for _, key := range allKeys {
 			header += "  " + padRight(abbrevKey(key), len(abbrevKey(key)))
 		}
 		b.WriteString(MutedStyle.Render(header))
 		b.WriteString("\n")
 
 		// Separator
-		sep := "    " + strings.Repeat("-", 20)
-		for _, key := range tagKeys {
+		sep := "    " + strings.Repeat("-", 20) + "  " + strings.Repeat("-", 8)
+		for _, key := range allKeys {
 			sep += "  " + strings.Repeat("-", len(abbrevKey(key)))
 		}
 		b.WriteString(MutedStyle.Render(sep))
@@ -299,8 +311,20 @@ func (m VMViewModel) viewRawModels() string {
 				modelDisplay += MutedStyle.Render(fmt.Sprintf(" [→ %s]", rm.MappingTargetName))
 			}
 			line += padRight(modelDisplay, 20)
-			for _, key := range tagKeys {
-				val := rm.Tags[key]
+
+			effortDisplay := rm.Effort
+			if effortDisplay == "" {
+				effortDisplay = "—"
+			}
+			line += "  " + padRight(effortDisplay, 8)
+
+			for _, key := range allKeys {
+				var val string
+				if strings.HasPrefix(key, "mc.") {
+					val = rm.Tags[key[3:]]
+				} else if strings.HasPrefix(key, "m.") {
+					val = rm.GlobalMetadata[key[2:]]
+				}
 				if val == "" {
 					val = "-"
 				}
@@ -822,7 +846,7 @@ func FetchVMDataLocal(vmRepo repository.VirtualModelRepository, modelRepo reposi
 	}
 }
 
-func FetchRawModelsLocal(modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, mappingRepo repository.ModelMappingRepository) tea.Cmd {
+func FetchRawModelsLocal(modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, mappingRepo repository.ModelMappingRepository, globalMetaRepo repository.GlobalMetadataRepository) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
@@ -848,18 +872,65 @@ func FetchRawModelsLocal(modelRepo repository.ModelRepository, tagRepo repositor
 				continue
 			}
 
-			tags, _ := tagRepo.GetByModel(ctx, m.ID)
-			tagMap := make(map[string]string)
-			for _, t := range tags {
-				tagMap["mc."+t.Key] = t.Value
-			}
+			targetName := mappingMap[m.ID]
+			if targetName != "" {
+				// Mapped path: per-effort global metadata from target
+				targetMeta, _ := globalMetaRepo.GetByModel(ctx, targetName)
+				efforts := make([]string, 0, len(targetMeta))
+				for effort := range targetMeta {
+					efforts = append(efforts, effort)
+				}
+				if len(efforts) == 0 {
+					efforts = []string{""}
+				}
+				for _, effort := range efforts {
+					gm := map[string]string{}
+					if targetMeta != nil {
+						if data, ok := targetMeta[effort]; ok {
+							for k, v := range data {
+								gm[k] = v
+							}
+						}
+					}
+					rawModels[provider.Name] = append(rawModels[provider.Name], RawModelInfo{
+						Name:              m.Name,
+						Effort:            effort,
+						Tags:              map[string]string{},
+						GlobalMetadata:    gm,
+						ID:                m.ID,
+						MappingTargetName: targetName,
+					})
+				}
+			} else {
+				// Not-mapped path: per-effort tags + global metadata
+				efforts, _ := tagRepo.GetAvailableEfforts(ctx, m.ID)
+				if len(efforts) == 0 {
+					efforts = []string{""}
+				}
+				for _, effort := range efforts {
+					tagMap := map[string]string{}
+					tags, _ := tagRepo.GetByModelEffort(ctx, m.ID, effort)
+					for _, t := range tags {
+						tagMap[t.Key] = t.Value
+					}
 
-			rawModels[provider.Name] = append(rawModels[provider.Name], RawModelInfo{
-				Name:              m.Name,
-				Tags:              tagMap,
-				ID:                m.ID,
-				MappingTargetName: mappingMap[m.ID],
-			})
+					gm := map[string]string{}
+					if globalMetaRepo != nil {
+						gmData, _ := globalMetaRepo.GetByModelEffort(ctx, m.Name, effort)
+						for k, v := range gmData {
+							gm[k] = v
+						}
+					}
+
+					rawModels[provider.Name] = append(rawModels[provider.Name], RawModelInfo{
+						Name:           m.Name,
+						Effort:         effort,
+						Tags:           tagMap,
+						GlobalMetadata: gm,
+						ID:             m.ID,
+					})
+				}
+			}
 		}
 
 		return RawModelListMsg{RawModels: rawModels}
@@ -1041,15 +1112,25 @@ func FetchRawModels(client *APIClient) tea.Cmd {
 
 		rawModels := make(map[string][]RawModelInfo)
 		for _, m := range models {
-			tagMap := make(map[string]string)
-			for _, t := range m.Tags {
-				if t.ReasoningEffort == "" || t.ReasoningEffort == "default" {
-					tagMap["mc."+t.Key] = t.Value
-				}
+			tags := m.Tags
+			if tags == nil {
+				tags = map[string]string{}
+			}
+			gm := m.GlobalMetadata
+			if gm == nil {
+				gm = map[string]string{}
+			}
+			mappingTarget := ""
+			if m.MappingTargetName != nil {
+				mappingTarget = *m.MappingTargetName
 			}
 			rawModels[m.ProviderName] = append(rawModels[m.ProviderName], RawModelInfo{
-				Name: m.Name,
-				Tags: tagMap,
+				Name:              m.ModelName,
+				Effort:            m.ReasoningEffort,
+				Tags:              tags,
+				GlobalMetadata:    gm,
+				ID:                m.ModelID,
+				MappingTargetName: mappingTarget,
 			})
 		}
 

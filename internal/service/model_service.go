@@ -12,16 +12,21 @@ import (
 	"github.com/chris/llm-router/internal/repository"
 )
 
-type ModelWithProvider struct {
-	models.Model
-	ProviderName      string  `json:"provider_name"`
-	MappingTargetName *string `json:"mapping_target_name,omitempty"`
+type ModelEffortEntry struct {
+	ModelID           int64             `json:"model_id"`
+	ModelName         string            `json:"model_name"`
+	ProviderID        int64             `json:"provider_id"`
+	ProviderName      string            `json:"provider_name"`
+	ReasoningEffort   string            `json:"reasoning_effort"`
+	Tags              map[string]string `json:"tags"`
+	GlobalMetadata    map[string]string `json:"global_metadata"`
+	MappingTargetName *string           `json:"mapping_target_name,omitempty"`
 }
 
 type ModelService interface {
 	Discover(ctx context.Context, providerID int64) ([]models.Model, error)
 	ListByProvider(ctx context.Context, providerID int64) ([]models.Model, error)
-	ListAll(ctx context.Context) ([]ModelWithProvider, error)
+	ListAll(ctx context.Context) ([]ModelEffortEntry, error)
 	GetByID(ctx context.Context, id int64) (*models.Model, error)
 	SetTags(ctx context.Context, modelID int64, tags map[string]string) error
 	GetTags(ctx context.Context, modelID int64) ([]models.Tag, error)
@@ -173,7 +178,7 @@ func fetchModels(baseURL, apiKey string, apiType models.APIType) ([]string, erro
 	return names, nil
 }
 
-func (s *modelService) ListAll(ctx context.Context) ([]ModelWithProvider, error) {
+func (s *modelService) ListAll(ctx context.Context) ([]ModelEffortEntry, error) {
 	allModels, err := s.modelRepo.ListAll(ctx)
 	if err != nil {
 		return nil, err
@@ -189,14 +194,8 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelWithProvider, error)
 		}
 	}
 
-	var result []ModelWithProvider
+	var result []ModelEffortEntry
 	for _, m := range allModels {
-		tags, err := s.tagRepo.GetByModel(ctx, m.ID)
-		if err != nil {
-			return nil, err
-		}
-		m.Tags = tags
-
 		provider, err := s.providerRepo.GetByID(ctx, m.ProviderID)
 		if err != nil {
 			return nil, err
@@ -206,20 +205,92 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelWithProvider, error)
 			providerName = provider.Name
 		}
 
-		mp := ModelWithProvider{
-			Model:        m,
-			ProviderName: providerName,
-		}
-
-		// Populate mapping info
+		// Determine mapping
+		var mappingTarget *string
 		if mappingMap != nil {
 			if mapping, ok := mappingMap[m.ID]; ok {
 				name := mapping.TargetModelName
-				mp.MappingTargetName = &name
+				mappingTarget = &name
 			}
 		}
 
-		result = append(result, mp)
+		if mappingTarget != nil {
+			// Mapped path: get target's per-effort global metadata
+			targetName := *mappingTarget
+			targetMeta, err := s.globalMetaRepo.GetByModel(ctx, targetName)
+			if err != nil {
+				return nil, err
+			}
+
+			efforts := make([]string, 0, len(targetMeta))
+			for effort := range targetMeta {
+				efforts = append(efforts, effort)
+			}
+			if len(efforts) == 0 {
+				efforts = []string{""}
+			}
+
+			for _, effort := range efforts {
+				gm := map[string]string{}
+				if targetMeta != nil {
+					if data, ok := targetMeta[effort]; ok {
+						for k, v := range data {
+							gm[k] = v
+						}
+					}
+				}
+				result = append(result, ModelEffortEntry{
+					ModelID:           m.ID,
+					ModelName:         m.Name,
+					ProviderID:        m.ProviderID,
+					ProviderName:      providerName,
+					ReasoningEffort:   effort,
+					Tags:              map[string]string{},
+					GlobalMetadata:    gm,
+					MappingTargetName: mappingTarget,
+				})
+			}
+		} else {
+			// Not-mapped path: get per-effort tags + global metadata
+			efforts, err := s.tagRepo.GetAvailableEfforts(ctx, m.ID)
+			if err != nil {
+				return nil, err
+			}
+			if len(efforts) == 0 {
+				efforts = []string{""}
+			}
+
+			for _, effort := range efforts {
+				tagMap := map[string]string{}
+				tags, err := s.tagRepo.GetByModelEffort(ctx, m.ID, effort)
+				if err != nil {
+					return nil, err
+				}
+				for _, t := range tags {
+					tagMap[t.Key] = t.Value
+				}
+
+				gm := map[string]string{}
+				if s.globalMetaRepo != nil {
+					gmData, err := s.globalMetaRepo.GetByModelEffort(ctx, m.Name, effort)
+					if err == nil {
+						for k, v := range gmData {
+							gm[k] = v
+						}
+					}
+				}
+
+				result = append(result, ModelEffortEntry{
+					ModelID:         m.ID,
+					ModelName:       m.Name,
+					ProviderID:      m.ProviderID,
+					ProviderName:    providerName,
+					ReasoningEffort: effort,
+					Tags:            tagMap,
+					GlobalMetadata:  gm,
+				})
+			}
+		}
 	}
 
 	return result, nil

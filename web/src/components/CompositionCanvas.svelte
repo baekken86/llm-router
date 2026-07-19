@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/api.js';
-  import { assignCompositionIds, autoUnwrap, autoWrap, moveNodeBetweenContainers, findNodeInComposition, flattenCompositionIds } from '../lib/treeUtils.js';
+  import { assignCompositionIds, autoUnwrap, autoWrap, moveNodeBetweenContainers, removeNodeFromComposition, findNodeInComposition, flattenCompositionIds } from '../lib/treeUtils.js';
   import CompositionBuilder from './CompositionBuilder.svelte';
 
   let {
@@ -9,6 +9,7 @@
     allVMs = [],
   } = $props();
 
+  // Bug 3 fix: tree is internal copy, never mutate $bindable prop directly
   let tree = $state(null);
   let dragSourceId = $state(null);
   let dropTargetId = $state(null);
@@ -41,11 +42,22 @@
     return depth;
   }
 
-  onMount(() => {
-    autoUnwrapInPlace();
-    assignCompositionIds(node);
-    tree = node;
+  /**
+   * Initialize tree from prop — never mutates the bindable prop.
+   */
+  function initTree(source) {
+    if (!source) { tree = null; return; }
+    const copy = { ...source };
+    tree = autoUnwrap(copy);
+    assignCompositionIds(tree);
+  }
 
+  // Bug 3 fix: $effect watches parent-driven changes to node prop
+  $effect(() => {
+    initTree(node);
+  });
+
+  onMount(() => {
     // Load available VMs
     if (allVMs.length > 0) {
       availableVMs = allVMs;
@@ -56,37 +68,41 @@
     }
   });
 
-  function autoUnwrapInPlace() {
-    if (!node) return;
-    const unwrapped = autoUnwrap(node);
-    if (unwrapped !== node) {
-      // Replace all keys from node with unwrapped
-      for (const key of Object.keys(node)) {
-        delete node[key];
-      }
-      Object.assign(node, unwrapped);
-    }
-  }
-
   function addVMRef() {
+    // Bug 2 fix: if tree is a leaf node (no .sources), wrap it first
+    if (tree && !tree.sources) {
+      tree = { sources: [tree] };
+    }
     tree.sources.push({ vm: '' });
     assignCompositionIds(tree);
     node = tree;
   }
 
   function addFilterSource() {
+    if (tree && !tree.sources) {
+      tree = { sources: [tree] };
+    }
     tree.sources.push({ filter_expr: { and: [] }, sort_expr: [] });
     assignCompositionIds(tree);
     node = tree;
   }
 
   function addOperation() {
+    if (tree && !tree.sources) {
+      tree = { sources: [tree] };
+    }
     tree.sources.push({ operation: 'union', sources: [{ vm: '' }, { vm: '' }] });
     assignCompositionIds(tree);
     node = tree;
   }
 
   function removeItem(id) {
+    if (tree && !tree.sources) {
+      // Single leaf being removed — clear tree
+      tree = null;
+      node = tree;
+      return;
+    }
     const newTree = { ...tree };
     newTree.sources = newTree.sources.filter(s => s.__id !== id);
     tree = newTree;
@@ -197,15 +213,20 @@
     }
   }
 
+  // Bug 1 fix: handle root-level drop directly instead of going through
+  // moveNodeBetweenContainers (which returns null for targetParentId === null)
   function handleCanvasDrop(e) {
     // Handle drop on canvas background (root level)
     if (!dropTargetId && dragSourceId) {
       e.preventDefault();
       const sourceParentId = getParentId(dragSourceId);
       if (sourceParentId) {
-        // Move to root level (last position)
-        const newTree = moveNodeBetweenContainers(tree, dragSourceId, null, tree.sources.length);
+        // Remove from parent container, append to root
+        const sourceInfo = findNodeInComposition(tree, dragSourceId);
+        const sourceNode = sourceInfo.node;
+        const newTree = removeNodeFromComposition(tree, dragSourceId);
         if (newTree) {
+          newTree.sources.push(sourceNode);
           assignCompositionIds(newTree);
           tree = newTree;
           node = tree;
@@ -385,6 +406,79 @@
         {/each}
       {/if}
     {/each}
+  {:else if tree}
+    <!-- Bug 2 fix: single leaf node (no .sources) — render as single root item -->
+    {@const item = tree}
+    {@const isDragTarget = dropTargetId === item.__id}
+
+    <div
+      role="listitem"
+      draggable="true"
+      ondragstart={(e) => handleDragStart(e, item.__id)}
+      ondragover={(e) => handleDragOver(e, item.__id)}
+      ondragleave={handleDragLeave}
+      ondrop={(e) => handleDrop(e, item.__id)}
+      ondragend={handleDragEnd}
+      class="flex items-center gap-2 rounded px-2 py-1.5 text-sm transition-colors
+        {isDragTarget ? 'bg-emerald-900/30 border border-emerald-600' : 'hover:bg-gray-800 border border-transparent'}"
+      style="padding-left: 8px"
+    >
+      <button
+        class="cursor-grab active:cursor-grabbing text-gray-500 hover:text-gray-300 select-none p-0.5 shrink-0"
+        aria-label="Drag to reorder"
+        title="Drag to reorder"
+        tabindex="-1"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="9" cy="6" r="1" /><circle cx="15" cy="6" r="1" />
+          <circle cx="9" cy="12" r="1" /><circle cx="15" cy="12" r="1" />
+          <circle cx="9" cy="18" r="1" /><circle cx="15" cy="18" r="1" />
+        </svg>
+      </button>
+
+      {#if isVMRef(item)}
+        <span class="text-gray-500 text-xs shrink-0">ref</span>
+        <select
+          class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-gray-100 flex-1 min-w-0 focus:outline-none focus:border-emerald-500"
+          value={item.vm || ''}
+          onchange={(e) => { e.stopPropagation(); setItemVM(item.__id, e.target.value); }}
+          onclick={(e) => e.stopPropagation()}
+        >
+          <option value="">Select a virtual model...</option>
+          {#each availableVMs as vm}
+            <option value={vm.name}>{vm.name}{vm.description ? ` — ${vm.description}` : ''}</option>
+          {/each}
+        </select>
+
+      {:else if isFilterSource(item)}
+        <span class="text-amber-400 text-xs font-medium shrink-0">Filter Source</span>
+        <button
+          class="text-xs text-gray-500 hover:text-red-400 ml-auto shrink-0"
+          onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
+          title="Remove filter source"
+        >&times;</button>
+
+      {:else if isOpNode(item)}
+        <select
+          class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs font-medium text-gray-200 shrink-0 focus:outline-none focus:border-emerald-500"
+          value={item.operation}
+          onchange={(e) => { e.stopPropagation(); setItemOperation(item.__id, e.target.value); }}
+          onclick={(e) => e.stopPropagation()}
+        >
+          <option value="union">Union</option>
+          <option value="intersection">Intersection</option>
+          <option value="difference">Difference</option>
+        </select>
+        <span class="text-xs text-gray-500 shrink-0">
+          {item.sources?.length || 0} sources
+        </span>
+        <button
+          class="text-xs text-gray-600 hover:text-red-400 ml-auto shrink-0"
+          onclick={(e) => { e.stopPropagation(); removeItem(item.__id); }}
+          title="Remove operation"
+        >&times;</button>
+      {/if}
+    </div>
   {/if}
 
   <!-- Root add buttons -->

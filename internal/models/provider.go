@@ -8,6 +8,7 @@ const (
 	APITypeOpenAI     APIType = "openai"
 	APITypeAnthropic  APIType = "anthropic"
 	APITypeCloudflare APIType = "cloudflare"
+	APITypeOllama     APIType = "ollama"
 )
 
 type Provider struct {

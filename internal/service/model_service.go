@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/chris/llm-router/internal/models"
@@ -103,6 +104,40 @@ func (s *modelService) Discover(ctx context.Context, providerID int64) ([]models
 }
 
 func fetchModels(baseURL, apiKey string, apiType models.APIType) ([]string, error) {
+	if apiType == models.APITypeOllama {
+		// Ollama: discover via /api/tags (not /v1/models)
+		ollamaHost := strings.TrimSuffix(baseURL, "/v1")
+		ollamaHost = strings.TrimSuffix(ollamaHost, "/")
+		url := ollamaHost + "/api/tags"
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Get(url)
+		if err != nil {
+			return nil, fmt.Errorf("request ollama tags: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("ollama tags endpoint returned %d", resp.StatusCode)
+		}
+
+		var tagsResponse struct {
+			Models []struct {
+				Name string `json:"name"`
+			} `json:"models"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&tagsResponse); err != nil {
+			return nil, fmt.Errorf("decode ollama tags response: %w", err)
+		}
+
+		var names []string
+		for _, m := range tagsResponse.Models {
+			names = append(names, m.Name)
+		}
+		return names, nil
+	}
+
+	// OpenAI-compatible (openai, anthropic, cloudflare)
 	url := baseURL + "/v1/models"
 
 	req, err := http.NewRequest("GET", url, nil)

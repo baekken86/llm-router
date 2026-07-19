@@ -1,0 +1,35 @@
+{
+  "id": "ADR-005",
+  "title": "Ollama Provider Architecture",
+  "status": "accepted",
+  "date": "2026-07-19",
+  "context": "Ollama runs locally, exposes OpenAI-compatible API at http://host:port/v1. No API key needed. Model discovery via /api/tags (not /v1/models).",
+  "decisions": [
+    {
+      "id": "Q1",
+      "question": "How to discover models?",
+      "answer": "GET http://{host}/api/tags, parse {\"models\": [{\"name\": \"...\"}]}. Different endpoint+format from OpenAI /v1/models."
+    },
+    {
+      "id": "Q2",
+      "question": "What if Ollama not running?",
+      "answer": "discoverModels returns error → log warning + create provider with 0 models. Do NOT fail setup/add-provider command."
+    },
+    {
+      "id": "Q3",
+      "question": "Base URL pattern?",
+      "answer": "http://{host}/v1 (default http://localhost:11434/v1). User passes --host flag (default localhost:11434)."
+    },
+    {
+      "id": "Q4",
+      "question": "Engine routing?",
+      "answer": "Explicit else-if branch (same pattern as Cloudflare). Reuses openaiClient. Body identical to OpenAI else branch. Future hooks: tool calling, context-length, model-not-found fallback."
+    }
+  ],
+  "consequences": [
+    "fetchModels in model_service.go needs ollama branch (different endpoint + response format)",
+    "No new DB columns needed — only CHECK constraint relaxation",
+    "API handler must skip api_key required check for ollama",
+    "openaiClient sends Authorization: Bearer with empty key — Ollama ignores, no change needed"
+  ]
+}

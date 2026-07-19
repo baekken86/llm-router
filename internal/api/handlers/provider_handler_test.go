@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/chris/llm-router/internal/models"
@@ -217,13 +218,17 @@ func (h *testHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" || req.APIType == "" || req.BaseURL == "" || req.APIKey == "" {
-		http.Error(w, `{"error":"name, api_type, base_url, and api_key are required"}`, http.StatusBadRequest)
+	if req.Name == "" || req.APIType == "" || req.BaseURL == "" {
+		http.Error(w, `{"error":"name, api_type, and base_url are required"}`, http.StatusBadRequest)
+		return
+	}
+	if req.APIKey == "" && req.APIType != models.APITypeOllama {
+		http.Error(w, `{"error":"api_key is required"}`, http.StatusBadRequest)
 		return
 	}
 
-	if req.APIType != models.APITypeOpenAI && req.APIType != models.APITypeAnthropic && req.APIType != models.APITypeCloudflare {
-		http.Error(w, `{"error":"api_type must be 'openai', 'anthropic', or 'cloudflare'"}`, http.StatusBadRequest)
+	if req.APIType != models.APITypeOpenAI && req.APIType != models.APITypeAnthropic && req.APIType != models.APITypeCloudflare && req.APIType != models.APITypeOllama {
+		http.Error(w, `{"error":"api_type must be 'openai', 'anthropic', 'cloudflare', or 'ollama'"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -236,4 +241,70 @@ func (h *testHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"status": "created"})
+}
+
+// TestCreateProvider_Ollama_NoAPIKey tests that ollama type accepts empty api_key.
+func TestCreateProvider_Ollama_NoAPIKey(t *testing.T) {
+	handler := &testHandler{mock: &mockProviderService{}}
+
+	body, _ := json.Marshal(models.CreateProviderRequest{
+		Name:    "test-ollama",
+		APIType: models.APITypeOllama,
+		BaseURL: "http://localhost:11434/v1",
+		APIKey:  "",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/providers", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected 201 for ollama without api_key, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCreateProvider_Ollama_WithAPIKey tests that ollama type also accepts api_key.
+func TestCreateProvider_Ollama_WithAPIKey(t *testing.T) {
+	handler := &testHandler{mock: &mockProviderService{}}
+
+	body, _ := json.Marshal(models.CreateProviderRequest{
+		Name:    "test-ollama-key",
+		APIType: models.APITypeOllama,
+		BaseURL: "http://localhost:11434/v1",
+		APIKey:  "some-key",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/providers", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected 201 for ollama with api_key, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCreateProvider_InvalidType_IncludesOllama tests error message includes ollama.
+func TestCreateProvider_InvalidType_IncludesOllama(t *testing.T) {
+	handler := &testHandler{mock: &mockProviderService{}}
+
+	body, _ := json.Marshal(models.CreateProviderRequest{
+		Name:    "test-bad",
+		APIType: "invalid",
+		BaseURL: "http://example.com",
+		APIKey:  "key",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/providers", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid api_type, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "ollama") {
+		t.Errorf("error message should mention ollama as valid type, got: %s", w.Body.String())
+	}
 }

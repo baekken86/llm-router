@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/api.js';
   import { addToast } from '../lib/stores.js';
-  import CompositionBuilder from './CompositionBuilder.svelte';
+  import CompositionCanvas from './CompositionCanvas.svelte';
   import ResolvedPreview from './ResolvedPreview.svelte';
 
   let { vmId = null, onBack } = $props();
@@ -15,6 +15,7 @@
   let retryOnStatus = $state([429, 500, 502, 503]);
   let saving = $state(false);
   let loading = $state(vmId !== null);
+  let canvasRef = $state();
 
   const statusOptions = [429, 500, 502, 503, 504];
 
@@ -62,19 +63,20 @@
       addToast('Name is required', 'error');
       return;
     }
-    if (!isValidComposition(compositionNode)) {
+    if (!isValidComposition(canvasRef?.getComposition() || compositionNode)) {
       addToast('Composition must have at least 2 sources with VMs selected, or a valid filter source', 'error');
       return;
     }
     saving = true;
     try {
+      const composition = canvasRef?.getComposition() || compositionNode;
       const body = {
         name: name.trim(),
         description: description.trim(),
         max_retries: maxRetries,
         retry_on_status: retryOnStatus,
         include_models: includeModels,
-        composition: compositionNode
+        composition
       };
 
       let result;
@@ -146,7 +148,7 @@
       <div>
         <label class="block text-sm text-gray-400 mb-2">Composition</label>
         <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-          <CompositionBuilder bind:node={compositionNode} />
+          <CompositionCanvas bind:node={compositionNode} bind:this={canvasRef} />
         </div>
       </div>
 
@@ -200,7 +202,7 @@
       <h3 class="text-sm font-medium text-gray-300 mb-3">
         Resolved Models <span class="text-gray-500 text-xs">(live preview)</span>
       </h3>
-      <ResolvedPreview previewMode={true} composition={compositionNode} />
+      <ResolvedPreview previewMode={true} composition={canvasRef?.getComposition() || compositionNode} />
     </div>
   {/if}
 </div>

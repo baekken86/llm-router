@@ -21,6 +21,9 @@ vendor/
 .DS_Store
 Thumbs.db
 
+# Worktrees
+.worktrees/
+
 # Env
 .env
 .env.local

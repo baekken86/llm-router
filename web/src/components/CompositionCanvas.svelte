@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { apiFetch } from '../lib/api.js';
   import { assignCompositionIds, autoUnwrap, autoWrap, moveNodeBetweenContainers, removeNodeFromComposition, findNodeInComposition, flattenCompositionIds } from '../lib/treeUtils.js';
   import CompositionBuilder from './CompositionBuilder.svelte';
@@ -49,7 +49,7 @@
     if (!source) { tree = null; return; }
     const copy = { ...source };
     tree = autoUnwrap(copy);
-    assignCompositionIds(tree);
+    untrack(() => assignCompositionIds(tree));
   }
 
   // Bug 3 fix: $effect watches parent-driven changes to node prop

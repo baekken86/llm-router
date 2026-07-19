@@ -215,7 +215,7 @@
     if (cleaned.sort_expr && Array.isArray(cleaned.sort_expr) && cleaned.sort_expr.length === 0) {
       delete cleaned.sort_expr;
     }
-    if (!cleaned.operation && cleaned.collection === undefined && !cleaned.filter_expr && !(Array.isArray(cleaned.sort_expr) && cleaned.sort_expr.length > 0)) return null;
+    if (!cleaned.operation && cleaned.collection === undefined && !cleaned.filter_expr && !(Array.isArray(cleaned.sort_expr) && cleaned.sort_expr.length > 0) && !(Array.isArray(cleaned.sources) && cleaned.sources.length > 0)) return null;
     return cleaned;
   }
 

@@ -97,3 +97,36 @@ PR #2 imported from `@dnd-kit/dom` and `@dnd-kit/svelte` but did NOT declare the
 - `LogsView.svelte:5` imports missing `$lib/components/ui/button.svelte`. Pre-existing from commit 0ec2f9cc. Not introduced by PR #2 or PR #3.
 - Cursor-relative drop positioning (deferred from PR #2).
 - Playwright E2E (no test infra in project).
+
+---
+
+## PR #4 (2026-07-18)
+
+**Merge commit:** 3baa6c20 — fix(web): invert defaultPrevented check on Create/Edit buttons
+
+## Bug Fixes
+
+### Fix Create/Edit buttons on virtual model list (#4)
+User reported: "edit button on virtual model list does not work". Investigation showed both Create and Edit buttons broken due to inverted `!e.defaultPrevented` condition.
+
+**File**: `web/src/components/VirtualModelList.svelte` lines 92 and 127
+
+**Before**:
+```svelte
+onclick={(e) => { handleLink(e, '/virtual/create'); if (!e.defaultPrevented) onCreate(); }}
+onclick={(e) => { e.stopPropagation(); handleLink(e, `/virtual/${vm.id}`); if (!e.defaultPrevented) onEdit(vm.id); }}
+```
+
+**After** (removed `!`):
+```svelte
+onclick={(e) => { handleLink(e, '/virtual/create'); if (e.defaultPrevented) onCreate(); }}
+onclick={(e) => { e.stopPropagation(); handleLink(e, `/virtual/${vm.id}`); if (e.defaultPrevented) onEdit(vm.id); }}
+```
+
+**Logic**:
+- Normal click: `handleLink` calls `e.preventDefault()` → `defaultPrevented = true` → callback fires ✓
+- Ctrl/Meta/Shift click: `handleLink` returns early → `defaultPrevented = false` → browser opens new tab with href, callback does NOT fire ✓
+
+**Root cause attribution**: Bug was pre-existing from commit `6ec19f4` ("started adding new UI framework"), which predates both drag-drop PRs. PR #2 and PR #3 did NOT touch `VirtualModelList.svelte`. The button silently failed for ~6 weeks between 6ec19f4 and this fix.
+
+**Test**: 4/4 scenarios pass (normal Edit, normal Create, Ctrl+Click Edit, Ctrl+Click Create) + 3/3 edge cases (right-click, shift-click, meta-click).

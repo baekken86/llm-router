@@ -151,7 +151,12 @@ func runSetup(args []string) {
 	if existing != nil {
 		logger.Info("provider already exists", "name", *providerName)
 
-		if providerCfg.auth == "oauth" {
+		if providerCfg.apiType == "cloudflare" {
+			if *apiKey != "" {
+				updateProviderKey(ctx, providerService, existing, *apiKey, logger)
+			}
+			createPredefinedModels(ctx, modelRepo, tagRepo, globalRepo, existing, "cloudflare", logger)
+		} else if providerCfg.auth == "oauth" {
 			handleOAuthSetup(ctx, existing, oauthRepo, providerRepo, providerService, logger)
 			createPredefinedModels(ctx, modelRepo, tagRepo, globalRepo, existing, providerCfg.name, logger)
 		} else {

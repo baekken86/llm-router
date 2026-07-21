@@ -5,6 +5,7 @@
   import VirtualModelList from './components/VirtualModelList.svelte';
   import VirtualModelForm from './components/VirtualModelForm.svelte';
   import RawModelList from './components/RawModelList.svelte';
+  import ModelMetadataEdit from './components/ModelMetadataEdit.svelte';
   import MappingsTab from './components/MappingsTab.svelte';
   import StatusView from './components/StatusView.svelte';
   import StatsView from './components/StatsView.svelte';
@@ -18,9 +19,25 @@
   let editingId = $state(null);
   let authenticated = $state(false);
   let mainTab = $state('virtual');
+  let metaProvider = $state('');
+  let metaModel = $state('');
+  let metaEffort = $state('');
 
   function parsePath(pathname) {
     if (pathname === '/raw') return { tab: 'raw', view: 'list', id: null };
+    if (pathname.startsWith('/raw/metadata/')) {
+      const parts = pathname.split('/').filter(Boolean);
+      // parts: ['raw', 'metadata', provider, model, effort?]
+      if (parts.length >= 4) {
+        return {
+          tab: 'raw',
+          view: 'metadata',
+          provider: decodeURIComponent(parts[2]),
+          model: decodeURIComponent(parts[3]),
+          effort: parts[4] || ''
+        };
+      }
+    }
     if (pathname === '/mappings') return { tab: 'mappings', view: 'list', id: null };
     if (pathname === '/status') return { tab: 'status', view: 'list', id: null };
     if (pathname === '/stats') return { tab: 'stats', view: 'list', id: null };
@@ -36,6 +53,10 @@
   }
 
   function pathFor(tab, view, id) {
+    if (tab === 'raw' && view === 'metadata' && metaProvider && metaModel) {
+      const effort = metaEffort || '';
+      return `/raw/metadata/${encodeURIComponent(metaProvider)}/${encodeURIComponent(metaModel)}${effort ? '/' + encodeURIComponent(effort) : ''}`;
+    }
     if (tab === 'raw') return '/raw';
     if (tab === 'mappings') return '/mappings';
     if (tab === 'status') return '/status';
@@ -74,6 +95,9 @@
     mainTab = parsed.tab;
     view = parsed.view;
     editingId = parsed.id;
+    if (parsed.provider) metaProvider = parsed.provider;
+    if (parsed.model) metaModel = parsed.model;
+    if (parsed.effort !== undefined) metaEffort = parsed.effort;
   }
 
   async function loadFields() {
@@ -179,8 +203,29 @@
     </nav>
 
     <main class="max-w-6xl mx-auto p-6">
-      {#if mainTab === 'raw'}
-        <RawModelList />
+      {#if mainTab === 'raw' && view === 'metadata'}
+        <ModelMetadataEdit
+          provider={metaProvider}
+          model={metaModel}
+          effort={metaEffort}
+          onBack={(p, m, e) => {
+            if (p !== undefined) {
+              metaProvider = p; metaModel = m; metaEffort = e || '';
+              const path = pathFor('raw', 'metadata', null);
+              history.pushState({ path }, '', path);
+            } else {
+              mainTab = 'raw'; view = 'list';
+              history.pushState({ path: '/raw' }, '', '/raw');
+            }
+          }}
+        />
+      {:else if mainTab === 'raw'}
+        <RawModelList onEditMetadata={(provider, model, effort) => {
+          metaProvider = provider; metaModel = model; metaEffort = effort || '';
+          view = 'metadata';
+          const path = pathFor('raw', 'metadata', null);
+          history.pushState({ path }, '', path);
+        }} />
       {:else if mainTab === 'mappings'}
         <MappingsTab />
       {:else if mainTab === 'status'}

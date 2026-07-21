@@ -28,6 +28,7 @@ func NewRouter(
 	syslogHandler *handlers.SyslogHandler,
 	settingsHandler *handlers.SettingsHandler,
 	mappingHandler *handlers.ModelMappingHandler,
+	modelOverrideHandler *handlers.ModelOverrideHandler,
 	keyService service.KeyService,
 	adminService service.AdminService,
 	adminHandler *handlers.AdminHandler,
@@ -95,6 +96,10 @@ func NewRouter(
 			r.Post("/", mappingHandler.CreateMapping)
 			r.Get("/", mappingHandler.GetMapping)
 			r.Delete("/", mappingHandler.DeleteMapping)
+		})
+
+		r.Route("/models/{id}/overrides", func(r chi.Router) {
+			r.Mount("/", modelOverrideHandler.Routes())
 		})
 	})
 

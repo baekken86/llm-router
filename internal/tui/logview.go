@@ -10,6 +10,7 @@ import (
 
 type LogEntry struct {
 	LogType      string
+	Status       string
 	Timestamp    time.Time
 	RequestID    string
 	VirtualModel string
@@ -23,10 +24,11 @@ type LogEntry struct {
 	ErrorMessage string
 	Fallback     int
 	Retry        int
+	Children     []*LogEntry
 }
 
 type LogViewModel struct {
-	entries []LogEntry
+	entries []*LogEntry
 	maxSize int
 	width   int
 	height  int
@@ -36,54 +38,101 @@ type LogViewModel struct {
 
 func NewLogViewModel(maxSize int) LogViewModel {
 	return LogViewModel{
-		entries: make([]LogEntry, 0, maxSize),
+		entries: make([]*LogEntry, 0, maxSize),
 		maxSize: maxSize,
 	}
 }
 
+func logEntryFromProxy(l proxy.RequestLog) LogEntry {
+	return LogEntry{
+		LogType:      l.Type,
+		Status:       l.Status,
+		Timestamp:    l.Timestamp,
+		RequestID:    l.RequestID,
+		VirtualModel: l.VirtualModel,
+		ProviderName: l.ProviderName,
+		ModelName:    l.ModelName,
+		StatusCode:   l.StatusCode,
+		Latency:      l.Latency,
+		InputTokens:  l.InputTokens,
+		OutputTokens: l.OutputTokens,
+		CachedTokens: l.CachedTokens,
+		ErrorMessage: l.ErrorMessage,
+		Fallback:     l.FallbackCount,
+		Retry:        l.RetryCount,
+	}
+}
+
 func (m *LogViewModel) AddEntry(log proxy.RequestLog) {
-	entry := LogEntry{
-		LogType:      log.Type,
-		Timestamp:    log.Timestamp,
-		RequestID:    log.RequestID,
-		VirtualModel: log.VirtualModel,
-		ProviderName: log.ProviderName,
-		ModelName:    log.ModelName,
-		StatusCode:   log.StatusCode,
-		Latency:      log.Latency,
-		InputTokens:  log.InputTokens,
-		OutputTokens: log.OutputTokens,
-		CachedTokens: log.CachedTokens,
-		ErrorMessage: log.ErrorMessage,
-		Fallback:     log.FallbackCount,
-		Retry:        log.RetryCount,
+	if log.Type == "incoming" {
+		entry := logEntryFromProxy(log)
+		entry.Children = make([]*LogEntry, 0)
+		m.entries = append([]*LogEntry{&entry}, m.entries...)
+		if len(m.entries) > m.maxSize {
+			m.entries = m.entries[:m.maxSize]
+		}
+		return
 	}
 
-	m.entries = append([]LogEntry{entry}, m.entries...)
+	for _, parent := range m.entries {
+		if parent.RequestID == log.RequestID {
+			child := logEntryFromProxy(log)
+			found := false
+			for i, c := range parent.Children {
+				if c.ProviderName == log.ProviderName && c.ModelName == log.ModelName {
+					parent.Children[i] = &child
+					found = true
+					break
+				}
+			}
+			if !found {
+				parent.Children = append(parent.Children, &child)
+			}
+			return
+		}
+	}
+
+	entry := logEntryFromProxy(log)
+	entry.Children = make([]*LogEntry, 0)
+	m.entries = append([]*LogEntry{&entry}, m.entries...)
 	if len(m.entries) > m.maxSize {
 		m.entries = m.entries[:m.maxSize]
 	}
 }
 
 func (m *LogViewModel) LoadInitial(logs []proxy.RequestLog) {
+	byReqID := make(map[string]*LogEntry)
+	var order []string
+
 	for i := len(logs) - 1; i >= 0; i-- {
-		entry := LogEntry{
-			LogType:      logs[i].Type,
-			Timestamp:    logs[i].Timestamp,
-			RequestID:    logs[i].RequestID,
-			VirtualModel: logs[i].VirtualModel,
-			ProviderName: logs[i].ProviderName,
-			ModelName:    logs[i].ModelName,
-			StatusCode:   logs[i].StatusCode,
-			Latency:      logs[i].Latency,
-			InputTokens:  logs[i].InputTokens,
-			OutputTokens: logs[i].OutputTokens,
-			CachedTokens: logs[i].CachedTokens,
-			ErrorMessage: logs[i].ErrorMessage,
-			Fallback:     logs[i].FallbackCount,
-			Retry:        logs[i].RetryCount,
+		l := logs[i]
+		if l.Type == "incoming" {
+			entry := logEntryFromProxy(l)
+			entry.Children = make([]*LogEntry, 0)
+			byReqID[l.RequestID] = &entry
+			order = append(order, l.RequestID)
+		} else {
+			child := logEntryFromProxy(l)
+			if parent, ok := byReqID[l.RequestID]; ok {
+				parent.Children = append(parent.Children, &child)
+			} else {
+				entry := LogEntry{
+					LogType:      "proxy",
+					Status:       l.Status,
+					Timestamp:    l.Timestamp,
+					RequestID:    l.RequestID,
+					VirtualModel: l.VirtualModel,
+				}
+				entry.Children = []*LogEntry{&child}
+				byReqID[l.RequestID] = &entry
+				order = append(order, l.RequestID)
+			}
 		}
-		m.entries = append(m.entries, entry)
+	}
+
+	m.entries = make([]*LogEntry, 0, len(order))
+	for _, id := range order {
+		m.entries = append(m.entries, byReqID[id])
 	}
 	if len(m.entries) > m.maxSize {
 		m.entries = m.entries[:m.maxSize]
@@ -97,39 +146,101 @@ func (m LogViewModel) View() string {
 
 	var b strings.Builder
 
-	visible := m.height - 2
-	if visible < 1 {
-		visible = 10
+	maxLines := m.height - 2
+	if maxLines < 1 {
+		maxLines = 10
 	}
 
-	end := m.offset + visible
-	if end > len(m.entries) {
-		end = len(m.entries)
-	}
+	linesWritten := 0
 
-	for _, entry := range m.entries[m.offset:end] {
-		line := m.renderEntry(entry)
+	for i := m.offset; i < len(m.entries) && linesWritten < maxLines; i++ {
+		entry := m.entries[i]
+
+		line := m.renderParent(entry)
 		if m.scrollX > 0 {
 			line = trimLeftAnsi(line, m.scrollX)
 		}
 		b.WriteString(line)
 		b.WriteString("\n")
+		linesWritten++
+
+		for ci, child := range entry.Children {
+			if linesWritten >= maxLines {
+				break
+			}
+			isLast := ci == len(entry.Children)-1
+			cLine := m.renderChild(child, isLast)
+			if m.scrollX > 0 {
+				cLine = trimLeftAnsi(cLine, m.scrollX)
+			}
+			b.WriteString(cLine)
+			b.WriteString("\n")
+			linesWritten++
+		}
 	}
 
 	return b.String()
 }
 
-func (m LogViewModel) renderEntry(e LogEntry) string {
+func (m LogViewModel) renderParent(e *LogEntry) string {
 	ts := e.Timestamp.Format("15:04:05")
 
-	if e.LogType == "incoming" {
-		prefix := InfoStyle.Render("▸")
-		vm := InfoStyle.Render(truncate(e.VirtualModel, 20))
-		return fmt.Sprintf("%s %s %s incoming %s",
+	hasStreaming := false
+	allCompleted := len(e.Children) > 0
+	hasFailed := false
+	for _, c := range e.Children {
+		if c.Status == "streaming" {
+			hasStreaming = true
+			allCompleted = false
+		} else if c.StatusCode >= 400 || c.Status == "failed" {
+			hasFailed = true
+		} else if c.Status != "completed" && c.StatusCode == 0 {
+			allCompleted = false
+		}
+	}
+
+	dotStyle := MutedStyle
+	dot := "○"
+	if hasStreaming {
+		dotStyle = InfoStyle
+		dot = "●"
+	} else if hasFailed {
+		dotStyle = ErrorStyle
+		dot = "●"
+	} else if allCompleted {
+		dotStyle = SuccessStyle
+		dot = "●"
+	}
+
+	vm := truncate(e.VirtualModel, 30)
+
+	return fmt.Sprintf("%s %s %s",
+		MutedStyle.Render(ts),
+		dotStyle.Render(dot),
+		dotStyle.Render(vm),
+	)
+}
+
+func (m LogViewModel) renderChild(e *LogEntry, isLast bool) string {
+	ts := e.Timestamp.Format("15:04:05")
+	connector := "├─"
+	if isLast {
+		connector = "└─"
+	}
+
+	if e.Status == "streaming" {
+		provider := MutedStyle.Render(truncate(e.ProviderName, 12))
+		model := truncate(e.ModelName, 20)
+		elapsed := MutedStyle.Render(fmt.Sprintf("%6s", e.Latency.Round(time.Second)))
+		tokens := formatStreamingTokens(e)
+		return fmt.Sprintf("  %s %s %s %-20s %s %s %s",
 			MutedStyle.Render(ts),
-			prefix,
-			vm,
-			MutedStyle.Render(truncate(e.RequestID, 20)),
+			MutedStyle.Render(connector),
+			InfoStyle.Render(truncate("streaming", 9)),
+			provider,
+			model,
+			elapsed,
+			MutedStyle.Render(tokens),
 		)
 	}
 
@@ -141,12 +252,8 @@ func (m LogViewModel) renderEntry(e LogEntry) string {
 	}
 
 	status := statusStyle.Render(fmt.Sprintf("%3d", e.StatusCode))
-
-	prefix := MutedStyle.Render("↪")
-	vm := InfoStyle.Render(truncate(e.VirtualModel, 20))
 	provider := MutedStyle.Render(truncate(e.ProviderName, 12))
 	model := truncate(e.ModelName, 20)
-
 	latency := MutedStyle.Render(fmt.Sprintf("%6s", e.Latency.Round(time.Millisecond)))
 
 	tokens := fmt.Sprintf("%s in/%s out/%s cached",
@@ -166,17 +273,33 @@ func (m LogViewModel) renderEntry(e LogEntry) string {
 		extra += " " + ErrorStyle.Render(truncate(e.ErrorMessage, 40))
 	}
 
-	return fmt.Sprintf("%s %s %s %s/%s %-20s %s %s%s",
+	return fmt.Sprintf("  %s %s %s %s %-20s %s %s%s",
 		MutedStyle.Render(ts),
-		prefix,
+		MutedStyle.Render(connector),
 		status,
 		provider,
-		vm,
 		model,
 		latency,
 		MutedStyle.Render(tokens),
 		extra,
 	)
+}
+
+func formatStreamingTokens(e *LogEntry) string {
+	parts := []string{}
+	if e.InputTokens > 0 {
+		parts = append(parts, fmt.Sprintf("%s in", formatNumber(e.InputTokens)))
+	}
+	if e.OutputTokens > 0 {
+		parts = append(parts, fmt.Sprintf("~%s out", formatNumber(e.OutputTokens)))
+	}
+	if e.CachedTokens > 0 {
+		parts = append(parts, fmt.Sprintf("%s cached", formatNumber(e.CachedTokens)))
+	}
+	if len(parts) == 0 {
+		return "waiting..."
+	}
+	return strings.Join(parts, "/")
 }
 
 func (m *LogViewModel) SetSize(w, h int) {

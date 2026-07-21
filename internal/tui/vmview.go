@@ -246,6 +246,10 @@ func (m VMViewModel) viewRawModels() string {
 				}
 			}
 			for k := range rm.GlobalMetadata {
+				// Skip global metadata if a tag with the same base name exists
+				if seen[k] {
+					continue
+				}
 				if !seen["m."+k] {
 					seen["m."+k] = true
 					gmKeys = append(gmKeys, "m."+k)
@@ -583,6 +587,14 @@ func abbrevKey(key string) string {
 		return "lat"
 	case "m.context_window", "context_window":
 		return "ctx"
+	case "m.cost_per_task":
+		return "$/task"
+	case "m.cost_per_1m_input":
+		return "$/1M"
+	case "m.cost_per_1m_output":
+		return "$/1M.out"
+	case "m.cost_per_1m_cache":
+		return "$/1M.cache"
 	case "mc.has_reasoning_effort", "has_reasoning_effort":
 		return "has_effort"
 	case "mc.reasoning", "reasoning":

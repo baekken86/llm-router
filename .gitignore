@@ -27,3 +27,7 @@ Thumbs.db
 # Env
 .env
 .env.local
+
+# Playwright
+web/test-results/
+web/playwright-report/

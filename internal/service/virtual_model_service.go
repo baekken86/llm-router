@@ -411,6 +411,9 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 // evaluateCompositionNode recursively resolves a composition tree node.
 func (s *virtualModelService) evaluateCompositionNode(ctx context.Context, node *models.CompositionNode, stack map[string]bool) ([]ResolvedModel, error) {
 	if node.IsOperation() {
+		if len(node.Sources) == 1 {
+			return s.evaluateCompositionNode(ctx, &node.Sources[0], stack)
+		}
 		return s.resolveOperation(ctx, node, stack)
 	}
 	return s.resolveSource(ctx, node, stack)

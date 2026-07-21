@@ -162,12 +162,75 @@ func (h *StatsHandler) RecordLog(log proxy.RequestLog) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.logs = append([]proxy.RequestLog{log}, h.logs...)
-	if len(h.logs) > h.maxLogs {
-		h.logs = h.logs[:h.maxLogs]
+	if log.Type == "proxy" && log.Status == "streaming" {
+		for i, existing := range h.logs {
+			if existing.Type == "proxy" && existing.RequestID == log.RequestID &&
+				existing.ProviderName == log.ProviderName && existing.ModelName == log.ModelName &&
+				existing.Status == "streaming" {
+				h.logs[i] = log
+				h.clientsMu.Lock()
+				for ch := range h.clients {
+					select {
+					case ch <- log:
+					default:
+					}
+				}
+				h.clientsMu.Unlock()
+				return
+			}
+		}
+		h.logs = append([]proxy.RequestLog{log}, h.logs...)
+		if len(h.logs) > h.maxLogs {
+			h.logs = h.logs[:h.maxLogs]
+		}
+		h.clientsMu.Lock()
+		for ch := range h.clients {
+			select {
+			case ch <- log:
+			default:
+			}
+		}
+		h.clientsMu.Unlock()
+		return
 	}
 
-	if log.Type == "proxy" {
+	if log.Type == "proxy" && log.Status == "completed" {
+		for i, existing := range h.logs {
+			if existing.Type == "proxy" && existing.RequestID == log.RequestID &&
+				existing.ProviderName == log.ProviderName && existing.ModelName == log.ModelName &&
+				existing.Status == "streaming" {
+				h.logs[i] = log
+				break
+			}
+		}
+	}
+
+	if log.Type == "proxy" && log.Status != "streaming" {
+		found := false
+		for _, existing := range h.logs {
+			if existing.Type == "proxy" && existing.RequestID == log.RequestID &&
+				existing.ProviderName == log.ProviderName && existing.ModelName == log.ModelName &&
+				existing.Status == "completed" {
+				found = true
+				break
+			}
+		}
+		if !found && log.Status != "streaming" {
+			h.logs = append([]proxy.RequestLog{log}, h.logs...)
+			if len(h.logs) > h.maxLogs {
+				h.logs = h.logs[:h.maxLogs]
+			}
+		}
+	}
+
+	if log.Type != "proxy" {
+		h.logs = append([]proxy.RequestLog{log}, h.logs...)
+		if len(h.logs) > h.maxLogs {
+			h.logs = h.logs[:h.maxLogs]
+		}
+	}
+
+	if log.Type == "proxy" && log.Status != "streaming" {
 		h.stats.TotalRequests++
 		h.stats.InputTokens += log.InputTokens
 		h.stats.OutputTokens += log.OutputTokens
@@ -223,7 +286,7 @@ func (h *StatsHandler) RecordLog(log proxy.RequestLog) {
 	}
 	h.clientsMu.Unlock()
 
-	if h.logRepo != nil {
+	if h.logRepo != nil && log.Type == "proxy" && log.Status != "streaming" {
 		dbLog := repository.RequestLog{
 			Type:               log.Type,
 			Timestamp:          log.Timestamp,

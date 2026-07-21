@@ -30,6 +30,21 @@
     }
   }
 
+  async function updateCostType(id, costType) {
+    try {
+      await apiFetch(`/api/v1/status/${id}/metadata`, {
+        method: 'PUT',
+        body: { tags: { cost_type: costType } }
+      });
+      providers = providers.map(p =>
+        p.id === id ? { ...p, metadata: { ...p.metadata, cost_type: costType } } : p
+      );
+      addToast('Cost type updated', 'success');
+    } catch (e) {
+      addToast(e.message, 'error');
+    }
+  }
+
   onMount(load);
 </script>
 
@@ -71,6 +86,18 @@
               {/if}
             </div>
             <div class="flex items-center gap-2">
+              <label class="text-sm text-gray-400">Cost type:</label>
+              <select
+                class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+                value={p.metadata?.cost_type || ''}
+                onchange={(e) => updateCostType(p.id, e.target.value)}
+              >
+                <option value="">—</option>
+                <option value="free">Free</option>
+                <option value="paid">Paid</option>
+                <option value="subscription">Subscription</option>
+                <option value="api-creds">API Credits</option>
+              </select>
               {#if p.rate_limited}
                 <button
                   class="px-2 py-1 text-xs bg-gray-800 text-gray-300 rounded hover:bg-gray-700 hover:text-white transition"

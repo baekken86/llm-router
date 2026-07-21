@@ -167,7 +167,7 @@ func runProxy(args []string) {
 		logLevel = slog.LevelError
 	}
 
-	logChan := make(chan proxy.RequestLog, 100)
+	logChan := make(chan proxy.RequestLog, 500)
 	syslogChan := make(chan string, 200)
 
 	database, err := db.Open(*dbPath)
@@ -181,9 +181,9 @@ func runProxy(args []string) {
 
 	var logger *slog.Logger
 	if *noTUI {
-		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
+		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel, AddSource: true}))
 	} else {
-		logger = slog.New(slog.NewTextHandler(&syslogWriter{ch: syslogChan, logRepo: logRepo}, &slog.HandlerOptions{Level: logLevel}))
+		logger = slog.New(slog.NewTextHandler(&syslogWriter{ch: syslogChan, logRepo: logRepo}, &slog.HandlerOptions{Level: logLevel, AddSource: true}))
 	}
 
 	key := *encryptKey
@@ -213,6 +213,7 @@ func runProxy(args []string) {
 	providerMetadataRepo := repository.NewProviderMetadataRepository(database)
 	modelRepo := repository.NewModelRepository(database)
 	tagRepo := repository.NewTagRepository(database)
+	overrideRepo := repository.NewModelOverrideRepository(database)
 	vmRepo := repository.NewVirtualModelRepository(database)
 	keyRepo := repository.NewProxyKeyRepository(database)
 	globalMetaRepo := repository.NewGlobalMetadataRepository(database)
@@ -227,10 +228,17 @@ func runProxy(args []string) {
 
 	statsHandler := handlers.NewStatsHandler(logRepo, logger)
 
+	tuiLogChan := make(chan proxy.RequestLog, 500)
+
 	go func() {
 		for log := range logChan {
 			statsHandler.RecordLog(log)
+			select {
+			case tuiLogChan <- log:
+			default:
+			}
 		}
+		close(tuiLogChan)
 	}()
 
 	// Load initial data from DB
@@ -342,6 +350,7 @@ func runProxy(args []string) {
 	syslogHandler := handlers.NewSyslogHandler(logRepo)
 	settingsHandler := handlers.NewSettingsHandler(cfg, engine)
 	mappingHandler := handlers.NewModelMappingHandler(modelMappingRepo, modelRepo, logger)
+	modelOverrideHandler := handlers.NewModelOverrideHandler(overrideRepo)
 
 	oauthHandler := handlers.NewOAuthHandler(func(key string) int64 {
 		pk, _ := keyService.ValidateKey(context.Background(), key)
@@ -359,7 +368,7 @@ func runProxy(args []string) {
 		logger.Warn("web UI not embedded", "error", err)
 	}
 
-	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, metadataHandler, statusHandler, syslogHandler, settingsHandler, mappingHandler, keyService, adminService, adminHandler, webFS)
+	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, metadataHandler, statusHandler, syslogHandler, settingsHandler, mappingHandler, modelOverrideHandler, keyService, adminService, adminHandler, webFS)
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middlewareAuthOrOAuth(keyService, oauthHandler))
@@ -388,7 +397,7 @@ func runProxy(args []string) {
 
 	if !*noTUI {
 		tuiQuit := make(chan struct{})
-		go tui.Run(logChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, oauthRepo, modelMappingRepo, globalMetaRepo, cfg, tuiLogs, tuiSyslogs, tuiStats, tuiQuit)
+		go tui.Run(tuiLogChan, syslogChan, vmRepo, modelRepo, tagRepo, providerRepo, oauthRepo, modelMappingRepo, globalMetaRepo, cfg, tuiLogs, tuiSyslogs, tuiStats, tuiQuit)
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		select {

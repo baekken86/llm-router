@@ -4,6 +4,10 @@
   import { addToast } from '../lib/stores.js';
   import ModelPicker from './ModelPicker.svelte';
 
+  let {
+    onEditMetadata = () => {},
+  } = $props();
+
   let models = $state([]);
   let loading = $state(true);
   let expandedProviders = $state({});
@@ -184,7 +188,13 @@
                   <tbody>
                     {#each grouped[provider] as m}
                       <tr class="border-b border-gray-850 hover:bg-gray-850/50">
-                        <td class="text-left pr-3 py-1 text-emerald-400">{m.model_name}</td>
+                        <td class="text-left pr-3 py-1">
+                          <a
+                            href="#"
+                            class="text-emerald-400 hover:text-emerald-300 no-underline"
+                            onclick={(e) => { e.preventDefault(); onEditMetadata(m.provider_name, m.model_name, m.reasoning_effort); }}
+                          >{m.model_name}</a>
+                        </td>
                         <td class="text-left pr-3 py-1 text-gray-400">{m.reasoning_effort || '—'}</td>
                         <td class="text-left pr-3 py-1">
                           {#if m.mapping_target_name}

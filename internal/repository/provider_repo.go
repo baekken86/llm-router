@@ -50,9 +50,9 @@ func (r *sqliteProviderRepo) Create(ctx context.Context, p *models.Provider) err
 func (r *sqliteProviderRepo) GetByID(ctx context.Context, id int64) (*models.Provider, error) {
 	p := &models.Provider{}
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, name, api_type, base_url, api_key_encrypted, account_id, created_at, updated_at
+		`SELECT id, name, api_type, base_url, api_key_encrypted, account_id, disabled, created_at, updated_at
 		 FROM providers WHERE id = ?`, id,
-	).Scan(&p.ID, &p.Name, &p.APIType, &p.BaseURL, &p.APIKeyEncrypted, &p.AccountID, &p.CreatedAt, &p.UpdatedAt)
+	).Scan(&p.ID, &p.Name, &p.APIType, &p.BaseURL, &p.APIKeyEncrypted, &p.AccountID, &p.Disabled, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -65,9 +65,9 @@ func (r *sqliteProviderRepo) GetByID(ctx context.Context, id int64) (*models.Pro
 func (r *sqliteProviderRepo) GetByName(ctx context.Context, name string) (*models.Provider, error) {
 	p := &models.Provider{}
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, name, api_type, base_url, api_key_encrypted, account_id, created_at, updated_at
+		`SELECT id, name, api_type, base_url, api_key_encrypted, account_id, disabled, created_at, updated_at
 		 FROM providers WHERE name = ?`, name,
-	).Scan(&p.ID, &p.Name, &p.APIType, &p.BaseURL, &p.APIKeyEncrypted, &p.AccountID, &p.CreatedAt, &p.UpdatedAt)
+	).Scan(&p.ID, &p.Name, &p.APIType, &p.BaseURL, &p.APIKeyEncrypted, &p.AccountID, &p.Disabled, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -79,7 +79,7 @@ func (r *sqliteProviderRepo) GetByName(ctx context.Context, name string) (*model
 
 func (r *sqliteProviderRepo) List(ctx context.Context) ([]models.Provider, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, name, api_type, base_url, api_key_encrypted, account_id, created_at, updated_at FROM providers ORDER BY name`,
+		`SELECT id, name, api_type, base_url, api_key_encrypted, account_id, disabled, created_at, updated_at FROM providers ORDER BY name`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list providers: %w", err)
@@ -89,7 +89,7 @@ func (r *sqliteProviderRepo) List(ctx context.Context) ([]models.Provider, error
 	var providers []models.Provider
 	for rows.Next() {
 		var p models.Provider
-		if err := rows.Scan(&p.ID, &p.Name, &p.APIType, &p.BaseURL, &p.APIKeyEncrypted, &p.AccountID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.APIType, &p.BaseURL, &p.APIKeyEncrypted, &p.AccountID, &p.Disabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan provider: %w", err)
 		}
 		providers = append(providers, p)
@@ -100,9 +100,9 @@ func (r *sqliteProviderRepo) List(ctx context.Context) ([]models.Provider, error
 func (r *sqliteProviderRepo) Update(ctx context.Context, p *models.Provider) error {
 	now := time.Now()
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE providers SET name = ?, api_type = ?, base_url = ?, api_key_encrypted = ?, updated_at = ?
+		`UPDATE providers SET name = ?, api_type = ?, base_url = ?, api_key_encrypted = ?, disabled = ?, updated_at = ?
 		 WHERE id = ?`,
-		p.Name, p.APIType, p.BaseURL, p.APIKeyEncrypted, now, p.ID,
+		p.Name, p.APIType, p.BaseURL, p.APIKeyEncrypted, p.Disabled, now, p.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("update provider: %w", err)
@@ -116,7 +116,7 @@ func (r *sqliteProviderRepo) ListByMetadata(ctx context.Context, filters map[str
 		return r.List(ctx)
 	}
 
-	query := `SELECT DISTINCT p.id, p.name, p.api_type, p.base_url, p.api_key_encrypted, p.account_id, p.created_at, p.updated_at
+	query := `SELECT DISTINCT p.id, p.name, p.api_type, p.base_url, p.api_key_encrypted, p.account_id, p.disabled, p.created_at, p.updated_at
 		 FROM providers p`
 	args := []interface{}{}
 
@@ -140,7 +140,7 @@ func (r *sqliteProviderRepo) ListByMetadata(ctx context.Context, filters map[str
 	var providers []models.Provider
 	for rows.Next() {
 		var p models.Provider
-		if err := rows.Scan(&p.ID, &p.Name, &p.APIType, &p.BaseURL, &p.APIKeyEncrypted, &p.AccountID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.APIType, &p.BaseURL, &p.APIKeyEncrypted, &p.AccountID, &p.Disabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan provider: %w", err)
 		}
 		providers = append(providers, p)

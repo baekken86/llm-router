@@ -10,6 +10,7 @@ import (
 
 type ProviderMetadataRepository interface {
 	Set(ctx context.Context, providerID int64, tags map[string]string) error
+	UpsertKey(ctx context.Context, providerID int64, key, value string) error
 	GetByProvider(ctx context.Context, providerID int64) ([]models.ProviderMetadata, error)
 	GetByProviders(ctx context.Context, providerIDs []int64) (map[int64][]models.ProviderMetadata, error)
 	ListAll(ctx context.Context) (map[int64]map[string]string, error)
@@ -23,6 +24,19 @@ type sqliteProviderMetadataRepo struct {
 
 func NewProviderMetadataRepository(db *sql.DB) ProviderMetadataRepository {
 	return &sqliteProviderMetadataRepo{db: db}
+}
+
+func (r *sqliteProviderMetadataRepo) UpsertKey(ctx context.Context, providerID int64, key, value string) error {
+	if value == "" {
+		_, err := r.db.ExecContext(ctx, `DELETE FROM provider_metadata WHERE provider_id = ? AND key = ?`, providerID, key)
+		return err
+	}
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO provider_metadata (provider_id, key, value) VALUES (?, ?, ?)
+		 ON CONFLICT(provider_id, key) DO UPDATE SET value = excluded.value`,
+		providerID, key, value,
+	)
+	return err
 }
 
 func (r *sqliteProviderMetadataRepo) Set(ctx context.Context, providerID int64, tags map[string]string) error {

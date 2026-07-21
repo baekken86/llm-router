@@ -202,6 +202,19 @@ func ClearRateLimitCmd(apiClient *APIClient, providerID int64) tea.Cmd {
 	}
 }
 
+type StatusToggleMsg struct {
+	ProviderID int64
+	Disabled   bool
+	Err        error
+}
+
+func ToggleProviderCmd(apiClient *APIClient, providerID int64, disabled bool) tea.Cmd {
+	return func() tea.Msg {
+		err := apiClient.ToggleProvider(providerID, disabled)
+		return StatusToggleMsg{ProviderID: providerID, Disabled: disabled, Err: err}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -395,7 +408,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "d":
-			if m.tab == TabMappings && m.mappingRepo != nil {
+			if m.tab == TabStatus && m.apiClient != nil {
+				if p := m.status.SelectedProvider(); p != nil {
+					return m, ToggleProviderCmd(m.apiClient, p.ID, !p.Disabled)
+				}
+			} else if m.tab == TabMappings && m.mappingRepo != nil {
 				selected := m.mappingsView.Selected()
 				if selected >= 0 {
 					mapping := m.mappingsView.GetMapping(selected)
@@ -457,6 +474,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.refreshStatus()
 
 	case StatusClearMsg:
+		m.status, _ = m.status.Update(msg)
+		return m, nil
+
+	case StatusToggleMsg:
 		m.status, _ = m.status.Update(msg)
 		return m, nil
 	}
@@ -548,7 +569,7 @@ func (m Model) renderHeader() string {
 func (m Model) renderFooter() string {
 	help := HelpStyle.Render("tab/shift+tab: switch view  ↑/↓: scroll  ←/→: horizontal scroll  pgup/pgdown: jump  r: reset stats  q: quit")
 	if m.tab == TabStatus {
-		help = HelpStyle.Render("↑/↓: navigate  c: clear rate limit  r: refresh  tab: switch view  q: quit")
+		help = HelpStyle.Render("↑/↓: navigate  d: toggle disable  c: clear rate limit  r: refresh  tab: switch view  q: quit")
 	} else if m.tab == TabMappings {
 		help = HelpStyle.Render("↑/↓: navigate  d: delete mapping  r: refresh  tab: switch view  q: quit")
 	} else if m.tab == TabVM && m.vmView.modelTab == ModelTabRaw {

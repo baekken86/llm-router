@@ -63,11 +63,18 @@
   }
 
   let lastInitSource = null;
+  let internalUpdate = false;
   $effect(() => {
+    if (internalUpdate) { internalUpdate = false; return; }
     if (node === lastInitSource) return;
     lastInitSource = node;
     initTree(node);
   });
+
+  function emitChange() {
+    internalUpdate = true;
+    node = tree;
+  }
 
   onMount(() => {
     if (allVMs.length > 0) {
@@ -113,7 +120,7 @@
         const newOp = { ...info.node, sources: newSources, _expanded: true };
         tree = replaceAlongPath(tree, parentId, newOp);
         assignCompositionIds(tree);
-        node = tree;
+        emitChange();
       }
       return;
     }
@@ -123,7 +130,7 @@
       tree = wrapInOperation(tree, newNode);
     }
     assignCompositionIds(tree);
-    node = tree;
+    emitChange();
   }
 
   function addOperation(parentId = null) {
@@ -135,7 +142,7 @@
         const updatedOp = { ...info.node, sources: newSources, _expanded: true };
         tree = replaceAlongPath(tree, parentId, updatedOp);
         assignCompositionIds(tree);
-        node = tree;
+        emitChange();
       }
       return;
     }
@@ -145,7 +152,7 @@
       tree = wrapInOperation(tree, newOp);
     }
     assignCompositionIds(tree);
-    node = tree;
+    emitChange();
   }
 
   function removeItem(id) {
@@ -153,22 +160,22 @@
     if (!tree.sources) {
       if (tree.__id === id) {
         tree = null;
-        node = tree;
+        emitChange();
       }
       return;
     }
     const newTree = removeNodeFromComposition(tree, id);
-    if (!newTree) { tree = null; node = tree; return; }
+    if (!newTree) { tree = null; emitChange(); return; }
     tree = compactOperations(newTree);
     assignCompositionIds(tree);
-    node = tree;
+    emitChange();
   }
 
   function setItemVM(id, vmName) {
     const info = findNodeInComposition(tree, id);
     if (info?.node) {
       info.node.vm = vmName;
-      node = tree;
+      emitChange();
     }
   }
 
@@ -176,7 +183,7 @@
     const info = findNodeInComposition(tree, id);
     if (info?.node) {
       info.node.operation = op;
-      node = tree;
+      emitChange();
     }
   }
 
@@ -184,7 +191,7 @@
     const info = findNodeInComposition(tree, id);
     if (info?.node) {
       info.node._expanded = !info.node._expanded;
-      node = tree;
+      emitChange();
     }
   }
 
@@ -192,7 +199,7 @@
     const info = findNodeInComposition(tree, id);
     if (info?.node) {
       info.node._expandedFilter = !info.node._expandedFilter;
-      node = tree;
+      emitChange();
     }
   }
 
@@ -200,7 +207,7 @@
     const info = findNodeInComposition(tree, id);
     if (info?.node) {
       info.node._expandedSort = !info.node._expandedSort;
-      node = tree;
+      emitChange();
     }
   }
 
@@ -212,7 +219,7 @@
       } else {
         delete info.node.filter_expr;
       }
-      node = tree;
+      emitChange();
     }
   }
 
@@ -224,7 +231,7 @@
       } else {
         delete info.node.sort_expr;
       }
-      node = tree;
+      emitChange();
     }
   }
 
@@ -338,7 +345,7 @@
 
     tree = compactOperations(tree);
     assignCompositionIds(tree);
-    node = tree;
+    emitChange();
   }
 
   function replaceAlongPath(treeRoot, replaceId, newNode) {
@@ -381,7 +388,7 @@
         if (newTree) {
           tree = wrapInOperation(compactOperations(newTree), sourceNode);
           assignCompositionIds(tree);
-          node = tree;
+          emitChange();
         }
       }
     }

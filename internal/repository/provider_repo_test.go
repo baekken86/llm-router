@@ -18,7 +18,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("failed to open database: %v", err)
 	}
 
-	// Create providers table matching migration 018 schema
+	// Create providers table matching migration 024 schema
 	_, err = database.Exec(`
 		CREATE TABLE providers (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,6 +27,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 			base_url TEXT NOT NULL,
 			api_key_encrypted TEXT NOT NULL,
 			account_id TEXT NOT NULL DEFAULT '',
+			disabled INTEGER NOT NULL DEFAULT 0,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);

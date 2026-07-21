@@ -12,15 +12,16 @@ const (
 )
 
 type Provider struct {
-	ID              int64             `json:"id"`
-	Name            string            `json:"name"`
-	APIType         APIType           `json:"api_type"`
-	BaseURL         string            `json:"base_url"`
-	APIKeyEncrypted string            `json:"-"`
-	AccountID       string            `json:"account_id,omitempty"`
+	ID              int64              `json:"id"`
+	Name            string             `json:"name"`
+	APIType         APIType            `json:"api_type"`
+	BaseURL         string             `json:"base_url"`
+	APIKeyEncrypted string             `json:"-"`
+	AccountID       string             `json:"account_id,omitempty"`
+	Disabled        bool               `json:"disabled"`
 	Metadata        []ProviderMetadata `json:"metadata,omitempty"`
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
+	CreatedAt       time.Time          `json:"created_at"`
+	UpdatedAt       time.Time          `json:"updated_at"`
 }
 
 type ProviderMetadata struct {
@@ -46,6 +47,7 @@ type UpdateProviderRequest struct {
 	BaseURL  *string            `json:"base_url,omitempty"`
 	APIKey   *string            `json:"api_key,omitempty"`
 	Metadata *map[string]string `json:"metadata,omitempty"`
+	Disabled *bool              `json:"disabled,omitempty"`
 }
 
 type OAuthToken struct {

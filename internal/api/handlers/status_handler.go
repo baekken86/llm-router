@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -50,6 +49,7 @@ type ProviderStatus struct {
 	BaseURL          string            `json:"base_url"`
 	AccountID        string            `json:"account_id,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
+	Disabled         bool              `json:"disabled"`
 }
 
 type StatusResponse struct {
@@ -70,13 +70,9 @@ func (h *StatusHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch provider metadata
-	providerIDs := make([]int64, len(providers))
-	for i, p := range providers {
-		providerIDs[i] = p.ID
-	}
 	providerMetaMap := make(map[int64]map[string]string)
-	if h.providerMetaRepo != nil && len(providerIDs) > 0 {
-		providerMetaMap, _ = h.providerMetaRepo.GetByProviders(r.Context(), providerIDs)
+	if h.providerMetaRepo != nil {
+		providerMetaMap, _ = h.providerMetaRepo.ListAll(r.Context())
 	}
 
 	var result []ProviderStatus
@@ -86,6 +82,7 @@ func (h *StatusHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 			Name:      p.Name,
 			BaseURL:   p.BaseURL,
 			AccountID: p.AccountID,
+			Disabled:  p.Disabled,
 		}
 
 		if meta, ok := providerMetaMap[p.ID]; ok {
@@ -133,7 +130,8 @@ func (h *StatusHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Tags map[string]string `json:"tags"`
+		Key   string `json:"key"`
+		Value string `json:"value"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
@@ -145,7 +143,7 @@ func (h *StatusHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.providerMetaRepo.Set(r.Context(), id, req.Tags); err != nil {
+	if err := h.providerMetaRepo.UpsertKey(r.Context(), id, req.Key, req.Value); err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
 	}

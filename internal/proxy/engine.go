@@ -251,6 +251,16 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		if rm.Provider.Disabled {
+			failures = append(failures, map[string]interface{}{
+				"model":    rm.Model.Name,
+				"provider": rm.Provider.Name,
+				"status":   503,
+				"message":  "provider disabled",
+			})
+			continue
+		}
+
 		resp, reqResult, err := e.sendRequest(r, rm, apiKey, req)
 		if reqResult == nil {
 			reqResult = &SendRequestResult{}
@@ -414,6 +424,11 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 
 		if limited, remaining := e.rateLimits.IsLimited(rm.Provider.ID); limited {
 			e.logger.Warn("skipping provider: rate limited", "provider", rm.Provider.Name, "model", rm.Model.Name, "remaining", remaining.Round(time.Second))
+			continue
+		}
+
+		if rm.Provider.Disabled {
+			e.logger.Warn("skipping provider: disabled", "provider", rm.Provider.Name, "model", rm.Model.Name)
 			continue
 		}
 
@@ -948,6 +963,11 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 
+		if rm.Provider.Disabled {
+			e.logger.Warn("skipping provider: disabled", "provider", rm.Provider.Name, "model", rm.Model.Name)
+			continue
+		}
+
 		for retry := 0; retry <= vm.MaxRetries; retry++ {
 			if retry > 0 {
 				time.Sleep(time.Duration(retry) * time.Second)
@@ -1097,6 +1117,11 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 		}
 
 		if limited, _ := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+			continue
+		}
+
+		if rm.Provider.Disabled {
+			e.logger.Warn("skipping provider: disabled", "provider", rm.Provider.Name, "model", rm.Model.Name)
 			continue
 		}
 

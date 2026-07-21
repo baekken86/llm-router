@@ -1,5 +1,53 @@
 # Unreleased
 
+## PR #21 (2026-07-20)
+
+**Merge commit:** 842efff — fix(composition): container root node cleaned to null by cleanNode
+**Component:** web (Svelte UI)
+
+### Bug Fixes
+
+- **composition**: container root node cleaned to `null` by `cleanNode()`, dropping source children (e.g., filter sources for virtual models). Added `sources` array check to the null-return guard.
+
+### Technical Notes
+
+- 1 file changed, +1/-1.
+- `npm run build` passes (exit 0, 3928 modules).
+- No Go changes, no test changes.
+- No CI configured on this PR.
+
+---
+
+## PR #20 (2026-07-20)
+
+**Merge commit:** e84c73d — feat(raw-models): per-effort rows for model list
+**Component:** backend + web (Svelte UI)
+
+### Features
+
+- **Per-effort rows for model list**: `GET /api/v1/models` now returns one row per model×effort combination (`[]ModelEffortEntry`), replacing the single-row-per-model `[]ModelWithProvider` response.
+- **Backend ListAll rewrite**: `ModelService.ListAll` joins `models` + `providers` + `raw_model_costs` to produce flat effort entries. Supports effort-level cost and token-limit data.
+- **Svelte RawModelList rewrite**: Groups entries by provider (same as before). Each model renders one row per effort, with a new `effort` column between model name and mapping. Tag keys from `entry.tags` shown as `mc.*` columns; metadata keys from `entry.global_metadata` shown as `m.*` columns. Empty effort shown as `—`. Mapping button on every row.
+- **Per-effort row ordering**: Rows sorted by (model_name, reasoning_effort) within each provider group.
+
+### Bug Fixes
+
+- None (feature-only).
+
+### Breaking Changes
+
+- API response shape changed: `[]ModelWithProvider` → `[]ModelEffortEntry`. Frontend updated in same PR.
+
+### Technical Notes
+
+- 8 files changed, +460/-101.
+- 154/0 Go tests pass (all green).
+- Web build passes (3928 modules, 12.31s).
+- No version bump (same as PR #19 pattern).
+- No CI configured on this PR.
+
+---
+
 **Date:** 2026-07-18
 **PR:** #2 — feat(web): hierarchical drag-and-drop for operation tree
 **Merge commit:** e64693477d92edbb78bd5f37692b59130f4a91a4

@@ -1,0 +1,111 @@
+{
+  "spec": "004",
+  "tasks": [
+    {
+      "id": "S004T001",
+      "title": "Database migration: add disabled column",
+      "description": "",
+      "status": "pending",
+      "priority": 1,
+      "depends_on": [],
+      "owns": [
+        "internal/db/migrations/024_add_disabled_to_providers.sql"
+      ]
+    },
+    {
+      "id": "S004T002",
+      "title": "Model + Repository: add Disabled field and update queries",
+      "description": "",
+      "status": "pending",
+      "priority": 2,
+      "depends_on": [
+        "S004T001"
+      ],
+      "owns": [
+        "internal/models/provider.go",
+        "internal/repository/provider_repo.go"
+      ]
+    },
+    {
+      "id": "S004T003",
+      "title": "Service: handle Disabled in Update()",
+      "description": "",
+      "status": "pending",
+      "priority": 3,
+      "depends_on": [
+        "S004T002"
+      ],
+      "owns": [
+        "internal/service/provider_service.go"
+      ]
+    },
+    {
+      "id": "S004T004",
+      "title": "Engine: skip disabled providers in all 4 routing loops",
+      "description": "",
+      "status": "pending",
+      "priority": 4,
+      "depends_on": [
+        "S004T002"
+      ],
+      "owns": [
+        "internal/proxy/engine.go"
+      ]
+    },
+    {
+      "id": "S004T005",
+      "title": "Status API: add Disabled to ProviderStatus",
+      "description": "",
+      "status": "pending",
+      "priority": 5,
+      "depends_on": [
+        "S004T002"
+      ],
+      "owns": [
+        "internal/api/handlers/status_handler.go"
+      ]
+    },
+    {
+      "id": "S004T006",
+      "title": "TUI: disabled badge, d keybind, toggle command",
+      "description": "",
+      "status": "pending",
+      "priority": 6,
+      "depends_on": [
+        "S004T005"
+      ],
+      "owns": [
+        "internal/tui/status.go",
+        "internal/tui/client.go",
+        "internal/tui/tui.go"
+      ]
+    },
+    {
+      "id": "S004T007",
+      "title": "Web UI: disabled badge and toggle button",
+      "description": "",
+      "status": "pending",
+      "priority": 7,
+      "depends_on": [
+        "S004T005"
+      ],
+      "owns": [
+        "web/src/components/StatusView.svelte"
+      ]
+    },
+    {
+      "id": "S004T008",
+      "title": "CLI: toggle-provider command",
+      "description": "",
+      "status": "pending",
+      "priority": 8,
+      "depends_on": [
+        "S004T003"
+      ],
+      "owns": [
+        "cmd/llm-router/toggleprovider.go",
+        "cmd/llm-router/main.go"
+      ]
+    }
+  ]
+}

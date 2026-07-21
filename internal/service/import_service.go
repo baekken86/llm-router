@@ -83,16 +83,16 @@ func (s *importService) ImportJSON(ctx context.Context, reader io.Reader, mode I
 		return nil, fmt.Errorf("list models: %w", err)
 	}
 
-	modelMap := make(map[string]int64)
+	modelMap := make(map[string][]int64)
 	for _, m := range allModels {
-		modelMap[strings.ToLower(m.Name)] = m.ID
+		modelMap[strings.ToLower(m.Name)] = append(modelMap[strings.ToLower(m.Name)], m.ID)
 	}
 
 	result := &ImportResult{}
 
 	for _, model := range file.Models {
-		modelID, exists := modelMap[strings.ToLower(model.Name)]
-		if !exists {
+		modelIDs, exists := modelMap[strings.ToLower(model.Name)]
+		if !exists || len(modelIDs) == 0 {
 			result.Skipped++
 			continue
 		}
@@ -120,65 +120,67 @@ func (s *importService) ImportJSON(ctx context.Context, reader io.Reader, mode I
 			baseTags["cost_per_task"] = fmt.Sprintf("%.2f", *model.CostPerTask)
 		}
 
-		if model.HasReasoningEffort && len(model.Efforts) > 0 {
-			for effort, tags := range model.Efforts {
-				effortTags := copyMap(baseTags)
-				for k, v := range tags {
-					effortTags[k] = fmt.Sprintf("%v", v)
+		for _, modelID := range modelIDs {
+			if model.HasReasoningEffort && len(model.Efforts) > 0 {
+				for effort, tags := range model.Efforts {
+					effortTags := copyMap(baseTags)
+					for k, v := range tags {
+						effortTags[k] = fmt.Sprintf("%v", v)
+					}
+
+					if mode == ImportModeMerge {
+						existing, _ := s.tagRepo.GetByModelEffort(ctx, modelID, effort)
+						for _, t := range existing {
+							if _, exists := effortTags[t.Key]; !exists {
+								effortTags[t.Key] = t.Value
+							}
+						}
+					}
+
+					if err := s.tagRepo.Set(ctx, modelID, effort, effortTags); err != nil {
+						result.Errors = append(result.Errors, fmt.Sprintf("%s effort %s: %v", model.Name, effort, err))
+						continue
+					}
+					result.Imported++
+				}
+			} else {
+				if model.Intel != nil {
+					baseTags["intelligence"] = fmt.Sprintf("%g", *model.Intel)
+				}
+				if model.Speed != nil {
+					baseTags["speed"] = fmt.Sprintf("%g", *model.Speed)
+				}
+				if model.Reasoning != nil {
+					baseTags["reasoning"] = fmt.Sprintf("%g", *model.Reasoning)
+				}
+				if model.Hallucination != nil {
+					baseTags["hallucination"] = fmt.Sprintf("%g", *model.Hallucination)
+				}
+				if model.Coding != nil {
+					baseTags["coding"] = fmt.Sprintf("%g", *model.Coding)
+				}
+				if model.Latency != nil {
+					baseTags["latency"] = fmt.Sprintf("%g", *model.Latency)
+				}
+				if model.CostPerTask != nil {
+					baseTags["cost_per_task"] = fmt.Sprintf("%.2f", *model.CostPerTask)
 				}
 
 				if mode == ImportModeMerge {
-					existing, _ := s.tagRepo.GetByModelEffort(ctx, modelID, effort)
+					existing, _ := s.tagRepo.GetByModelEffort(ctx, modelID, "")
 					for _, t := range existing {
-						if _, exists := effortTags[t.Key]; !exists {
-							effortTags[t.Key] = t.Value
+						if _, exists := baseTags[t.Key]; !exists {
+							baseTags[t.Key] = t.Value
 						}
 					}
 				}
 
-				if err := s.tagRepo.Set(ctx, modelID, effort, effortTags); err != nil {
-					result.Errors = append(result.Errors, fmt.Sprintf("%s effort %s: %v", model.Name, effort, err))
+				if err := s.tagRepo.Set(ctx, modelID, "", baseTags); err != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", model.Name, err))
 					continue
 				}
 				result.Imported++
 			}
-		} else {
-			if model.Intel != nil {
-				baseTags["intelligence"] = fmt.Sprintf("%g", *model.Intel)
-			}
-			if model.Speed != nil {
-				baseTags["speed"] = fmt.Sprintf("%g", *model.Speed)
-			}
-			if model.Reasoning != nil {
-				baseTags["reasoning"] = fmt.Sprintf("%g", *model.Reasoning)
-			}
-			if model.Hallucination != nil {
-				baseTags["hallucination"] = fmt.Sprintf("%g", *model.Hallucination)
-			}
-			if model.Coding != nil {
-				baseTags["coding"] = fmt.Sprintf("%g", *model.Coding)
-			}
-			if model.Latency != nil {
-				baseTags["latency"] = fmt.Sprintf("%g", *model.Latency)
-			}
-			if model.CostPerTask != nil {
-				baseTags["cost_per_task"] = fmt.Sprintf("%.2f", *model.CostPerTask)
-			}
-
-			if mode == ImportModeMerge {
-				existing, _ := s.tagRepo.GetByModelEffort(ctx, modelID, "")
-				for _, t := range existing {
-					if _, exists := baseTags[t.Key]; !exists {
-						baseTags[t.Key] = t.Value
-					}
-				}
-			}
-
-			if err := s.tagRepo.Set(ctx, modelID, "", baseTags); err != nil {
-				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", model.Name, err))
-				continue
-			}
-			result.Imported++
 		}
 	}
 

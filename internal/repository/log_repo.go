@@ -161,6 +161,16 @@ func (r *LogRepository) DeleteOlderThan(ctx context.Context, age time.Duration) 
 	return nil
 }
 
+func (r *LogRepository) DeleteRequestLogByRequestID(ctx context.Context, requestID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM request_logs WHERE request_id = ?`, requestID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete request log by request_id: %w", err)
+	}
+	return nil
+}
+
 type ComputedStats struct {
 	TotalRequests     int
 	Successes         int

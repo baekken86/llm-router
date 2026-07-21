@@ -70,7 +70,7 @@
 
   function formatComposition(node, depth = 0) {
     if (!node) return '';
-    if (node.vm) return node.vm;
+    if (node.collection) return node.collection;
     if (node.filter_expr && !node.vm && !node.operation) {
       // Inline filter source — show summary
       const summary = formatFilter(node.filter_expr);

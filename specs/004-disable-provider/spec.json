@@ -1,0 +1,55 @@
+{
+  "id": "004",
+  "title": "Disable Provider",
+  "status": "active",
+  "created": "2026-07-21",
+  "completed": null,
+  "branch": "spec/004-disable-provider",
+  "prs": [],
+  "tags": [],
+  "description": "Add persisted disabled flag to providers, toggleable via CLI, TUI, and Web UI. Routing engine skips disabled providers during fallback.",
+  "sections": [
+    {
+      "id": "S1",
+      "title": "Database",
+      "content": "Add `disabled INTEGER NOT NULL DEFAULT 0` column to providers table via goose migration 024_add_disabled_to_providers.sql. SQLite boolean convention: 0=enabled, 1=disabled. Default 0 preserves existing behavior.",
+      "children": []
+    },
+    {
+      "id": "S2",
+      "title": "Model + Repository",
+      "content": "Add `Disabled bool` to Provider struct, `Disabled *bool` to UpdateProviderRequest. Update all repo SELECT queries (GetByID, GetByName, List, ListByMetadata) to include disabled column. Update UPDATE query to set disabled. Create doesn't need it (DEFAULT 0).",
+      "children": []
+    },
+    {
+      "id": "S3",
+      "title": "Service + Engine",
+      "content": "Provider service Update() handles Disabled pointer field. Engine adds `if rm.Provider.Disabled { continue }` check in all 4 handler loops (HandleChatCompletion, HandleChatCompletionStream, HandleAnthropicMessages, HandleAnthropicMessagesStream) after rate-limit check. Logs 'provider disabled' failure.",
+      "children": []
+    },
+    {
+      "id": "S4",
+      "title": "Status API",
+      "content": "Add `Disabled bool` to ProviderStatus struct. GetStatus copies p.Disabled into response. No new endpoints needed — existing PUT /providers/{id} handles toggling.",
+      "children": []
+    },
+    {
+      "id": "S5",
+      "title": "TUI",
+      "content": "Add Disabled field to ProviderStatusResponse. FetchStatusLocal passes through p.Disabled. View renders 'DISABLED' badge (MutedStyle) when p.Disabled, skipping rate-limit/auth display. Add 'd' key binding to toggle disable via APIClient PUT. Add ToggleProviderCmd function. Update footer help text.",
+      "children": []
+    },
+    {
+      "id": "S6",
+      "title": "Web UI",
+      "content": "StatusView.svelte: render amber 'Disabled' badge when p.disabled. Dim card with opacity-50. Add 'Enable'/'Disable' toggle button calling PUT /api/v1/providers/{id}. toggleDisabled function updates local state and shows toast.",
+      "children": []
+    },
+    {
+      "id": "S7",
+      "title": "CLI",
+      "content": "New CLI command: llm-router toggle-provider --name <name> [--enable|--disable]. Toggles by default, --enable/--disable for explicit state. Register in main.go switch. Update help text.",
+      "children": []
+    }
+  ]
+}

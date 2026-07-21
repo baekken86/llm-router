@@ -231,7 +231,7 @@ func runProxy(args []string) {
 
 	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, keyBytes)
 	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalMetaRepo, modelMappingRepo)
-	vmService := service.NewVirtualModelService(vmRepo, modelRepo, tagRepo, providerRepo, providerMetadataRepo, globalMetaRepo, modelMappingRepo)
+	vmService := service.NewVirtualModelService(vmRepo, modelRepo, tagRepo, providerRepo, providerMetadataRepo, globalMetaRepo, modelMappingRepo, overrideRepo)
 	keyService := service.NewKeyService(keyRepo)
 	adminService := service.NewAdminService(pass)
 

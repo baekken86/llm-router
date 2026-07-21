@@ -86,6 +86,7 @@ func setupMappingTestService(
 		newMockProviderMetaRepo(),
 		globalMetaRepo,
 		mappingRepo,
+		nil,
 	)
 }
 
@@ -136,6 +137,7 @@ func TestResolveModelsFiltered_MappingHidesSourceTags(t *testing.T) {
 		newMockProviderMetaRepo(),
 		&mockGlobalMetaRepo{data: wrappedGlobalMeta},
 		&mockMappingRepo{mappings: mappings},
+		nil,
 	)
 
 	vm := &models.VirtualModel{
@@ -199,6 +201,7 @@ func TestResolveModelsFiltered_MappingEmptyEffortFallback(t *testing.T) {
 		newMockProviderMetaRepo(),
 		effortMeta,
 		&mockMappingRepo{mappings: mappings},
+		nil,
 	)
 
 	vm := &models.VirtualModel{

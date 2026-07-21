@@ -40,6 +40,7 @@ type virtualModelService struct {
 	providerMetaRepo repository.ProviderMetadataRepository
 	globalMetaRepo   repository.GlobalMetadataRepository
 	mappingRepo      repository.ModelMappingRepository
+	overrideRepo     repository.ModelOverrideRepository
 }
 
 func NewVirtualModelService(
@@ -50,6 +51,7 @@ func NewVirtualModelService(
 	providerMetaRepo repository.ProviderMetadataRepository,
 	globalMetaRepo repository.GlobalMetadataRepository,
 	mappingRepo repository.ModelMappingRepository,
+	overrideRepo repository.ModelOverrideRepository,
 ) VirtualModelService {
 	return &virtualModelService{
 		vmRepo:           vmRepo,
@@ -59,6 +61,7 @@ func NewVirtualModelService(
 		providerMetaRepo: providerMetaRepo,
 		globalMetaRepo:   globalMetaRepo,
 		mappingRepo:      mappingRepo,
+		overrideRepo:     overrideRepo,
 	}
 }
 
@@ -301,6 +304,22 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 		if err != nil {
 			return nil, err
 		}
+
+		// Also discover efforts from overrides
+		if s.overrideRepo != nil {
+			if overrideEfforts, err := s.overrideRepo.GetEffortsByModel(ctx, m.ID); err == nil {
+				effortSet := make(map[string]bool, len(efforts))
+				for _, e := range efforts {
+					effortSet[e] = true
+				}
+				for _, e := range overrideEfforts {
+					if !effortSet[e] {
+						efforts = append(efforts, e)
+					}
+				}
+			}
+		}
+
 		if len(efforts) == 0 {
 			efforts = []string{""}
 		}
@@ -316,8 +335,22 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 			var globalMeta map[string]string
 
 			if mapping != nil {
-				// Mapped: hide source instance tags, use target's global metadata by name
-				tags = nil
+				// Mapped: use target model's tags + global metadata by name
+				var targetModel *models.Model
+				for i := range allModels {
+					if allModels[i].Name == mapping.TargetModelName {
+						targetModel = &allModels[i]
+						break
+					}
+				}
+				if targetModel != nil {
+					tags, err = s.tagRepo.GetByModelEffort(ctx, targetModel.ID, effort)
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					tags = nil
+				}
 				globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, mapping.TargetModelName, effort)
 				if len(globalMeta) == 0 {
 					globalMeta, _ = s.globalMetaRepo.GetByModelEffort(ctx, mapping.TargetModelName, "")
@@ -335,6 +368,24 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 			}
 
 			m.Tags = tags
+
+			// Apply model overrides: merge override values into tags
+			if s.overrideRepo != nil {
+				if overrides, err := s.overrideRepo.GetByModelAndEffort(ctx, m.ID, effort); err == nil && len(overrides) > 0 {
+					existing := make(map[string]models.Tag, len(m.Tags))
+					for _, t := range m.Tags {
+						existing[t.Key] = t
+					}
+					for _, o := range overrides {
+						existing[o.Key] = models.Tag{Key: o.Key, Value: o.Value}
+					}
+					merged := make([]models.Tag, 0, len(existing))
+					for _, t := range existing {
+						merged = append(merged, t)
+					}
+					m.Tags = merged
+				}
+			}
 
 			provider, err := s.providerRepo.GetByID(ctx, m.ProviderID)
 			if err != nil {

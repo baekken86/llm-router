@@ -95,9 +95,9 @@
     mainTab = parsed.tab;
     view = parsed.view;
     editingId = parsed.id;
-    if (parsed.provider) metaProvider = parsed.provider;
-    if (parsed.model) metaModel = parsed.model;
-    if (parsed.effort !== undefined) metaEffort = parsed.effort;
+      metaProvider = parsed.provider || '';
+      metaModel = parsed.model || '';
+      metaEffort = parsed.effort !== undefined ? parsed.effort : '';
   }
 
   async function loadFields() {
@@ -120,6 +120,9 @@
       mainTab = parsed.tab;
       view = parsed.view;
       editingId = parsed.id;
+      metaProvider = parsed.provider || '';
+      metaModel = parsed.model || '';
+      metaEffort = parsed.effort !== undefined ? parsed.effort : '';
       await loadFields();
     } catch {
       authenticated = false;

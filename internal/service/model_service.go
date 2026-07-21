@@ -215,8 +215,27 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelEffortEntry, error) 
 		}
 
 		if mappingTarget != nil {
-			// Mapped path: get target's per-effort global metadata
+			// Mapped path: get target's tags + per-effort global metadata
 			targetName := *mappingTarget
+
+			// Find target model by name to load its tags
+			var targetModelTags map[string]string
+			for i := range allModels {
+				if allModels[i].Name == targetName {
+					tags, err := s.tagRepo.GetByModel(ctx, allModels[i].ID)
+					if err == nil && len(tags) > 0 {
+						targetModelTags = make(map[string]string)
+						for _, t := range tags {
+							targetModelTags[t.Key] = t.Value
+						}
+					}
+					break
+				}
+			}
+			if targetModelTags == nil {
+				targetModelTags = map[string]string{}
+			}
+
 			targetMeta, err := s.globalMetaRepo.GetByModel(ctx, targetName)
 			if err != nil {
 				return nil, err
@@ -245,7 +264,7 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelEffortEntry, error) 
 					ProviderID:        m.ProviderID,
 					ProviderName:      providerName,
 					ReasoningEffort:   effort,
-					Tags:              map[string]string{},
+					Tags:              targetModelTags,
 					GlobalMetadata:    gm,
 					MappingTargetName: mappingTarget,
 				})

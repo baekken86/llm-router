@@ -18,6 +18,7 @@ type OverrideRow struct {
 
 type ModelOverrideRepository interface {
 	GetByModelAndEffort(ctx context.Context, modelID int64, reasoningEffort string) ([]OverrideRow, error)
+	GetEffortsByModel(ctx context.Context, modelID int64) ([]string, error)
 	Set(ctx context.Context, modelID int64, reasoningEffort string, key string, value string) error
 	Delete(ctx context.Context, modelID int64, reasoningEffort string, key string) error
 	DeleteAll(ctx context.Context, modelID int64, reasoningEffort string) error
@@ -52,6 +53,25 @@ func (r *sqliteModelOverrideRepo) GetByModelAndEffort(ctx context.Context, model
 		result = append(result, o)
 	}
 	return result, nil
+}
+
+func (r *sqliteModelOverrideRepo) GetEffortsByModel(ctx context.Context, modelID int64) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT DISTINCT reasoning_effort FROM model_overrides WHERE model_id = ? ORDER BY reasoning_effort`, modelID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get override efforts: %w", err)
+	}
+	defer rows.Close()
+	var efforts []string
+	for rows.Next() {
+		var e string
+		if err := rows.Scan(&e); err != nil {
+			return nil, fmt.Errorf("scan override effort: %w", err)
+		}
+		efforts = append(efforts, e)
+	}
+	return efforts, nil
 }
 
 func (r *sqliteModelOverrideRepo) Set(ctx context.Context, modelID int64, reasoningEffort string, key string, value string) error {

@@ -1,5 +1,6 @@
 <script>
   import { apiFetch } from '../lib/api.js';
+  import { metadataFields } from '../lib/stores.js';
 
   let { vmId = null, filterExpr = null, sortExpr = null, composition = null, previewMode = false } = $props();
 
@@ -87,22 +88,7 @@
   const effSort = $derived(sortExpr || apiSort);
 
   function abbrevKey(key) {
-    const map = {
-      'mc.intelligence': 'int',
-      'mc.coding': 'code',
-      'mc.speed': 'spd',
-      'mc.cost_per_task': '$/task',
-      'mc.cost_per_1m_input': '$/1M',
-      'mc.cost_per_1m_output': '$/1M.out',
-      'mc.cost_per_1m_cache': '$/1M.cache',
-      'mc.hallucination': 'hall',
-      'mc.latency': 'lat',
-      'mc.context_window': 'ctx',
-      'mc.cost_type': 'cost_type',
-      'mc.has_reasoning_effort': 'has_effort',
-      'mc.reasoning': 'reason',
-    };
-    return map[key] || key;
+    return key;
   }
 
   function collectFilterKeys(node) {
@@ -110,6 +96,26 @@
     if (node.key) return [node.key];
     const items = node.and || node.or || [];
     return items.flatMap(i => collectFilterKeys(i));
+  }
+
+  function collectCompositionKeys(node) {
+    if (!node) return [];
+    let keys = [];
+    if (node.filter_expr) {
+      keys = keys.concat(collectFilterKeys(node.filter_expr));
+    }
+    if (node.sort_expr && Array.isArray(node.sort_expr)) {
+      for (const s of node.sort_expr) {
+        if (s.key) keys.push(s.key);
+        if (s.condition) keys = keys.concat(collectFilterKeys(s.condition));
+      }
+    }
+    if (node.sources && Array.isArray(node.sources)) {
+      for (const src of node.sources) {
+        keys = keys.concat(collectCompositionKeys(src));
+      }
+    }
+    return keys;
   }
 
   const columns = $derived.by(() => {
@@ -134,6 +140,18 @@
       }
     }
 
+    // Include all known mc.* fields from the backend metadata
+    const fields = $metadataFields;
+    if (fields && typeof fields === 'object') {
+      for (const k of Object.keys(fields)) {
+        if (k.startsWith('mc.') && !seen.has(k)) {
+          seen.add(k);
+          cols.push({ key: k, abbrev: abbrevKey(k) });
+        }
+      }
+    }
+
+    // Also include any additional tags from resolved models
     for (const m of resolved) {
       if (m.tags) {
         for (const k of Object.keys(m.tags)) {

@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/api.js';
-  import { addToast } from '../lib/stores.js';
+  import { addToast, metadataFields } from '../lib/stores.js';
 
   let { provider, model, effort = '', onBack } = $props();
 
@@ -13,6 +13,7 @@
   let currentModelId = $state(null);
   let overrides = $state({});
   let editedValues = $state({});
+  let clearedOverrides = $state(new Set());
   let hasChanges = $state(false);
 
   const NUMERIC_KEYS = [
@@ -34,6 +35,14 @@
 
   function getAllKeys() {
     const keys = new Set();
+    // Include all known metadata fields from the backend
+    const fields = $metadataFields;
+    if (fields && typeof fields === 'object') {
+      for (const k of Object.keys(fields)) {
+        keys.add(k);
+      }
+    }
+    // Include keys from matching model entries
     for (const entry of matchingEntries) {
       if (entry.tags) {
         for (const k of Object.keys(entry.tags)) keys.add('mc.' + k);
@@ -41,6 +50,10 @@
       if (entry.global_metadata) {
         for (const k of Object.keys(entry.global_metadata)) keys.add(k);
       }
+    }
+    // Include any override-only keys
+    for (const k of Object.keys(overrides)) {
+      keys.add(k);
     }
     return [...keys].sort();
   }
@@ -76,6 +89,7 @@
   }
 
   function clearOverride(key) {
+    clearedOverrides = new Set([...clearedOverrides, key]);
     const imported = getImportedValue(key) ?? '';
     editedValues = { ...editedValues, [key]: imported };
     computeHasChanges();
@@ -113,6 +127,16 @@
       const existingOverride = key in overrides ? overrides[key] : undefined;
       const imported = getImportedValue(key);
       const effective = edited !== undefined ? edited : existingOverride;
+
+      // If this key was explicitly cleared, send null to delete the override
+      if (clearedOverrides.has(key)) {
+        if (key in overrides) {
+          const tagKey = key.startsWith('mc.') ? key.slice(3) : key;
+          payload[tagKey] = null;
+        }
+        continue;
+      }
+
       if (effective !== imported) {
         const tagKey = key.startsWith('mc.') ? key.slice(3) : key;
         payload[tagKey] = effective === '' || effective === null ? null : effective;
@@ -160,7 +184,13 @@
     if (!currentModelId) return;
     try {
       const data = await apiFetch(`/api/v1/models/${currentModelId}/overrides?effort=${encodeURIComponent(effort)}`);
-      overrides = data.overrides || {};
+      const raw = data.overrides || {};
+      const normalized = {};
+      for (const [k, v] of Object.entries(raw)) {
+        const prefixed = k.includes('.') ? k : 'mc.' + k;
+        normalized[prefixed] = v;
+      }
+      overrides = normalized;
       editedValues = {};
       hasChanges = false;
     } catch (e) {
@@ -182,6 +212,18 @@
       loading = false;
     }
   });
+
+  $effect(() => {
+    const e = effort;
+    const mid = currentModelId;
+    if (!loading && mid) {
+      const entry = matchingEntries.find(m => m.reasoning_effort === e) || matchingEntries[0];
+      if (entry && entry.model_id !== mid) {
+        currentModelId = entry.model_id;
+      }
+      loadOverrides();
+    }
+  });
 </script>
 
 <div>
@@ -189,7 +231,7 @@
     <a
       href="#"
       class="text-sm text-gray-400 hover:text-white no-underline"
-      onclick={(e) => { e.preventDefault(); onBack(provider, model); }}
+      onclick={(e) => { e.preventDefault(); onBack(); }}
     >
       &larr; Back
     </a>
@@ -238,7 +280,7 @@
           {#each getAllKeys() as key}
             {@const imported = getImportedValue(key)}
             {@const currentVal = getCurrentValue(key)}
-            {@const overridden = hasEditedDiff(key) || (key in overrides && overrides[key] !== imported)}
+            {@const overridden = hasEditedDiff(key) || (key in overrides && overrides[key] !== imported && !clearedOverrides.has(key))}
             <tr class="border-b border-gray-850 {overridden ? 'bg-amber-900/30' : ''}">
               <td class="px-4 py-2 text-gray-300">{key}</td>
               <td class="px-4 py-2 text-gray-500">{imported ?? '—'}</td>

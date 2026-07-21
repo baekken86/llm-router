@@ -284,6 +284,10 @@ func (m *mockProviderMetaRepo) DeleteByProvider(_ context.Context, providerID in
 	return nil
 }
 
+func (m *mockProviderMetaRepo) UpsertKey(_ context.Context, providerID int64, key, value string) error {
+	return nil
+}
+
 // --- Mock GlobalMetadataRepository ---
 
 type mockGlobalMetaRepo struct {

@@ -125,6 +125,7 @@ type ProviderStatusResponse struct {
 	OAuthEmail       string `json:"oauth_email,omitempty"`
 	APIKeyConfigured bool   `json:"api_key_configured"`
 	BaseURL          string `json:"base_url"`
+	Disabled         bool   `json:"disabled"`
 }
 
 type StatusResponse struct {
@@ -180,6 +181,27 @@ func (c *APIClient) GetModels() ([]ModelEffortResponse, error) {
 		return nil, err
 	}
 	return models, nil
+}
+
+func (c *APIClient) ToggleProvider(providerID int64, disabled bool) error {
+	body := fmt.Sprintf(`{"disabled":%t}`, disabled)
+	req, err := http.NewRequest("PUT", fmt.Sprintf("%s/api/v1/providers/%d", c.baseURL, providerID), strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("toggle provider returned %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (c *APIClient) StreamLogs(ch chan<- proxy.RequestLog) error {

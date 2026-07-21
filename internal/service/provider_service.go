@@ -133,6 +133,9 @@ func (s *providerService) Update(ctx context.Context, id int64, req models.Updat
 		}
 		p.APIKeyEncrypted = encrypted
 	}
+	if req.Disabled != nil {
+		p.Disabled = *req.Disabled
+	}
 
 	if err := s.repo.Update(ctx, p); err != nil {
 		return nil, err

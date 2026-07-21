@@ -28,17 +28,20 @@ test.describe('Composition Canvas', () => {
   });
 
   test('clicking + Source on operation adds a child', async ({ page }) => {
-    // Add an operation at root
+    // Add an operation at root (starts expanded with _expanded: true)
     const addOpBtn = page.locator('button').filter({ hasText: '+ Op' }).last();
     await addOpBtn.click();
 
-    // Click + Source on the operation (first one on page, inside the op)
+    // Verify operation shows "0 sources"
+    await expect(page.locator('text=0 sources')).toBeVisible({ timeout: 3000 });
+
+    // The operation starts expanded, so + Source buttons inside it are visible.
+    // Click the first + Source (inside the op), not the root-level one.
     const addSourceBtn = page.locator('button').filter({ hasText: '+ Source' }).first();
     await addSourceBtn.click();
 
-    // A second select should appear (the source card's model dropdown)
-    const selects = page.locator('select');
-    await expect(selects).toHaveCount(2, { timeout: 3000 });
+    // Source count should update to "1 sources"
+    await expect(page.locator('text=1 sources')).toBeVisible({ timeout: 3000 });
   });
 
   test('root-level + Source wraps existing content in union', async ({ page }) => {

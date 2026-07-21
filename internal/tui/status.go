@@ -46,6 +46,14 @@ func (m StatusModel) Update(msg tea.Msg) (StatusModel, tea.Cmd) {
 				}
 			}
 		}
+	case StatusToggleMsg:
+		if msg.Err == nil {
+			for i := range m.providers {
+				if m.providers[i].ID == msg.ProviderID {
+					m.providers[i].Disabled = msg.Disabled
+				}
+			}
+		}
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "k":
@@ -85,8 +93,10 @@ func (m StatusModel) View() string {
 
 		b.WriteString(fmt.Sprintf("%s%s\n", cursor, InfoStyle.Render(name)))
 
-		// Rate limit status
-		if p.RateLimited {
+		// Disabled status
+		if p.Disabled {
+			b.WriteString(fmt.Sprintf("    %s\n", MutedStyle.Render("DISABLED")))
+		} else if p.RateLimited {
 			b.WriteString(fmt.Sprintf("    %s %s\n",
 				ErrorStyle.Render("RATE LIMITED"),
 				WarningStyle.Render(fmt.Sprintf("retry in %s", p.RetryIn)),
@@ -130,7 +140,7 @@ func (m StatusModel) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(MutedStyle.Render("  press 'c' to clear rate limit for selected provider"))
+	b.WriteString(MutedStyle.Render("  press 'd' to toggle disable  'c' to clear rate limit  'r' to refresh"))
 
 	return b.String()
 }
@@ -158,8 +168,9 @@ func FetchStatusLocal(providerRepo repository.ProviderRepository, oauthRepo repo
 		var result []ProviderStatusResponse
 		for _, p := range providers {
 			ps := ProviderStatusResponse{
-				ID:   p.ID,
-				Name: p.Name,
+				ID:       p.ID,
+				Name:     p.Name,
+				Disabled: p.Disabled,
 			}
 
 			if p.APIKeyEncrypted != "" {

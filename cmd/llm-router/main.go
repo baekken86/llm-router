@@ -56,6 +56,9 @@ func main() {
 		case "import":
 			runImportCmd(os.Args[2:])
 			return
+		case "toggle-provider":
+			runToggleProvider(os.Args[2:])
+			return
 		case "create-key":
 			runCreateKey(os.Args[2:])
 			return
@@ -78,6 +81,7 @@ Usage:
   llm-router add-provider         Add a custom provider
   llm-router discover             Discover models from a provider
   llm-router tag                  Set metadata tags on models
+  llm-router toggle-provider      Enable/disable a provider
   llm-router create-key [flags]   Create a new proxy API key
   llm-router admin [flags]        Connect to running proxy as admin viewer
   llm-router import [flags]       Import CSV metadata
@@ -121,6 +125,11 @@ Add-provider flags:
 Tag flags:
   --model string                  Model name (required)
   --set string                    Tag in format key=value (repeatable)
+
+Toggle-provider flags:
+  --name string                   Provider name (required)
+  --enable                        Enable the provider
+  --disable                       Disable the provider
 
 Import flags:
   --file string                   CSV file path (required)
@@ -346,7 +355,7 @@ func runProxy(args []string) {
 	importHandler := handlers.NewImportHandler(service.NewImportService(modelRepo, tagRepo))
 	metadataHandler := handlers.NewMetadataHandler(llmrouter.ModelsJSON, providerMetadataRepo, globalMetaRepo)
 	adminHandler := handlers.NewAdminHandler(adminService)
-	statusHandler := handlers.NewStatusHandler(engine, providerService, oauthService)
+	statusHandler := handlers.NewStatusHandler(engine, providerService, oauthService, providerMetadataRepo)
 	syslogHandler := handlers.NewSyslogHandler(logRepo)
 	settingsHandler := handlers.NewSettingsHandler(cfg, engine)
 	mappingHandler := handlers.NewModelMappingHandler(modelMappingRepo, modelRepo, logger)

@@ -60,19 +60,20 @@ type InterceptResult struct {
 }
 
 type Engine struct {
-	vmService       service.VirtualModelService
-	providerService service.ProviderService
-	oauthService    service.OAuthService
-	openaiClient    *OpenAIClient
-	anthropicClient *AnthropicClient
-	logger          *slog.Logger
-	logChan         chan<- RequestLog
-	rtk             *RTKInterceptor
-	caveman         *CavemanInterceptor
-	rateLimits      *RateLimitTracker
-	maxRetries      int
-	timeoutSeconds  int
-	maxTokens       int
+	vmService          service.VirtualModelService
+	providerService    service.ProviderService
+	oauthService       service.OAuthService
+	openaiClient       *OpenAIClient
+	anthropicClient    *AnthropicClient
+	ollamaCloudClient  *OllamaCloudClient
+	logger             *slog.Logger
+	logChan            chan<- RequestLog
+	rtk                *RTKInterceptor
+	caveman            *CavemanInterceptor
+	rateLimits         *RateLimitTracker
+	maxRetries         int
+	timeoutSeconds     int
+	maxTokens          int
 }
 
 func NewEngine(
@@ -83,19 +84,20 @@ func NewEngine(
 	logChan chan<- RequestLog,
 ) *Engine {
 	return &Engine{
-		vmService:       vmService,
-		providerService: providerService,
-		oauthService:    oauthService,
-		openaiClient:    NewOpenAIClient(),
-		anthropicClient: NewAnthropicClient(),
-		logger:          logger,
-		logChan:         logChan,
-		rtk:             NewRTKInterceptor(logger),
-		caveman:         NewCavemanInterceptor(logger),
-		rateLimits:      &RateLimitTracker{},
-		maxRetries:      2,
-		timeoutSeconds:  300,
-		maxTokens:       8192,
+		vmService:         vmService,
+		providerService:   providerService,
+		oauthService:      oauthService,
+		openaiClient:      NewOpenAIClient(),
+		anthropicClient:   NewAnthropicClient(),
+		ollamaCloudClient: NewOllamaCloudClient(),
+		logger:            logger,
+		logChan:           logChan,
+		rtk:               NewRTKInterceptor(logger),
+		caveman:           NewCavemanInterceptor(logger),
+		rateLimits:        &RateLimitTracker{},
+		maxRetries:        2,
+		timeoutSeconds:    300,
+		maxTokens:         8192,
 	}
 }
 
@@ -122,6 +124,10 @@ func (e *Engine) getAPIKey(ctx context.Context, provider models.Provider) (strin
 		return token, nil
 	}
 	// Fall back to encrypted API key
+	// If APIKeyEncrypted is empty, return empty key (for providers like Ollama that don't need one)
+	if provider.APIKeyEncrypted == "" {
+		return "", nil
+	}
 	return e.providerService.DecryptAPIKey(provider.APIKeyEncrypted)
 }
 
@@ -415,20 +421,40 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 		json.Unmarshal(vm.RetryOnStatus, &retryOnStatus)
 	}
 
+	var failures []map[string]interface{}
+
 	for i, rm := range resolvedModels {
 		apiKey, err := e.getAPIKey(r.Context(), rm.Provider)
 		if err != nil {
 			e.logger.Warn("skipping provider: no api key", "provider", rm.Provider.Name, "model", rm.Model.Name, "error", err)
+			failures = append(failures, map[string]interface{}{
+				"model":    rm.Model.Name,
+				"provider": rm.Provider.Name,
+				"status":   500,
+				"message":  "internal error: failed to get api key",
+			})
 			continue
 		}
 
 		if limited, remaining := e.rateLimits.IsLimited(rm.Provider.ID); limited {
 			e.logger.Warn("skipping provider: rate limited", "provider", rm.Provider.Name, "model", rm.Model.Name, "remaining", remaining.Round(time.Second))
+			failures = append(failures, map[string]interface{}{
+				"model":    rm.Model.Name,
+				"provider": rm.Provider.Name,
+				"status":   429,
+				"message":  fmt.Sprintf("rate limited, retry in %s", remaining.Round(time.Second)),
+			})
 			continue
 		}
 
 		if rm.Provider.Disabled {
 			e.logger.Warn("skipping provider: disabled", "provider", rm.Provider.Name, "model", rm.Model.Name)
+			failures = append(failures, map[string]interface{}{
+				"model":    rm.Model.Name,
+				"provider": rm.Provider.Name,
+				"status":   503,
+				"message":  "provider disabled",
+			})
 			continue
 		}
 
@@ -527,10 +553,30 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 				e.rateLimits.MarkLimited(rm.Provider.ID, providerErr.RetryAfter)
 			}
 
+			e.logRequest(RequestLog{
+				Type:          "proxy",
+				Timestamp:     start,
+				RequestID:     requestID,
+				VirtualModel:  req.Model,
+				ProviderName:  rm.Provider.Name,
+				ModelName:     rm.Model.Name,
+				StatusCode:    providerErr.StatusCode,
+				ErrorMessage:  providerErr.Message,
+				FallbackCount: i,
+				RetryCount:    retry,
+			})
+
 			if !shouldRetry(providerErr.StatusCode, retryOnStatus) {
 				break
 			}
 		}
+
+		failures = append(failures, map[string]interface{}{
+			"model":    rm.Model.Name,
+			"provider": rm.Provider.Name,
+			"status":   502,
+			"message":  "request failed",
+		})
 	}
 
 	e.logRequest(RequestLog{
@@ -544,7 +590,15 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 		ErrorMessage:  "all models failed",
 	})
 
-	http.Error(w, `{"error":"all models failed"}`, http.StatusBadGateway)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadGateway)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": map[string]interface{}{
+			"message": "all models failed",
+			"type":    "bad_gateway",
+		},
+		"failures": failures,
+	})
 }
 
 func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey string, req ChatCompletionRequest) (*ChatCompletionResponse, *SendRequestResult, error) {
@@ -585,6 +639,17 @@ func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey s
 			req.ReasoningEffort = &rm.ReasoningEffort
 		}
 		resp, err = e.openaiClient.ChatCompletion(rm.Provider.BaseURL, apiKey, req)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else if rm.Provider.APIType == models.APITypeOllamaCloud {
+		// Ollama Cloud (ollama.com): native Ollama format at /api/chat.
+		// Different from local Ollama which supports OpenAI-compatible /v1.
+		req.Model = rm.Model.Name
+		if rm.ReasoningEffort != "" {
+			req.ReasoningEffort = &rm.ReasoningEffort
+		}
+		resp, err = e.ollamaCloudClient.ChatCompletion(rm.Provider.BaseURL, apiKey, req)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -642,6 +707,13 @@ func (e *Engine) sendStreamRequest(r *http.Request, rm service.ResolvedModel, ap
 			req.ReasoningEffort = &rm.ReasoningEffort
 		}
 		return e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, req)
+	} else if rm.Provider.APIType == models.APITypeOllamaCloud {
+		// Ollama Cloud (ollama.com): native Ollama format at /api/chat.
+		req.Model = rm.Model.Name
+		if rm.ReasoningEffort != "" {
+			req.ReasoningEffort = &rm.ReasoningEffort
+		}
+		return e.ollamaCloudClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, req)
 	}
 
 	req.Model = rm.Model.Name
@@ -955,16 +1027,34 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 		apiKey, err := e.getAPIKey(r.Context(), rm.Provider)
 		if err != nil {
 			e.logger.Warn("skipping provider: no api key", "provider", rm.Provider.Name, "model", rm.Model.Name, "error", err)
+			failures = append(failures, map[string]interface{}{
+				"model":    rm.Model.Name,
+				"provider": rm.Provider.Name,
+				"status":   500,
+				"message":  "internal error: failed to get api key",
+			})
 			continue
 		}
 
 		if limited, remaining := e.rateLimits.IsLimited(rm.Provider.ID); limited {
 			e.logger.Warn("skipping provider: rate limited", "provider", rm.Provider.Name, "model", rm.Model.Name, "remaining", remaining.Round(time.Second))
+			failures = append(failures, map[string]interface{}{
+				"model":    rm.Model.Name,
+				"provider": rm.Provider.Name,
+				"status":   429,
+				"message":  fmt.Sprintf("rate limited, retry in %s", remaining.Round(time.Second)),
+			})
 			continue
 		}
 
 		if rm.Provider.Disabled {
 			e.logger.Warn("skipping provider: disabled", "provider", rm.Provider.Name, "model", rm.Model.Name)
+			failures = append(failures, map[string]interface{}{
+				"model":    rm.Model.Name,
+				"provider": rm.Provider.Name,
+				"status":   503,
+				"message":  "provider disabled",
+			})
 			continue
 		}
 
@@ -1110,18 +1200,38 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 		json.Unmarshal(vm.RetryOnStatus, &retryOnStatus)
 	}
 
+	var failures []map[string]interface{}
+
 	for i, rm := range resolvedModels {
 		apiKey, err := e.getAPIKey(r.Context(), rm.Provider)
 		if err != nil {
+			failures = append(failures, map[string]interface{}{
+				"model":    rm.Model.Name,
+				"provider": rm.Provider.Name,
+				"status":   500,
+				"message":  "internal error: failed to get api key",
+			})
 			continue
 		}
 
 		if limited, _ := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+			failures = append(failures, map[string]interface{}{
+				"model":    rm.Model.Name,
+				"provider": rm.Provider.Name,
+				"status":   429,
+				"message":  "rate limited",
+			})
 			continue
 		}
 
 		if rm.Provider.Disabled {
 			e.logger.Warn("skipping provider: disabled", "provider", rm.Provider.Name, "model", rm.Model.Name)
+			failures = append(failures, map[string]interface{}{
+				"model":    rm.Model.Name,
+				"provider": rm.Provider.Name,
+				"status":   503,
+				"message":  "provider disabled",
+			})
 			continue
 		}
 
@@ -1280,14 +1390,39 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 				lastErr = err
 			}
 
-			if providerErr, ok := lastErr.(*ProviderError); ok && providerErr.StatusCode == http.StatusTooManyRequests {
+			providerErr, ok := lastErr.(*ProviderError)
+			if !ok {
+				providerErr = &ProviderError{StatusCode: 500, Message: lastErr.Error()}
+			}
+
+			if providerErr.StatusCode == http.StatusTooManyRequests {
 				e.rateLimits.MarkLimited(rm.Provider.ID, providerErr.RetryAfter)
 			}
 
-			if providerErr, ok := lastErr.(*ProviderError); ok && !shouldRetry(providerErr.StatusCode, retryOnStatus) {
+			e.logRequest(RequestLog{
+				Type:          "proxy",
+				Timestamp:     start,
+				RequestID:     requestID,
+				VirtualModel:  anthReq.Model,
+				ProviderName:  rm.Provider.Name,
+				ModelName:     rm.Model.Name,
+				StatusCode:    providerErr.StatusCode,
+				ErrorMessage:  providerErr.Message,
+				FallbackCount: i,
+				RetryCount:    retry,
+			})
+
+			if !shouldRetry(providerErr.StatusCode, retryOnStatus) {
 				break
 			}
 		}
+
+		failures = append(failures, map[string]interface{}{
+			"model":    rm.Model.Name,
+			"provider": rm.Provider.Name,
+			"status":   502,
+			"message":  "request failed",
+		})
 	}
 
 	e.logRequest(RequestLog{
@@ -1301,7 +1436,16 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 		ErrorMessage:  "all models failed",
 	})
 
-	http.Error(w, `{"type":"error","error":{"type":"api_error","message":"all models failed"}}`, http.StatusBadGateway)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadGateway)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"type": "error",
+		"error": map[string]interface{}{
+			"type":    "api_error",
+			"message": "all models failed",
+		},
+		"failures": failures,
+	})
 }
 
 func (e *Engine) streamAnthropicPassthrough(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser, onProgress func(StreamProgress)) *Usage {

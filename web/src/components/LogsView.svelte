@@ -205,7 +205,7 @@
     <div class="text-muted-foreground py-8 text-center">No logs yet</div>
   {:else}
     <Card class="overflow-hidden">
-      <div class="divide-y divide-border">
+      <div class="overflow-x-auto divide-y divide-border">
         {#each grouped as parent (parent.RequestID)}
           <div>
             <button

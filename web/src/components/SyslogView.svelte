@@ -52,7 +52,8 @@
     <div class="text-gray-400 py-8 text-center">No syslog entries</div>
   {:else}
     <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-      <table class="w-full text-sm">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
         <thead>
           <tr class="border-b border-gray-800 text-gray-400">
             <th class="text-left px-4 py-2 w-48">Timestamp</th>
@@ -69,7 +70,8 @@
             </tr>
           {/each}
         </tbody>
-      </table>
+        </table>
+      </div>
     </div>
   {/if}
 </div>

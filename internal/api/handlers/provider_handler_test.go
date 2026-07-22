@@ -222,13 +222,13 @@ func (h *testHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"name, api_type, and base_url are required"}`, http.StatusBadRequest)
 		return
 	}
-	if req.APIKey == "" && req.APIType != models.APITypeOllama {
+	if req.APIKey == "" && req.APIType != models.APITypeOllama && req.APIType != models.APITypeOllamaCloud {
 		http.Error(w, `{"error":"api_key is required"}`, http.StatusBadRequest)
 		return
 	}
 
-	if req.APIType != models.APITypeOpenAI && req.APIType != models.APITypeAnthropic && req.APIType != models.APITypeCloudflare && req.APIType != models.APITypeOllama {
-		http.Error(w, `{"error":"api_type must be 'openai', 'anthropic', 'cloudflare', or 'ollama'"}`, http.StatusBadRequest)
+	if req.APIType != models.APITypeOpenAI && req.APIType != models.APITypeAnthropic && req.APIType != models.APITypeCloudflare && req.APIType != models.APITypeOllama && req.APIType != models.APITypeOllamaCloud {
+		http.Error(w, `{"error":"api_type must be 'openai', 'anthropic', 'cloudflare', 'ollama', or 'ollama-cloud'"}`, http.StatusBadRequest)
 		return
 	}
 

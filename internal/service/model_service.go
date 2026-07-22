@@ -113,14 +113,22 @@ func (s *modelService) Discover(ctx context.Context, providerID int64) ([]models
 }
 
 func fetchModels(baseURL, apiKey string, apiType models.APIType) ([]string, error) {
-	if apiType == models.APITypeOllama {
-		// Ollama: discover via /api/tags (not /v1/models)
-		ollamaHost := strings.TrimSuffix(baseURL, "/v1")
-		ollamaHost = strings.TrimSuffix(ollamaHost, "/")
-		url := ollamaHost + "/api/tags"
+	if apiType == models.APITypeOllama || apiType == models.APITypeOllamaCloud {
+		// Ollama (local + cloud): discover via /api/tags
+		host := strings.TrimSuffix(baseURL, "/v1")
+		host = strings.TrimSuffix(host, "/api/chat")
+		host = strings.TrimSuffix(host, "/")
+		url := host + "/api/tags"
 
 		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Get(url)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("request ollama tags: %w", err)
 		}
@@ -146,8 +154,9 @@ func fetchModels(baseURL, apiKey string, apiType models.APIType) ([]string, erro
 		return names, nil
 	}
 
-	// OpenAI-compatible (openai, anthropic, cloudflare)
-	url := baseURL + "/v1/models"
+	// OpenAI-compatible (openai, anthropic, cloudflare, nvidia-nim)
+	cleanBase := strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1")
+	url := cleanBase + "/v1/models"
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {

@@ -7,6 +7,7 @@
   import DragHandle from './DragHandle.svelte';
   import SortableItem from './SortableItem.svelte';
   import SortableTree from './SortableTree.svelte';
+  import ConditionBuilder from './ConditionBuilder.svelte';
 
   let { criteria = [], onChange } = $props();
 
@@ -15,7 +16,7 @@
   }
 
   function addCondition() {
-    onChange([...criteria, { condition: { key: '', op: 'eq', value: '' } }]);
+    onChange([...criteria, { condition: { and: [{ key: '', op: 'eq', value: '' }] } }]);
   }
 
   function removeEntry(idx) {
@@ -30,15 +31,14 @@
     onChange(next);
   }
 
-  function updateConditionField(idx, field, val) {
+  function updateCondition(idx, newCondition) {
+    if (newCondition === null) {
+      removeEntry(idx);
+      return;
+    }
     const next = criteria.map((c, i) => {
       if (i !== idx) return c;
-      const cond = { ...(c.condition || { key: '', op: 'eq', value: '' }), [field]: val };
-      if (field === 'key') {
-        cond.op = '';
-        cond.value = '';
-      }
-      return { ...c, condition: cond };
+      return { ...c, condition: newCondition };
     });
     onChange(next);
   }
@@ -65,12 +65,25 @@
     }
   }
 
+  function formatConditionSummary(n) {
+    if (!n) return '';
+    if (n.key) {
+      const val = Array.isArray(n.value) ? `[${n.value.join(',')}]` : n.value;
+      return `${n.key} ${n.op} ${val}`;
+    }
+    const op = n.and ? 'AND' : 'OR';
+    const items = n.and || n.or || [];
+    const parts = items.map(i => formatConditionSummary(i)).filter(Boolean);
+    if (parts.length === 0) return '';
+    if (parts.length === 1) return parts[0];
+    return parts.map(p => parts.length > 1 && p.includes(' ') ? `(${p})` : p).join(` ${op} `);
+  }
+
   function formatSummary() {
     return criteria
       .map(c => {
         if (c.condition) {
-          const val = Array.isArray(c.condition.value) ? `[${c.condition.value.join(',')}]` : c.condition.value;
-          return `IF ${c.condition.key} ${c.condition.op} ${val} ${c.direction || ''}`.trim();
+          return `IF ${formatConditionSummary(c.condition)} ${c.direction || ''}`.trim();
         }
         if (c.key) {
           if (c.direction) return `${c.key} ${c.direction}`;
@@ -115,39 +128,33 @@
       >
         {#snippet children(sortable)}
           {#if entry.condition}
-            <div class="flex items-center gap-2 flex-wrap border-l-2 border-amber-700 pl-3">
+            <div class="flex items-start gap-2 flex-wrap border-l-2 border-amber-700 pl-3 pt-1">
               {#if criteria.length > 1}
                 <DragHandle attachHandle={sortable.attachHandle} />
               {/if}
-              <span class="text-xs text-amber-400 font-mono">IF</span>
-              <FieldSelector
-                value={entry.condition.key}
-                onChange={(v) => updateConditionField(idx, 'key', v)}
-              />
-              <OperatorSelector
-                fieldType={getFieldType($metadataFields, entry.condition.key)}
-                value={entry.condition.op}
-                onChange={(v) => updateConditionField(idx, 'op', v)}
-              />
-              <ValueInput
-                fieldKey={entry.condition.key}
-                fieldType={getFieldType($metadataFields, entry.condition.key)}
-                operator={entry.condition.op}
-                value={entry.condition.value}
-                onChange={(v) => updateConditionField(idx, 'value', v)}
-              />
-              <select
-                value={entry.direction || 'asc'}
-                onchange={(e) => updateSort(idx, 'direction', e.target.value)}
-                class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
-              >
-                <option value="asc">true first</option>
-                <option value="desc">false first</option>
-              </select>
-              <button
-                class="text-gray-500 hover:text-red-400 px-1"
-                onclick={() => removeEntry(idx)}
-              >x</button>
+              <span class="text-xs text-amber-400 font-mono mt-2">IF</span>
+              <div class="flex-1 min-w-0">
+                <ConditionBuilder
+                  node={entry.condition}
+                  depth={0}
+                  groupKey={`condition-${idx}`}
+                  onChange={(v) => updateCondition(idx, v)}
+                />
+              </div>
+              <div class="flex items-center gap-2 mt-2">
+                <select
+                  value={entry.direction || 'asc'}
+                  onchange={(e) => updateSort(idx, 'direction', e.target.value)}
+                  class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="asc">true first</option>
+                  <option value="desc">false first</option>
+                </select>
+                <button
+                  class="text-gray-500 hover:text-red-400 px-1"
+                  onclick={() => removeEntry(idx)}
+                >x</button>
+              </div>
             </div>
           {:else}
             <div class="flex items-center gap-2 flex-wrap">

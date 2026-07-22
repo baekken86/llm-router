@@ -245,6 +245,7 @@
         <VirtualModelList
           onCreate={() => navigate('create')}
           onEdit={(id) => navigate('edit', id)}
+          onDuplicate={(id) => navigate('edit', id)}
         />
       {:else}
         <VirtualModelForm

@@ -5,7 +5,7 @@
   import ConfirmDialog from './ConfirmDialog.svelte';
   import ResolvedPreview from './ResolvedPreview.svelte';
 
-  let { onCreate, onEdit, onDuplicate = () => {} } = $props();
+  let { onCreate, onEdit } = $props();
 
   function handleLink(e, href) {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
@@ -38,42 +38,6 @@
       addToast(e.message, 'error');
     }
     deleteTarget = null;
-  }
-
-  function generateUniqueName(baseName) {
-    const existing = new Set(vms.map(v => v.name));
-    if (!existing.has(`${baseName}-2`)) return `${baseName}-2`;
-    for (let i = 3; i < 1000; i++) {
-      const candidate = `${baseName}-${i}`;
-      if (!existing.has(candidate)) return candidate;
-    }
-    return `${baseName}-${Date.now()}`;
-  }
-
-  async function doDuplicate(vm) {
-    try {
-      const full = await apiFetch(`/api/v1/virtual-models/${vm.id}`);
-      const newName = generateUniqueName(full.name);
-      const body = {
-        name: newName,
-        description: full.description || '',
-        max_retries: full.max_retries,
-        retry_on_status: full.retry_on_status,
-        include_models: full.include_models || [],
-        composition: full.composition || undefined,
-        filter_expr: !full.composition ? full.filter_expr : undefined,
-        sort_expr: !full.composition ? full.sort_expr : undefined,
-      };
-      const created = await apiFetch('/api/v1/virtual-models', {
-        method: 'POST',
-        body,
-      });
-      addToast(`Duplicated as "${created.name}"`, 'success');
-      vms = [...vms, created];
-      onDuplicate(created.id);
-    } catch (e) {
-      addToast(`Duplicate failed: ${e.message}`, 'error');
-    }
   }
 
   function formatFilter(expr) {
@@ -171,13 +135,6 @@
               >
                 Edit
               </a>
-              <button
-                class="text-xs text-gray-400 hover:text-emerald-400 px-2 py-1"
-                onclick={(e) => { e.stopPropagation(); doDuplicate(vm); }}
-                title="Duplicate this virtual model"
-              >
-                Duplicate
-              </button>
               <button
                 class="text-xs text-red-400 hover:text-red-300 px-2 py-1"
                 onclick={(e) => { e.stopPropagation(); deleteTarget = vm.id; }}

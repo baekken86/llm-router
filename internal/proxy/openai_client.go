@@ -17,7 +17,7 @@ type OpenAIClient struct {
 
 func NewOpenAIClient() *OpenAIClient {
 	return &OpenAIClient{
-		httpClient: &http.Client{Timeout: 5 * time.Minute},
+		httpClient: &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -26,16 +26,17 @@ type StreamOptions struct {
 }
 
 type ChatCompletionRequest struct {
-	Model          string         `json:"model"`
-	Messages       []Message      `json:"messages"`
-	MaxTokens      *int           `json:"max_tokens,omitempty"`
-	Temperature    *float64       `json:"temperature,omitempty"`
-	TopP           *float64       `json:"top_p,omitempty"`
-	Stream         bool           `json:"stream,omitempty"`
-	StreamOptions  *StreamOptions `json:"stream_options,omitempty"`
-	Tools          []Tool         `json:"tools,omitempty"`
-	Stop           []string       `json:"stop,omitempty"`
-	ReasoningEffort *string       `json:"reasoning_effort,omitempty"`
+	Model           string         `json:"model"`
+	Messages        []Message      `json:"messages"`
+	MaxTokens       *int           `json:"max_tokens,omitempty"`
+	Temperature     *float64       `json:"temperature,omitempty"`
+	TopP            *float64       `json:"top_p,omitempty"`
+	Stream          bool           `json:"stream,omitempty"`
+	StreamOptions   *StreamOptions `json:"stream_options,omitempty"`
+	Tools           []Tool         `json:"tools,omitempty"`
+	ToolChoice      interface{}    `json:"tool_choice,omitempty"`
+	Stop            []string       `json:"stop,omitempty"`
+	ReasoningEffort *string        `json:"reasoning_effort,omitempty"`
 }
 
 type Message struct {
@@ -134,7 +135,8 @@ func (c *OpenAIClient) ChatCompletion(baseURL, apiKey string, req ChatCompletion
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", baseURL+"/v1/chat/completions", bytes.NewReader(body))
+	cleanBase := strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1")
+	httpReq, err := http.NewRequest("POST", cleanBase + "/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -174,7 +176,8 @@ func (c *OpenAIClient) ChatCompletionStream(baseURL, apiKey string, req ChatComp
 		return nil, nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", baseURL+"/v1/chat/completions", bytes.NewReader(body))
+	cleanBase := strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1")
+	httpReq, err := http.NewRequest("POST", cleanBase + "/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, fmt.Errorf("create request: %w", err)
 	}

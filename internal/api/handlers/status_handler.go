@@ -50,6 +50,8 @@ type ProviderStatus struct {
 	AccountID        string            `json:"account_id,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
 	Disabled         bool              `json:"disabled"`
+	CircuitBroken    bool              `json:"circuit_broken"`
+	CBCooldownRemaining string         `json:"cb_cooldown_remaining,omitempty"`
 }
 
 type StatusResponse struct {
@@ -93,6 +95,14 @@ func (h *StatusHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 			ps.RateLimited = rl.Limited
 			if rl.Limited {
 				ps.RetryIn = rl.Remaining.Round(time.Second).String()
+			}
+		}
+
+		if cb := h.engine.GetCircuitBreaker(); cb != nil {
+			cbStatus := cb.GetProviderStatus(p.ID)
+			ps.CircuitBroken = cbStatus.ProviderDisabled
+			if cbStatus.ProviderDisabled {
+				ps.CBCooldownRemaining = cbStatus.CooldownRemaining
 			}
 		}
 

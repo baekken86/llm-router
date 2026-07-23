@@ -71,6 +71,7 @@ type Engine struct {
 	rtk                *RTKInterceptor
 	caveman            *CavemanInterceptor
 	rateLimits         *RateLimitTracker
+	circuitBreaker     *CircuitBreaker
 	maxRetries         int
 	timeoutSeconds     int
 	maxTokens          int
@@ -115,6 +116,14 @@ func (e *Engine) GetRateLimitStatus() []ProviderRateLimitStatus {
 
 func (e *Engine) ClearRateLimit(providerID int64) {
 	e.rateLimits.Clear(providerID)
+}
+
+func (e *Engine) SetCircuitBreaker(cb *CircuitBreaker) {
+	e.circuitBreaker = cb
+}
+
+func (e *Engine) GetCircuitBreaker() *CircuitBreaker {
+	return e.circuitBreaker
 }
 
 func (e *Engine) getAPIKey(ctx context.Context, provider models.Provider) (string, error) {
@@ -317,6 +326,10 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 				cooldown = classifyRateLimit(providerErr.RawBody)
 			}
 			e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
+		}
+
+		if e.circuitBreaker != nil && providerErr.StatusCode >= 500 {
+			e.circuitBreaker.Record5xx(r.Context(), rm.Provider.ID, rm.Model.Name)
 		}
 
 		e.logRequest(RequestLog{
@@ -559,6 +572,10 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 				cooldown = classifyRateLimit(providerErr.RawBody)
 			}
 			e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
+		}
+
+		if e.circuitBreaker != nil && providerErr.StatusCode >= 500 {
+			e.circuitBreaker.Record5xx(r.Context(), rm.Provider.ID, rm.Model.Name)
 		}
 
 		e.logRequest(RequestLog{
@@ -1121,6 +1138,10 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 				e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
 			}
 
+			if e.circuitBreaker != nil && providerErr.StatusCode >= 500 {
+				e.circuitBreaker.Record5xx(r.Context(), rm.Provider.ID, rm.Model.Name)
+			}
+
 			e.logRequest(RequestLog{
 				Type:          "proxy",
 				Timestamp:     start,
@@ -1413,6 +1434,10 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 					cooldown = classifyRateLimit(providerErr.RawBody)
 				}
 				e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
+			}
+
+			if e.circuitBreaker != nil && providerErr.StatusCode >= 500 {
+				e.circuitBreaker.Record5xx(r.Context(), rm.Provider.ID, rm.Model.Name)
 			}
 
 			e.logRequest(RequestLog{

@@ -348,6 +348,19 @@ func runProxy(args []string) {
 	engine.GetCaveman().SetEnabled(settings.CavemanEnabled)
 	engine.ApplySettings(settings.MaxRetries, settings.TimeoutSeconds, settings.MaxTokens)
 
+	cb := proxy.NewCircuitBreaker(modelRepo, providerRepo, logger)
+	cb.ApplySettings(proxy.CircuitBreakerSettings{
+		Enabled:             settings.CircuitBreakerEnabled,
+		ModelThreshold:      settings.CircuitBreakerModelThreshold,
+		ModelWindowSec:      settings.CircuitBreakerModelWindowSec,
+		ModelCooldownSec:    settings.CircuitBreakerModelCooldownSec,
+		ProviderThreshold:   settings.CircuitBreakerProviderThreshold,
+		ProviderWindowSec:   settings.CircuitBreakerProviderWindowSec,
+		ProviderCooldownSec: settings.CircuitBreakerProviderCooldownSec,
+		ProviderMinModels:   settings.CircuitBreakerProviderMinModels,
+	})
+	engine.SetCircuitBreaker(cb)
+
 	providerHandler := handlers.NewProviderHandler(providerService, modelService)
 	modelHandler := handlers.NewModelHandler(modelService)
 	vmHandler := handlers.NewVirtualModelHandler(vmService)
@@ -420,6 +433,7 @@ func runProxy(args []string) {
 	}
 
 	logger.Info("shutting down...")
+	cb.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

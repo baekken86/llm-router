@@ -135,6 +135,16 @@ func (m *mockModelRepo) Upsert(_ context.Context, providerID int64, name string)
 	return &mod, nil
 }
 
+func (m *mockModelRepo) ToggleDisabled(_ context.Context, id int64, disabled bool) error {
+	for i := range m.models {
+		if m.models[i].ID == id {
+			m.models[i].Disabled = disabled
+			return nil
+		}
+	}
+	return nil
+}
+
 // --- Mock TagRepository ---
 
 type mockTagRepo struct {

@@ -14,8 +14,18 @@ type Settings struct {
 	MaxRetries     int    `json:"max_retries"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
 	MaxTokens      int    `json:"max_tokens"`
-	EncryptionKey  string `json:"encryption_key,omitempty"`
-	AdminPassword  string `json:"admin_password,omitempty"`
+
+	CircuitBreakerEnabled             bool `json:"circuit_breaker_enabled"`
+	CircuitBreakerModelThreshold      int  `json:"circuit_breaker_model_threshold"`
+	CircuitBreakerModelWindowSec      int  `json:"circuit_breaker_model_window_sec"`
+	CircuitBreakerModelCooldownSec    int  `json:"circuit_breaker_model_cooldown_sec"`
+	CircuitBreakerProviderThreshold   int  `json:"circuit_breaker_provider_threshold"`
+	CircuitBreakerProviderWindowSec   int  `json:"circuit_breaker_provider_window_sec"`
+	CircuitBreakerProviderCooldownSec int  `json:"circuit_breaker_provider_cooldown_sec"`
+	CircuitBreakerProviderMinModels   int  `json:"circuit_breaker_provider_min_models"`
+
+	EncryptionKey string `json:"encryption_key,omitempty"`
+	AdminPassword string `json:"admin_password,omitempty"`
 }
 
 type Config struct {
@@ -103,12 +113,20 @@ func (c *Config) load() {
 	data, err := os.ReadFile(c.path)
 	if err != nil {
 		c.settings = Settings{
-			RTKEnabled:     true,
-			CavemanEnabled: true,
-			LogLevel:       "info",
-			MaxRetries:     2,
-			TimeoutSeconds: 300,
-			MaxTokens:      8192,
+			RTKEnabled:                       true,
+			CavemanEnabled:                   true,
+			LogLevel:                         "info",
+			MaxRetries:                       2,
+			TimeoutSeconds:                   300,
+			MaxTokens:                        8192,
+			CircuitBreakerEnabled:            true,
+			CircuitBreakerModelThreshold:     5,
+			CircuitBreakerModelWindowSec:     300,
+			CircuitBreakerModelCooldownSec:   600,
+			CircuitBreakerProviderThreshold:  10,
+			CircuitBreakerProviderWindowSec:  300,
+			CircuitBreakerProviderCooldownSec: 600,
+			CircuitBreakerProviderMinModels:  2,
 		}
 		return
 	}

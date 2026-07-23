@@ -18,7 +18,7 @@ type AnthropicClient struct {
 
 func NewAnthropicClient() *AnthropicClient {
 	return &AnthropicClient{
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		httpClient: &http.Client{Timeout: 5 * time.Minute},
 	}
 }
 
@@ -38,7 +38,7 @@ func setClaudeHeaders(httpReq *http.Request, apiKey, sessionId string) {
 	httpReq.Header.Set("X-Stainless-Lang", "js")
 	httpReq.Header.Set("X-Stainless-Arch", "arm64")
 	httpReq.Header.Set("X-Stainless-Os", "MacOS")
-	httpReq.Header.Set("X-Stainless-Timeout", "15")
+	httpReq.Header.Set("X-Stainless-Timeout", "600")
 	httpReq.Header.Set("X-Claude-Code-Session-Id", sessionId)
 }
 
@@ -149,6 +149,7 @@ func (c *AnthropicClient) ChatCompletion(baseURL, apiKey string, req AnthropicRe
 			StatusCode: resp.StatusCode,
 			Message:    string(respBody),
 			RetryAfter: parseRetryAfter(resp),
+			RawBody:    respBody,
 		}
 	}
 
@@ -204,6 +205,7 @@ func (c *AnthropicClient) ChatCompletionStream(baseURL, apiKey string, req Anthr
 			StatusCode: resp.StatusCode,
 			Message:    string(respBody),
 			RetryAfter: parseRetryAfter(resp),
+			RawBody:    respBody,
 		}
 	}
 

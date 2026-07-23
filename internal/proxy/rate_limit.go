@@ -1,11 +1,38 @@
 package proxy
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
 
 const defaultCooldown = 60 * time.Second
+
+const (
+	quotaCooldownDaily  = 12 * time.Hour
+	quotaCooldownWeekly = 72 * time.Hour
+)
+
+// classifyRateLimit inspects the raw 429 response body for quota exhaustion
+// keywords and returns an appropriate extended cooldown duration.
+// Returns 0 if no quota keywords found (caller uses Retry-After or default).
+func classifyRateLimit(body []byte) time.Duration {
+	if len(body) == 0 {
+		return 0
+	}
+	lower := strings.ToLower(string(body))
+	// Daily quota keywords (checked first — longer cooldown wins)
+	for _, kw := range []string{"daily", "allocation", "neurons"} {
+		if strings.Contains(lower, kw) {
+			return quotaCooldownDaily
+		}
+	}
+	// Weekly quota keywords
+	if strings.Contains(lower, "weekly") {
+		return quotaCooldownWeekly
+	}
+	return 0
+}
 
 type RateLimitTracker struct {
 	entries sync.Map // providerID (int64) -> cooldownUntil (time.Time)

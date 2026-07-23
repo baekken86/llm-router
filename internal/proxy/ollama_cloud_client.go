@@ -17,7 +17,7 @@ type OllamaCloudClient struct {
 
 func NewOllamaCloudClient() *OllamaCloudClient {
 	return &OllamaCloudClient{
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		httpClient: &http.Client{Transport: newTTFTTransport()},
 	}
 }
 

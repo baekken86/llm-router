@@ -160,3 +160,31 @@ func TestRateLimitTracker_GetStatus_CleansExpired(t *testing.T) {
 		t.Errorf("expected provider 2, got provider %d", statuses[0].ProviderID)
 	}
 }
+
+func TestClassifyRateLimit(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     []byte
+		expected time.Duration
+	}{
+		{"daily allocation", []byte("you have used up your daily free allocation"), quotaCooldownDaily},
+		{"neurons exceeded", []byte("limit: neurons exceeded"), quotaCooldownDaily},
+		{"DAILY case-insensitive", []byte("DAILY limit hit"), quotaCooldownDaily},
+		{"weekly usage limit", []byte("you have reached your weekly usage limit"), quotaCooldownWeekly},
+		{"weekly quota", []byte("weekly quota"), quotaCooldownWeekly},
+		{"generic rate limit no keyword", []byte("rate limit exceeded, try later"), 0},
+		{"empty body", []byte{}, 0},
+		{"nil body", nil, 0},
+		{"mixed case daily allocation", []byte("Daily FREE Allocation exceeded"), quotaCooldownDaily},
+		{"daily wins over weekly", []byte("daily and weekly both present"), quotaCooldownDaily},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyRateLimit(tt.body)
+			if got != tt.expected {
+				t.Errorf("classifyRateLimit(%q) = %v, want %v", tt.body, got, tt.expected)
+			}
+		})
+	}
+}

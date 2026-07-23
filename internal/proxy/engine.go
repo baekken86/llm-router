@@ -312,7 +312,11 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if providerErr.StatusCode == http.StatusTooManyRequests {
-			e.rateLimits.MarkLimited(rm.Provider.ID, providerErr.RetryAfter)
+			cooldown := providerErr.RetryAfter
+			if cooldown == 0 {
+				cooldown = classifyRateLimit(providerErr.RawBody)
+			}
+			e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
 		}
 
 		e.logRequest(RequestLog{
@@ -549,46 +553,50 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 				providerErr = &ProviderError{StatusCode: 500, Message: err.Error()}
 			}
 
-			if providerErr.StatusCode == http.StatusTooManyRequests {
-				e.rateLimits.MarkLimited(rm.Provider.ID, providerErr.RetryAfter)
+		if providerErr.StatusCode == http.StatusTooManyRequests {
+			cooldown := providerErr.RetryAfter
+			if cooldown == 0 {
+				cooldown = classifyRateLimit(providerErr.RawBody)
 			}
-
-			e.logRequest(RequestLog{
-				Type:          "proxy",
-				Timestamp:     start,
-				RequestID:     requestID,
-				VirtualModel:  req.Model,
-				ProviderName:  rm.Provider.Name,
-				ModelName:     rm.Model.Name,
-				StatusCode:    providerErr.StatusCode,
-				ErrorMessage:  providerErr.Message,
-				FallbackCount: i,
-				RetryCount:    retry,
-			})
-
-			if !shouldRetry(providerErr.StatusCode, retryOnStatus) {
-				break
-			}
+			e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
 		}
 
-		failures = append(failures, map[string]interface{}{
-			"model":    rm.Model.Name,
-			"provider": rm.Provider.Name,
-			"status":   502,
-			"message":  "request failed",
+		e.logRequest(RequestLog{
+			Type:          "proxy",
+			Timestamp:     start,
+			RequestID:     requestID,
+			VirtualModel:  req.Model,
+			ProviderName:  rm.Provider.Name,
+			ModelName:     rm.Model.Name,
+			StatusCode:    providerErr.StatusCode,
+			ErrorMessage:  providerErr.Message,
+			FallbackCount: i,
+			RetryCount:    retry,
 		})
+
+		if !shouldRetry(providerErr.StatusCode, retryOnStatus) {
+			break
+		}
 	}
 
-	e.logRequest(RequestLog{
-		Type:          "proxy",
-		Status:        "failed",
-		Timestamp:     start,
-		RequestID:     requestID,
-		VirtualModel:  req.Model,
-		StatusCode:    http.StatusBadGateway,
-		Latency:       time.Since(start),
-		ErrorMessage:  "all models failed",
+	failures = append(failures, map[string]interface{}{
+		"model":    rm.Model.Name,
+		"provider": rm.Provider.Name,
+		"status":   502,
+		"message":  "request failed",
 	})
+}
+
+e.logRequest(RequestLog{
+	Type:          "proxy",
+	Status:        "failed",
+	Timestamp:     start,
+	RequestID:     requestID,
+	VirtualModel:  req.Model,
+	StatusCode:    http.StatusBadGateway,
+	Latency:       time.Since(start),
+	ErrorMessage:  "all models failed",
+})
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadGateway)
@@ -1106,7 +1114,11 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 			}
 
 			if providerErr.StatusCode == http.StatusTooManyRequests {
-				e.rateLimits.MarkLimited(rm.Provider.ID, providerErr.RetryAfter)
+				cooldown := providerErr.RetryAfter
+				if cooldown == 0 {
+					cooldown = classifyRateLimit(providerErr.RawBody)
+				}
+				e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
 			}
 
 			e.logRequest(RequestLog{
@@ -1396,7 +1408,11 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 			}
 
 			if providerErr.StatusCode == http.StatusTooManyRequests {
-				e.rateLimits.MarkLimited(rm.Provider.ID, providerErr.RetryAfter)
+				cooldown := providerErr.RetryAfter
+				if cooldown == 0 {
+					cooldown = classifyRateLimit(providerErr.RawBody)
+				}
+				e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
 			}
 
 			e.logRequest(RequestLog{

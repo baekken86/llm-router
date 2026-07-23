@@ -287,7 +287,7 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 		}
 		for _, ref := range refs {
 			provider, err := s.providerRepo.GetByName(ctx, ref.Provider)
-			if err != nil || provider == nil {
+			if err != nil || provider == nil || provider.Disabled {
 				continue
 			}
 			m, err := s.modelRepo.GetByProviderAndName(ctx, provider.ID, ref.Model)
@@ -391,7 +391,7 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 			if err != nil {
 				return nil, err
 			}
-			if provider == nil {
+			if provider == nil || provider.Disabled {
 				continue
 			}
 
@@ -425,6 +425,9 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 
 		var includeResolved []ResolvedModel
 		for _, inc := range includes {
+			if inc.provider.Disabled {
+				continue
+			}
 			key := inc.provider.Name + "/" + inc.model.Name
 			if existing[key] {
 				continue
@@ -617,7 +620,7 @@ func (s *virtualModelService) applyIncludeModels(ctx context.Context, resolved [
 		}
 
 		provider, err := s.providerRepo.GetByName(ctx, ref.Provider)
-		if err != nil || provider == nil {
+		if err != nil || provider == nil || provider.Disabled {
 			continue
 		}
 		m, err := s.modelRepo.GetByProviderAndName(ctx, provider.ID, ref.Model)

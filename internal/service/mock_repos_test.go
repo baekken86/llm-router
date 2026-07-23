@@ -145,6 +145,31 @@ func (m *mockModelRepo) ToggleDisabled(_ context.Context, id int64, disabled boo
 	return nil
 }
 
+func (m *mockModelRepo) ListEnabled(_ context.Context) ([]models.Model, error) {
+	var result []models.Model
+	for _, mod := range m.models {
+		if !mod.Disabled {
+			result = append(result, mod)
+		}
+	}
+	return result, nil
+}
+
+func (m *mockModelRepo) DisableByProviderExcept(_ context.Context, providerID int64, names []string) (int64, error) {
+	nameSet := make(map[string]bool, len(names))
+	for _, n := range names {
+		nameSet[n] = true
+	}
+	var count int64
+	for i := range m.models {
+		if m.models[i].ProviderID == providerID && !nameSet[m.models[i].Name] && !m.models[i].Disabled {
+			m.models[i].Disabled = true
+			count++
+		}
+	}
+	return count, nil
+}
+
 // --- Mock TagRepository ---
 
 type mockTagRepo struct {

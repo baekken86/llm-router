@@ -28,6 +28,7 @@ func (h *ProviderHandler) Routes() chi.Router {
 	r.Put("/{id}", h.Update)
 	r.Delete("/{id}", h.Delete)
 	r.Post("/{id}/discover", h.Discover)
+	r.Post("/discover-all", h.DiscoverAll)
 	return r
 }
 
@@ -153,6 +154,20 @@ func (h *ProviderHandler) Discover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	p, err := h.providerService.GetByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if p == nil {
+		writeError(w, http.StatusNotFound, "provider not found")
+		return
+	}
+	if p.Disabled {
+		writeError(w, http.StatusBadRequest, "provider is disabled")
+		return
+	}
+
 	models, err := h.modelService.Discover(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -160,4 +175,37 @@ func (h *ProviderHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, models)
+}
+
+func (h *ProviderHandler) DiscoverAll(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	providers, err := h.providerService.List(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	type providerResult struct {
+		ID        int64           `json:"id"`
+		Name      string          `json:"name"`
+		Models    []models.Model  `json:"models"`
+		Error     string          `json:"error,omitempty"`
+	}
+
+	var results []providerResult
+	for _, p := range providers {
+		if p.Disabled {
+			continue
+		}
+		pr := providerResult{ID: p.ID, Name: p.Name}
+		discovered, err := h.modelService.Discover(ctx, p.ID)
+		if err != nil {
+			pr.Error = err.Error()
+		} else {
+			pr.Models = discovered
+		}
+		results = append(results, pr)
+	}
+
+	writeJSON(w, http.StatusOK, results)
 }

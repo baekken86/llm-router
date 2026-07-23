@@ -272,11 +272,9 @@ func createPredefinedModels(ctx context.Context, modelRepo repository.ModelRepos
 		"claude-code": {
 			"claude-opus-4-6",
 			"claude-sonnet-4-6",
-			"claude-4.5-haiku",
 			"claude-sonnet-5",
 			"claude-opus-4-7",
 			"claude-opus-4-8",
-			"claude-fable-5-(with-fallback)",
 		},
 		"cloudflare": {
 			"@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
@@ -302,11 +300,8 @@ func createPredefinedModels(ctx context.Context, modelRepo repository.ModelRepos
 
 	created := 0
 	for _, name := range modelNames {
-		m := &models.Model{
-			ProviderID: provider.ID,
-			Name:       name,
-		}
-		if err := modelRepo.Create(ctx, m); err != nil {
+		m, err := modelRepo.Upsert(ctx, provider.ID, name)
+		if err != nil {
 			continue
 		}
 
@@ -319,6 +314,11 @@ func createPredefinedModels(ctx context.Context, modelRepo repository.ModelRepos
 
 		created++
 		fmt.Printf("  + %s\n", name)
+	}
+
+	deactivated, _ := modelRepo.DisableByProviderExcept(ctx, provider.ID, modelNames)
+	if deactivated > 0 {
+		fmt.Printf("⚠ %d stale predefined models deactivated\n", deactivated)
 	}
 
 	fmt.Printf("✓ Created %d predefined models\n", created)

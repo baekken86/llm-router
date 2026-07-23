@@ -14,8 +14,10 @@ type ModelRepository interface {
 	GetByProviderAndName(ctx context.Context, providerID int64, name string) (*models.Model, error)
 	ListByProvider(ctx context.Context, providerID int64) ([]models.Model, error)
 	ListAll(ctx context.Context) ([]models.Model, error)
+	ListEnabled(ctx context.Context) ([]models.Model, error)
 	Delete(ctx context.Context, id int64) error
 	Upsert(ctx context.Context, providerID int64, name string) (*models.Model, error)
+	DisableByProviderExcept(ctx context.Context, providerID int64, names []string) (int64, error)
 	ToggleDisabled(ctx context.Context, id int64, disabled bool) error
 }
 
@@ -111,6 +113,26 @@ func (r *sqliteModelRepo) ListAll(ctx context.Context) ([]models.Model, error) {
 	return result, nil
 }
 
+func (r *sqliteModelRepo) ListEnabled(ctx context.Context) ([]models.Model, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, provider_id, name, disabled, created_at FROM models WHERE disabled = 0 ORDER BY provider_id, name`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list enabled models: %w", err)
+	}
+	defer rows.Close()
+
+	var result []models.Model
+	for rows.Next() {
+		var m models.Model
+		if err := rows.Scan(&m.ID, &m.ProviderID, &m.Name, &m.Disabled, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan model: %w", err)
+		}
+		result = append(result, m)
+	}
+	return result, nil
+}
+
 func (r *sqliteModelRepo) Delete(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM models WHERE id = ?`, id)
 	if err != nil {
@@ -141,4 +163,41 @@ func (r *sqliteModelRepo) ToggleDisabled(ctx context.Context, id int64, disabled
 		return fmt.Errorf("toggle model disabled: %w", err)
 	}
 	return nil
+}
+
+func (r *sqliteModelRepo) DisableByProviderExcept(ctx context.Context, providerID int64, names []string) (int64, error) {
+	if len(names) == 0 {
+		result, err := r.db.ExecContext(ctx,
+			`UPDATE models SET disabled = 1 WHERE provider_id = ? AND disabled = 0`, providerID,
+		)
+		if err != nil {
+			return 0, fmt.Errorf("disable all models: %w", err)
+		}
+		count, err := result.RowsAffected()
+		return count, err
+	}
+
+	query := `UPDATE models SET disabled = 1 WHERE provider_id = ? AND disabled = 0 AND name NOT IN (` + placeholders(len(names)) + `)`
+	args := []interface{}{providerID}
+	for _, name := range names {
+		args = append(args, name)
+	}
+
+	result, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("disable stale models: %w", err)
+	}
+	count, err := result.RowsAffected()
+	return count, err
+}
+
+func placeholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	result := "?"
+	for i := 1; i < n; i++ {
+		result += ", ?"
+	}
+	return result
 }

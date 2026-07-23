@@ -149,6 +149,7 @@ func (c *AnthropicClient) ChatCompletion(baseURL, apiKey string, req AnthropicRe
 			StatusCode: resp.StatusCode,
 			Message:    string(respBody),
 			RetryAfter: parseRetryAfter(resp),
+			RawBody:    respBody,
 		}
 	}
 
@@ -204,6 +205,7 @@ func (c *AnthropicClient) ChatCompletionStream(baseURL, apiKey string, req Anthr
 			StatusCode: resp.StatusCode,
 			Message:    string(respBody),
 			RetryAfter: parseRetryAfter(resp),
+			RawBody:    respBody,
 		}
 	}
 

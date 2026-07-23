@@ -11,13 +11,22 @@ import (
 	"time"
 )
 
+// newTTFTTransport returns an HTTP transport with no TTFT cap.
+// Reasoning models can hold the response for tens of seconds before
+// the first body byte arrives, and enforcing a 15s ResponseHeaderTimeout
+// was breaking long-running/reasoning requests. The overall request
+// timeout is enforced by the http.Server's WriteTimeout (5m) instead.
+func newTTFTTransport() *http.Transport {
+	return &http.Transport{}
+}
+
 type OpenAIClient struct {
 	httpClient *http.Client
 }
 
 func NewOpenAIClient() *OpenAIClient {
 	return &OpenAIClient{
-		httpClient: &http.Client{Timeout: 5 * time.Minute},
+		httpClient: &http.Client{Transport: newTTFTTransport()},
 	}
 }
 
@@ -34,6 +43,7 @@ type ChatCompletionRequest struct {
 	Stream         bool           `json:"stream,omitempty"`
 	StreamOptions  *StreamOptions `json:"stream_options,omitempty"`
 	Tools          []Tool         `json:"tools,omitempty"`
+	ToolChoice     interface{}    `json:"tool_choice,omitempty"`
 	Stop           []string       `json:"stop,omitempty"`
 	ReasoningEffort *string       `json:"reasoning_effort,omitempty"`
 }
@@ -154,6 +164,7 @@ func (c *OpenAIClient) ChatCompletion(baseURL, apiKey string, req ChatCompletion
 			StatusCode: resp.StatusCode,
 			Message:    string(respBody),
 			RetryAfter: parseRetryAfter(resp),
+			RawBody:    respBody,
 		}
 	}
 
@@ -195,6 +206,7 @@ func (c *OpenAIClient) ChatCompletionStream(baseURL, apiKey string, req ChatComp
 			StatusCode: resp.StatusCode,
 			Message:    string(respBody),
 			RetryAfter: parseRetryAfter(resp),
+			RawBody:    respBody,
 		}
 	}
 
@@ -237,6 +249,7 @@ type ProviderError struct {
 	StatusCode int
 	Message    string
 	RetryAfter time.Duration
+	RawBody    []byte
 }
 
 func (e *ProviderError) Error() string {

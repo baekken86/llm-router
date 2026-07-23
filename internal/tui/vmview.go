@@ -28,6 +28,7 @@ type RawModelInfo struct {
 	GlobalMetadata    map[string]string
 	ID                int64
 	MappingTargetName string
+	Disabled          bool
 }
 
 type VirtualModelInfo struct {
@@ -311,6 +312,9 @@ func (m VMViewModel) viewRawModels() string {
 
 			line := "    " + cursor
 			modelDisplay := trunc(rm.Name, 20)
+			if rm.Disabled {
+				modelDisplay = MutedStyle.Render(modelDisplay)
+			}
 			if rm.MappingTargetName != "" {
 				modelDisplay += MutedStyle.Render(fmt.Sprintf(" [→ %s]", rm.MappingTargetName))
 			}
@@ -789,6 +793,8 @@ func FetchVMDataLocal(vmRepo repository.VirtualModelRepository, modelRepo reposi
 			return VMViewMsg{}
 		}
 
+		allModels, _ := modelRepo.ListEnabled(ctx)
+
 		var items []VirtualModelInfo
 		for _, vm := range vms {
 			var filterExpr models.FilterNode
@@ -801,7 +807,6 @@ func FetchVMDataLocal(vmRepo repository.VirtualModelRepository, modelRepo reposi
 				json.Unmarshal(vm.SortExpr, &sortExpr)
 			}
 
-			allModels, _ := modelRepo.ListAll(ctx)
 			var resolved []ResolvedModelInfo
 
 			for _, m := range allModels {
@@ -904,14 +909,15 @@ func FetchRawModelsLocal(modelRepo repository.ModelRepository, tagRepo repositor
 							}
 						}
 					}
-					rawModels[provider.Name] = append(rawModels[provider.Name], RawModelInfo{
-						Name:              m.Name,
-						Effort:            effort,
-						Tags:              map[string]string{},
-						GlobalMetadata:    gm,
-						ID:                m.ID,
-						MappingTargetName: targetName,
-					})
+				rawModels[provider.Name] = append(rawModels[provider.Name], RawModelInfo{
+					Name:              m.Name,
+					Effort:            effort,
+					Tags:              map[string]string{},
+					GlobalMetadata:    gm,
+					ID:                m.ID,
+					MappingTargetName: targetName,
+					Disabled:          m.Disabled,
+				})
 				}
 			} else {
 				// Not-mapped path: per-effort tags + global metadata
@@ -934,13 +940,14 @@ func FetchRawModelsLocal(modelRepo repository.ModelRepository, tagRepo repositor
 						}
 					}
 
-					rawModels[provider.Name] = append(rawModels[provider.Name], RawModelInfo{
-						Name:           m.Name,
-						Effort:         effort,
-						Tags:           tagMap,
-						GlobalMetadata: gm,
-						ID:             m.ID,
-					})
+				rawModels[provider.Name] = append(rawModels[provider.Name], RawModelInfo{
+					Name:           m.Name,
+					Effort:         effort,
+					Tags:           tagMap,
+					GlobalMetadata: gm,
+					ID:             m.ID,
+					Disabled:       m.Disabled,
+				})
 				}
 			}
 		}
@@ -1143,6 +1150,7 @@ func FetchRawModels(client *APIClient) tea.Cmd {
 				GlobalMetadata:    gm,
 				ID:                m.ModelID,
 				MappingTargetName: mappingTarget,
+				Disabled:          m.Disabled,
 			})
 		}
 

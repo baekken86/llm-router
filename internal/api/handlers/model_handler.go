@@ -24,6 +24,7 @@ func (h *ModelHandler) Routes() chi.Router {
 	r.Get("/{id}", h.GetByID)
 	r.Put("/{id}/tags", h.SetTags)
 	r.Get("/{id}/tags", h.GetTags)
+	r.Put("/{id}/disabled", h.ToggleDisabled)
 	r.Delete("/{id}", h.Delete)
 	return r
 }
@@ -113,4 +114,37 @@ func (h *ModelHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *ModelHandler) ToggleDisabled(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	m, err := h.modelService.GetByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if m == nil {
+		writeError(w, http.StatusNotFound, "model not found")
+		return
+	}
+
+	var req struct {
+		Disabled bool `json:"disabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.modelService.ToggleDisabled(r.Context(), id, req.Disabled); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, m)
 }

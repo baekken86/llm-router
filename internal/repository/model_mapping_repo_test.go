@@ -30,6 +30,7 @@ func setupMappingTestDB(t *testing.T) *sql.DB {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
 			name TEXT NOT NULL,
+			disabled INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL DEFAULT (datetime('now')),
 			UNIQUE(provider_id, name)
 		)`,

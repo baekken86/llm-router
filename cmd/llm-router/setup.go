@@ -255,15 +255,14 @@ func updateProviderKey(ctx context.Context, providerService service.ProviderServ
 func discoverModels(ctx context.Context, modelService service.ModelService, provider *models.Provider, logger *slog.Logger) {
 	fmt.Printf("\nDiscovering models from %s...\n", provider.Name)
 
-	models, err := modelService.Discover(ctx, provider.ID)
+	deactivated, err := modelService.Discover(ctx, provider.ID)
 	if err != nil {
 		logger.Warn("discovery failed (you can add models manually)", "error", err)
 		return
 	}
 
-	fmt.Printf("✓ Found %d models\n", len(models))
-	for _, m := range models {
-		fmt.Printf("  - %s\n", m.Name)
+	if deactivated > 0 {
+		fmt.Printf("⚠ %d stale models deactivated\n", deactivated)
 	}
 }
 

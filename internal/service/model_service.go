@@ -25,7 +25,7 @@ type ModelEffortEntry struct {
 }
 
 type ModelService interface {
-	Discover(ctx context.Context, providerID int64) ([]models.Model, error)
+	Discover(ctx context.Context, providerID int64) (int64, error)
 	ListByProvider(ctx context.Context, providerID int64) ([]models.Model, error)
 	ListAll(ctx context.Context) ([]ModelEffortEntry, error)
 	GetByID(ctx context.Context, id int64) (*models.Model, error)
@@ -68,13 +68,13 @@ type openAIModelsResponse struct {
 	} `json:"data"`
 }
 
-func (s *modelService) Discover(ctx context.Context, providerID int64) ([]models.Model, error) {
+func (s *modelService) Discover(ctx context.Context, providerID int64) (int64, error) {
 	provider, err := s.providerRepo.GetByID(ctx, providerID)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	if provider == nil {
-		return nil, fmt.Errorf("provider not found: %d", providerID)
+		return 0, fmt.Errorf("provider not found: %d", providerID)
 	}
 
 	var apiKey string
@@ -83,20 +83,19 @@ func (s *modelService) Discover(ctx context.Context, providerID int64) ([]models
 	} else {
 		apiKey, err = s.provService.DecryptAPIKey(provider.APIKeyEncrypted)
 		if err != nil {
-			return nil, fmt.Errorf("decrypt api key: %w", err)
+			return 0, fmt.Errorf("decrypt api key: %w", err)
 		}
 	}
 
 	modelNames, err := fetchModels(provider.BaseURL, apiKey, provider.APIType)
 	if err != nil {
-		return nil, fmt.Errorf("fetch models: %w", err)
+		return 0, fmt.Errorf("fetch models: %w", err)
 	}
 
-	var discovered []models.Model
 	for _, name := range modelNames {
 		m, err := s.modelRepo.Upsert(ctx, providerID, name)
 		if err != nil {
-			return nil, fmt.Errorf("upsert model %s: %w", name, err)
+			return 0, fmt.Errorf("upsert model %s: %w", name, err)
 		}
 
 		if s.globalMetaRepo != nil {
@@ -107,11 +106,14 @@ func (s *modelService) Discover(ctx context.Context, providerID int64) ([]models
 				}
 			}
 		}
-
-		discovered = append(discovered, *m)
 	}
 
-	return discovered, nil
+	deactivated, err := s.modelRepo.DisableByProviderExcept(ctx, providerID, modelNames)
+	if err != nil {
+		return 0, fmt.Errorf("disable stale models: %w", err)
+	}
+
+	return deactivated, nil
 }
 
 func (s *modelService) ToggleDisabled(ctx context.Context, id int64, disabled bool) error {

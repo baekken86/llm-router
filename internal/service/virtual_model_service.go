@@ -259,7 +259,7 @@ func (s *virtualModelService) resolveLeafModels(ctx context.Context, vm *models.
 // resolveModelsFiltered resolves all models matching filter, applies sort and include_models.
 // Shared by resolveLeafModels and resolveFilterSource.
 func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter models.FilterNode, sortExpr models.SortExpr, includeModels json.RawMessage) ([]ResolvedModel, error) {
-	allModels, err := s.modelRepo.ListAll(ctx)
+	allModels, err := s.modelRepo.ListEnabled(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list models: %w", err)
 	}

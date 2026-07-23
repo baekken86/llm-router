@@ -45,6 +45,19 @@
     }
   }
 
+  async function syncModels(id, name) {
+    try {
+      const result = await apiFetch(`/api/v1/providers/${id}/discover`, { method: 'POST' });
+      if (result.deactivated > 0) {
+        addToast(`${name}: ${result.deactivated} stale models deactivated`, 'success');
+      } else {
+        addToast(`${name}: all models up to date`, 'success');
+      }
+    } catch (e) {
+      addToast(e.message, 'error');
+    }
+  }
+
   async function updateCostType(id, costType) {
     try {
       await apiFetch(`/api/v1/status/${id}/metadata`, {
@@ -118,6 +131,12 @@
                 <option value="subscription">Subscription</option>
                 <option value="api-creds">API Credits</option>
               </select>
+              <button
+                class="px-2 py-1 text-xs bg-gray-800 text-gray-300 rounded hover:bg-gray-700 hover:text-white transition"
+                onclick={() => syncModels(p.id, p.name)}
+              >
+                Sync
+              </button>
               <button
                 class="px-2 py-1 text-xs bg-gray-800 text-gray-300 rounded hover:bg-gray-700 hover:text-white transition"
                 onclick={() => toggleDisabled(p.id, !p.disabled)}

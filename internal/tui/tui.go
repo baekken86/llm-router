@@ -215,6 +215,26 @@ func ToggleProviderCmd(apiClient *APIClient, providerID int64, disabled bool) te
 	}
 }
 
+type ModelToggleMsg struct {
+	ModelID  int64
+	Disabled bool
+	Err      error
+}
+
+func ToggleModelDisabledCmd(apiClient *APIClient, modelID int64, disabled bool) tea.Cmd {
+	return func() tea.Msg {
+		err := apiClient.ToggleModelDisabled(modelID, disabled)
+		return ModelToggleMsg{ModelID: modelID, Disabled: disabled, Err: err}
+	}
+}
+
+func ToggleModelDisabledLocalCmd(modelRepo repository.ModelRepository, modelID int64, disabled bool) tea.Cmd {
+	return func() tea.Msg {
+		err := modelRepo.ToggleDisabled(context.Background(), modelID, disabled)
+		return ModelToggleMsg{ModelID: modelID, Disabled: disabled, Err: err}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -438,6 +458,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+		case "x":
+			if m.tab == TabVM && m.vmView.modelTab == ModelTabRaw {
+				if !m.vmView.pickerMode {
+					rm := m.vmView.SelectedRawModel()
+					if rm != nil {
+						if m.apiClient != nil {
+							return m, ToggleModelDisabledCmd(m.apiClient, rm.ID, !rm.Disabled)
+						} else if m.modelRepo != nil {
+							return m, ToggleModelDisabledLocalCmd(m.modelRepo, rm.ID, !rm.Disabled)
+						}
+					}
+				}
+			}
 		}
 
 	case VMViewMsg:
@@ -479,6 +512,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case StatusToggleMsg:
 		m.status, _ = m.status.Update(msg)
+		return m, nil
+
+	case ModelToggleMsg:
+		if msg.Err == nil {
+			if m.apiClient != nil {
+				return m, FetchRawModels(m.apiClient)
+			} else if m.modelRepo != nil {
+				return m, FetchRawModelsLocal(m.modelRepo, m.tagRepo, m.providerRepo, m.mappingRepo, m.globalMetaRepo)
+			}
+		}
 		return m, nil
 	}
 
@@ -573,7 +616,7 @@ func (m Model) renderFooter() string {
 	} else if m.tab == TabMappings {
 		help = HelpStyle.Render("↑/↓: navigate  d: delete mapping  r: refresh  tab: switch view  q: quit")
 	} else if m.tab == TabVM && m.vmView.modelTab == ModelTabRaw {
-		help = HelpStyle.Render("↑/↓: navigate  m: map model  M: unmap  ←/→: switch to Virtual  tab: switch view  r: refresh  q: quit")
+		help = HelpStyle.Render("↑/↓: navigate  m: map model  M: unmap  x: toggle disable  ←/→: switch to Virtual  tab: switch view  r: refresh  q: quit")
 	} else if m.tab == TabVM && m.vmView.detailMode {
 		help = HelpStyle.Render("↑/↓: navigate  enter: select  esc: back  ←/→: switch tab  tab: switch view  q: quit")
 	} else if m.tab == TabVM {

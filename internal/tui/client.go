@@ -67,6 +67,7 @@ type ModelEffortResponse struct {
 	ProviderID        int64             `json:"provider_id"`
 	ProviderName      string            `json:"provider_name"`
 	ReasoningEffort   string            `json:"reasoning_effort"`
+	Disabled          bool              `json:"disabled"`
 	Tags              map[string]string `json:"tags"`
 	GlobalMetadata    map[string]string `json:"global_metadata"`
 	MappingTargetName *string           `json:"mapping_target_name,omitempty"`
@@ -200,6 +201,27 @@ func (c *APIClient) ToggleProvider(providerID int64, disabled bool) error {
 
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("toggle provider returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func (c *APIClient) ToggleModelDisabled(modelID int64, disabled bool) error {
+	body := fmt.Sprintf(`{"disabled":%t}`, disabled)
+	req, err := http.NewRequest("PUT", fmt.Sprintf("%s/api/v1/models/%d/disabled", c.baseURL, modelID), strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("toggle model disabled returned %d", resp.StatusCode)
 	}
 	return nil
 }

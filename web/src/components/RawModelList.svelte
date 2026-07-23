@@ -13,6 +13,7 @@
   let expandedProviders = $state({});
   let pickerModelId = $state(null);
   let unmapConfirmId = $state(null);
+  let refreshing = $state(false);
 
   function abbrevKey(key) {
     return key;
@@ -33,10 +34,18 @@
 
   const providers = $derived(Object.keys(grouped).sort());
 
-  const modelCount = $derived(() => {
+  const modelCount = $derived.by(() => {
     const seen = new Set();
     for (const m of models) {
       seen.add(m.model_id);
+    }
+    return seen.size;
+  });
+
+  const enabledModelCount = $derived.by(() => {
+    const seen = new Set();
+    for (const m of models) {
+      if (!m.disabled) seen.add(m.model_id);
     }
     return seen.size;
   });
@@ -107,6 +116,46 @@
     }
   }
 
+  async function toggleDisabled(modelId, disabled) {
+    try {
+      await apiFetch(`/api/v1/models/${modelId}/disabled`, {
+        method: 'PUT',
+        body: { disabled }
+      });
+      models = models.map(m =>
+        m.model_id === modelId ? { ...m, disabled } : m
+      );
+      addToast(disabled ? 'Model disabled' : 'Model enabled', 'success');
+    } catch (e) {
+      addToast(e.message, 'error');
+    }
+  }
+
+  async function refreshAll() {
+    refreshing = true;
+    try {
+      const results = await apiFetch('/api/v1/providers/discover-all', { method: 'POST' });
+      let totalDeactivated = 0;
+      for (const r of results) {
+        if (r.error) {
+          addToast(`${r.name}: ${r.error}`, 'error');
+        } else {
+          totalDeactivated += r.deactivated;
+        }
+      }
+      if (totalDeactivated > 0) {
+        addToast(`Refreshed ${results.length} providers — ${totalDeactivated} stale models deactivated`, 'success');
+      } else {
+        addToast(`Refreshed ${results.length} providers — all models up to date`, 'success');
+      }
+      await load();
+    } catch (e) {
+      addToast(e.message, 'error');
+    } finally {
+      refreshing = false;
+    }
+  }
+
   async function load() {
     loading = true;
     try {
@@ -134,8 +183,17 @@
 
 <div>
   <div class="flex items-center justify-between mb-6">
-    <h2 class="text-xl font-bold text-gray-100">Raw Models</h2>
-    <span class="text-sm text-gray-500">{models.length} rows across {providers.length} providers ({modelCount()} models)</span>
+    <div class="flex items-center gap-4">
+      <h2 class="text-xl font-bold text-gray-100">Raw Models</h2>
+      <button
+        class="px-3 py-1.5 text-sm bg-gray-800 text-gray-300 rounded hover:bg-gray-700 hover:text-white transition disabled:opacity-50 disabled:cursor-not-allowed"
+        onclick={refreshAll}
+        disabled={refreshing}
+      >
+        {refreshing ? 'Refreshing...' : 'Refresh All'}
+      </button>
+    </div>
+    <span class="text-sm text-gray-500">{models.length} rows across {providers.length} providers ({enabledModelCount} / {modelCount} models active)</span>
   </div>
 
   {#if loading}
@@ -145,6 +203,8 @@
   {:else}
     <div class="space-y-4">
       {#each providers as provider}
+        {@const providerModels = grouped[provider]}
+        {@const providerEnabledCount = providerModels.filter(m => !m.disabled).length}
         <div class="bg-gray-900 border border-gray-800 rounded-lg">
           <div
             class="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-850"
@@ -153,7 +213,7 @@
             <div class="flex items-center gap-3">
               <span class="text-gray-500">{expandedProviders[provider] ? '▼' : '▶'}</span>
               <span class="font-medium text-emerald-400">{provider}</span>
-              <span class="text-xs text-gray-500">{grouped[provider].length} rows</span>
+              <span class="text-xs text-gray-500">{providerEnabledCount} / {providerModels.length} active</span>
             </div>
           </div>
           {#if expandedProviders[provider]}
@@ -165,6 +225,7 @@
                       <th class="text-left pr-3 py-1">model</th>
                       <th class="text-left pr-3 py-1">effort</th>
                       <th class="text-left pr-3 py-1">mapping</th>
+                      <th class="text-left pr-3 py-1 w-16">status</th>
                       {#each columns as col}
                         <th class="text-right pr-3 py-1">{col.abbrev}</th>
                       {/each}
@@ -172,11 +233,11 @@
                   </thead>
                   <tbody>
                     {#each grouped[provider] as m}
-                      <tr class="border-b border-gray-850 hover:bg-gray-850/50">
+                      <tr class="border-b border-gray-850 hover:bg-gray-850/50 {m.disabled ? 'opacity-40' : ''}">
                         <td class="text-left pr-3 py-1">
                           <a
                             href="#"
-                            class="text-emerald-400 hover:text-emerald-300 no-underline"
+                            class="text-emerald-400 hover:text-emerald-300 no-underline {m.disabled ? 'line-through' : ''}"
                             onclick={(e) => { e.preventDefault(); onEditMetadata(m.provider_name, m.model_name, m.reasoning_effort); }}
                           >{m.model_name}</a>
                         </td>
@@ -209,6 +270,15 @@
                               onclick={() => pickerModelId = m.model_id}
                             >🔗 map</button>
                           {/if}
+                        </td>
+                        <td class="text-left pr-3 py-1">
+                          <button
+                            class="text-xs px-2 py-0.5 rounded transition {m.disabled ? 'bg-gray-800 text-gray-500 hover:text-emerald-400' : 'bg-emerald-900/50 text-emerald-400 hover:text-red-400'}"
+                            onclick={() => toggleDisabled(m.model_id, !m.disabled)}
+                            title={m.disabled ? 'Enable model' : 'Disable model'}
+                          >
+                            {m.disabled ? 'enable' : 'disable'}
+                          </button>
                         </td>
                         {#each columns as col}
                           <td class="text-right pr-3 py-1 text-gray-300">{getTagValue(m, col.key)}</td>

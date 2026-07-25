@@ -88,6 +88,8 @@
   });
 
   function getTagValue(entry, colKey) {
+    const override = getOverrideForCell(entry, colKey);
+    if (override !== undefined) return override;
     if (colKey.startsWith('mc.')) {
       const raw = colKey.slice(3);
       return entry.tags?.[raw] || '-';

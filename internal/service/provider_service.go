@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/chris/llm-router/internal/models"
 	"github.com/chris/llm-router/internal/repository"
@@ -135,6 +136,20 @@ func (s *providerService) Update(ctx context.Context, id int64, req models.Updat
 	}
 	if req.Disabled != nil {
 		p.Disabled = *req.Disabled
+		if *req.Disabled && req.Duration != nil {
+			dur, err := models.ParseDuration(*req.Duration)
+			if err != nil {
+				return nil, fmt.Errorf("invalid duration: %w", err)
+			}
+			if dur > 0 {
+				t := time.Now().Add(dur)
+				p.DisabledUntil = &t
+			} else {
+				p.DisabledUntil = nil
+			}
+		} else if !*req.Disabled {
+			p.DisabledUntil = nil
+		}
 	}
 
 	if err := s.repo.Update(ctx, p); err != nil {

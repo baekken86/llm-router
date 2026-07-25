@@ -20,6 +20,7 @@ type Provider struct {
 	APIKeyEncrypted string             `json:"-"`
 	AccountID       string             `json:"account_id,omitempty"`
 	Disabled        bool               `json:"disabled"`
+	DisabledUntil   *time.Time         `json:"disabled_until,omitempty"`
 	Metadata        []ProviderMetadata `json:"metadata,omitempty"`
 	CreatedAt       time.Time          `json:"created_at"`
 	UpdatedAt       time.Time          `json:"updated_at"`
@@ -49,6 +50,7 @@ type UpdateProviderRequest struct {
 	APIKey   *string            `json:"api_key,omitempty"`
 	Metadata *map[string]string `json:"metadata,omitempty"`
 	Disabled *bool              `json:"disabled,omitempty"`
+	Duration *string            `json:"duration,omitempty"`
 }
 
 type OAuthToken struct {

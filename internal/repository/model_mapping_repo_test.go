@@ -31,6 +31,7 @@ func setupMappingTestDB(t *testing.T) *sql.DB {
 			provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
 			name TEXT NOT NULL,
 			disabled INTEGER NOT NULL DEFAULT 0,
+			disabled_until TIMESTAMP NULL,
 			created_at TEXT NOT NULL DEFAULT (datetime('now')),
 			UNIQUE(provider_id, name)
 		)`,

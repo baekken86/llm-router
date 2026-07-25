@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/chris/llm-router/internal/proxy"
 )
@@ -68,6 +69,7 @@ type ModelEffortResponse struct {
 	ProviderName      string            `json:"provider_name"`
 	ReasoningEffort   string            `json:"reasoning_effort"`
 	Disabled          bool              `json:"disabled"`
+	DisabledUntil     *time.Time        `json:"disabled_until,omitempty"`
 	Tags              map[string]string `json:"tags"`
 	GlobalMetadata    map[string]string `json:"global_metadata"`
 	MappingTargetName *string           `json:"mapping_target_name,omitempty"`
@@ -116,17 +118,18 @@ func (c *APIClient) GetStats() (*StatsResponse, error) {
 }
 
 type ProviderStatusResponse struct {
-	ID               int64  `json:"id"`
-	Name             string `json:"name"`
-	RateLimited      bool   `json:"rate_limited"`
-	RetryIn          string `json:"retry_in,omitempty"`
-	OAuthConfigured  bool   `json:"oauth_configured"`
-	OAuthExpired     bool   `json:"oauth_expired,omitempty"`
-	OAuthExpiresAt   string `json:"oauth_expires_at,omitempty"`
-	OAuthEmail       string `json:"oauth_email,omitempty"`
-	APIKeyConfigured bool   `json:"api_key_configured"`
-	BaseURL          string `json:"base_url"`
-	Disabled         bool   `json:"disabled"`
+	ID               int64      `json:"id"`
+	Name             string     `json:"name"`
+	RateLimited      bool       `json:"rate_limited"`
+	RetryIn          string     `json:"retry_in,omitempty"`
+	OAuthConfigured  bool       `json:"oauth_configured"`
+	OAuthExpired     bool       `json:"oauth_expired,omitempty"`
+	OAuthExpiresAt   string     `json:"oauth_expires_at,omitempty"`
+	OAuthEmail       string     `json:"oauth_email,omitempty"`
+	APIKeyConfigured bool       `json:"api_key_configured"`
+	BaseURL          string     `json:"base_url"`
+	Disabled         bool       `json:"disabled"`
+	DisabledUntil    *time.Time `json:"disabled_until,omitempty"`
 }
 
 type StatusResponse struct {
@@ -184,8 +187,11 @@ func (c *APIClient) GetModels() ([]ModelEffortResponse, error) {
 	return models, nil
 }
 
-func (c *APIClient) ToggleProvider(providerID int64, disabled bool) error {
+func (c *APIClient) ToggleProvider(providerID int64, disabled bool, duration string) error {
 	body := fmt.Sprintf(`{"disabled":%t}`, disabled)
+	if disabled && duration != "" {
+		body = fmt.Sprintf(`{"disabled":%t,"duration":"%s"}`, disabled, duration)
+	}
 	req, err := http.NewRequest("PUT", fmt.Sprintf("%s/api/v1/providers/%d", c.baseURL, providerID), strings.NewReader(body))
 	if err != nil {
 		return err
@@ -205,8 +211,11 @@ func (c *APIClient) ToggleProvider(providerID int64, disabled bool) error {
 	return nil
 }
 
-func (c *APIClient) ToggleModelDisabled(modelID int64, disabled bool) error {
+func (c *APIClient) ToggleModelDisabled(modelID int64, disabled bool, duration string) error {
 	body := fmt.Sprintf(`{"disabled":%t}`, disabled)
+	if disabled && duration != "" {
+		body = fmt.Sprintf(`{"disabled":%t,"duration":"%s"}`, disabled, duration)
+	}
 	req, err := http.NewRequest("PUT", fmt.Sprintf("%s/api/v1/models/%d/disabled", c.baseURL, modelID), strings.NewReader(body))
 	if err != nil {
 		return err

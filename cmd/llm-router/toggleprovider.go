@@ -18,15 +18,22 @@ func runToggleProvider(args []string) {
 	name := fs.String("name", "", "Provider name (required)")
 	enable := fs.Bool("enable", false, "Enable the provider (default: toggle)")
 	disable := fs.Bool("disable", false, "Disable the provider (default: toggle)")
+	duration := fs.String("duration", "", "Disable duration: 10m, 1h, 24h (default: indefinite)")
 	fs.Parse(args)
 
 	if *name == "" {
-		fmt.Fprintln(os.Stderr, "Usage: llm-router toggle-provider --name <name> [--enable|--disable]")
+		fmt.Fprintln(os.Stderr, "Usage: llm-router toggle-provider --name <name> [--enable|--disable] [--duration 10m|1h|24h]")
 		os.Exit(1)
 	}
 	if *enable && *disable {
 		fmt.Fprintln(os.Stderr, "Error: --enable and --disable are mutually exclusive")
 		os.Exit(1)
+	}
+	if *duration != "" {
+		if _, err := models.ParseDuration(*duration); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	database, err := db.Open(*dbPath)
@@ -66,6 +73,9 @@ func runToggleProvider(args []string) {
 	}
 
 	req := models.UpdateProviderRequest{Disabled: &newDisabled}
+	if *duration != "" && newDisabled {
+		req.Duration = duration
+	}
 	_, err = providerService.Update(ctx, provider.ID, req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to toggle provider: %v\n", err)
@@ -75,6 +85,9 @@ func runToggleProvider(args []string) {
 	state := "enabled"
 	if newDisabled {
 		state = "disabled"
+		if *duration != "" {
+			state += " for " + *duration
+		}
 	}
 	fmt.Printf("✓ Provider '%s' %s\n", *name, state)
 }

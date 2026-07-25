@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/chris/llm-router/internal/models"
 	"github.com/chris/llm-router/internal/repository"
@@ -135,7 +136,7 @@ func (m *mockModelRepo) Upsert(_ context.Context, providerID int64, name string)
 	return &mod, nil
 }
 
-func (m *mockModelRepo) ToggleDisabled(_ context.Context, id int64, disabled bool) error {
+func (m *mockModelRepo) ToggleDisabled(_ context.Context, id int64, disabled bool, _ *time.Duration) error {
 	for i := range m.models {
 		if m.models[i].ID == id {
 			m.models[i].Disabled = disabled
@@ -168,6 +169,10 @@ func (m *mockModelRepo) DisableByProviderExcept(_ context.Context, providerID in
 		}
 	}
 	return count, nil
+}
+
+func (m *mockModelRepo) ListExpiredDisabled(_ context.Context, _ time.Time) ([]int64, error) {
+	return nil, nil
 }
 
 // --- Mock TagRepository ---
@@ -273,6 +278,10 @@ func (m *mockProviderRepo) Update(_ context.Context, p *models.Provider) error {
 func (m *mockProviderRepo) Delete(_ context.Context, id int64) error {
 	delete(m.providers, id)
 	return nil
+}
+
+func (m *mockProviderRepo) ListExpiredDisabled(_ context.Context, _ time.Time) ([]int64, error) {
+	return nil, nil
 }
 
 // --- Mock ProviderMetadataRepository ---

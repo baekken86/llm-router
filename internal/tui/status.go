@@ -95,7 +95,18 @@ func (m StatusModel) View() string {
 
 		// Disabled status
 		if p.Disabled {
-			b.WriteString(fmt.Sprintf("    %s\n", MutedStyle.Render("DISABLED")))
+			disabledLabel := "DISABLED"
+			if p.DisabledUntil != nil {
+				remaining := time.Until(*p.DisabledUntil)
+				if remaining > 0 {
+					disabledLabel = "DISABLED " + formatRemaining(remaining)
+				} else {
+					disabledLabel = "DISABLED (re-enabling...)"
+				}
+			} else {
+				disabledLabel = "DISABLED (perm)"
+			}
+			b.WriteString(fmt.Sprintf("    %s\n", MutedStyle.Render(disabledLabel)))
 		} else if p.RateLimited {
 			b.WriteString(fmt.Sprintf("    %s %s\n",
 				ErrorStyle.Render("RATE LIMITED"),
@@ -167,11 +178,12 @@ func FetchStatusLocal(providerRepo repository.ProviderRepository, oauthRepo repo
 
 		var result []ProviderStatusResponse
 		for _, p := range providers {
-			ps := ProviderStatusResponse{
-				ID:       p.ID,
-				Name:     p.Name,
-				Disabled: p.Disabled,
-			}
+		ps := ProviderStatusResponse{
+			ID:            p.ID,
+			Name:          p.Name,
+			Disabled:      p.Disabled,
+			DisabledUntil: p.DisabledUntil,
+		}
 
 			if p.APIKeyEncrypted != "" {
 				ps.APIKeyConfigured = true

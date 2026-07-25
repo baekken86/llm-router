@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/chris/llm-router/internal/models"
@@ -134,14 +135,25 @@ func (h *ModelHandler) ToggleDisabled(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Disabled bool `json:"disabled"`
+		Disabled bool    `json:"disabled"`
+		Duration *string `json:"duration,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	if err := h.modelService.ToggleDisabled(r.Context(), id, req.Disabled); err != nil {
+	var duration *time.Duration
+	if req.Duration != nil {
+		d, err := models.ParseDuration(*req.Duration)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		duration = &d
+	}
+
+	if err := h.modelService.ToggleDisabled(r.Context(), id, req.Disabled, duration); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

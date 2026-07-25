@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/chris/llm-router/internal/config"
+	"github.com/chris/llm-router/internal/models"
 	"github.com/chris/llm-router/internal/proxy"
 	"github.com/chris/llm-router/internal/repository"
 )
@@ -61,6 +62,37 @@ type Model struct {
 	mappingRepo   repository.ModelMappingRepository
 	globalMetaRepo repository.GlobalMetadataRepository
 	config        *config.Config
+
+	showDurationPicker bool
+	durationCursor     int
+	durationTarget     string // "model" or "provider"
+}
+
+var durationOptions = []string{"indefinite", "10 min", "1 hour", "24 hours"}
+var durationAPIValues = map[string]string{
+	"indefinite": "",
+	"10 min":     "10m",
+	"1 hour":     "1h",
+	"24 hours":   "24h",
+}
+
+func durationToAPI(display string) string {
+	return durationAPIValues[display]
+}
+
+func formatRemaining(d time.Duration) string {
+	if d <= 0 {
+		return "0s"
+	}
+	d = d.Round(time.Second)
+	if d >= time.Hour {
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	m := int(d.Minutes())
+	s := int(d.Seconds()) % 60
+	return fmt.Sprintf("%dm%ds", m, s)
 }
 
 func New(logChan <-chan proxy.RequestLog, syslogChan <-chan string, vmRepo repository.VirtualModelRepository, modelRepo repository.ModelRepository, tagRepo repository.TagRepository, providerRepo repository.ProviderRepository, oauthRepo repository.OAuthRepository, mappingRepo repository.ModelMappingRepository, globalMetaRepo repository.GlobalMetadataRepository, cfg *config.Config, initialLogs []proxy.RequestLog, initialSyslogs []SysLogEntry, initialStats *StatsResponse) Model {
@@ -208,9 +240,9 @@ type StatusToggleMsg struct {
 	Err        error
 }
 
-func ToggleProviderCmd(apiClient *APIClient, providerID int64, disabled bool) tea.Cmd {
+func ToggleProviderCmd(apiClient *APIClient, providerID int64, disabled bool, duration string) tea.Cmd {
 	return func() tea.Msg {
-		err := apiClient.ToggleProvider(providerID, disabled)
+		err := apiClient.ToggleProvider(providerID, disabled, duration)
 		return StatusToggleMsg{ProviderID: providerID, Disabled: disabled, Err: err}
 	}
 }
@@ -221,16 +253,16 @@ type ModelToggleMsg struct {
 	Err      error
 }
 
-func ToggleModelDisabledCmd(apiClient *APIClient, modelID int64, disabled bool) tea.Cmd {
+func ToggleModelDisabledCmd(apiClient *APIClient, modelID int64, disabled bool, duration string) tea.Cmd {
 	return func() tea.Msg {
-		err := apiClient.ToggleModelDisabled(modelID, disabled)
+		err := apiClient.ToggleModelDisabled(modelID, disabled, duration)
 		return ModelToggleMsg{ModelID: modelID, Disabled: disabled, Err: err}
 	}
 }
 
-func ToggleModelDisabledLocalCmd(modelRepo repository.ModelRepository, modelID int64, disabled bool) tea.Cmd {
+func ToggleModelDisabledLocalCmd(modelRepo repository.ModelRepository, modelID int64, disabled bool, duration *time.Duration) tea.Cmd {
 	return func() tea.Msg {
-		err := modelRepo.ToggleDisabled(context.Background(), modelID, disabled)
+		err := modelRepo.ToggleDisabled(context.Background(), modelID, disabled, duration)
 		return ModelToggleMsg{ModelID: modelID, Disabled: disabled, Err: err}
 	}
 }
@@ -428,9 +460,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "d":
-			if m.tab == TabStatus && m.apiClient != nil {
+			if m.showDurationPicker {
+				// handled below
+			} else if m.tab == TabStatus {
 				if p := m.status.SelectedProvider(); p != nil {
-					return m, ToggleProviderCmd(m.apiClient, p.ID, !p.Disabled)
+					m.showDurationPicker = true
+					m.durationTarget = "provider"
+					m.durationCursor = 1 // default "10 min"
+					return m, nil
 				}
 			} else if m.tab == TabMappings && m.mappingRepo != nil {
 				selected := m.mappingsView.Selected()
@@ -459,17 +496,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "x":
-			if m.tab == TabVM && m.vmView.modelTab == ModelTabRaw {
+			if m.showDurationPicker {
+				// handled below
+			} else if m.tab == TabVM && m.vmView.modelTab == ModelTabRaw {
 				if !m.vmView.pickerMode {
 					rm := m.vmView.SelectedRawModel()
 					if rm != nil {
+						m.showDurationPicker = true
+						m.durationTarget = "model"
+						m.durationCursor = 1 // default "10 min"
+						return m, nil
+					}
+				}
+			}
+		}
+
+		if m.showDurationPicker {
+			switch msg.String() {
+			case "left":
+				m.durationCursor--
+				if m.durationCursor < 0 {
+					m.durationCursor = len(durationOptions) - 1
+				}
+				return m, nil
+			case "right":
+				m.durationCursor++
+				if m.durationCursor >= len(durationOptions) {
+					m.durationCursor = 0
+				}
+				return m, nil
+			case "enter":
+				m.showDurationPicker = false
+				dur := durationToAPI(durationOptions[m.durationCursor])
+				if m.durationTarget == "provider" {
+					if p := m.status.SelectedProvider(); p != nil && m.apiClient != nil {
+						return m, ToggleProviderCmd(m.apiClient, p.ID, !p.Disabled, dur)
+					}
+				} else if m.durationTarget == "model" {
+					rm := m.vmView.SelectedRawModel()
+					if rm != nil {
+						var durParsed *time.Duration
+						if dur != "" {
+							d, _ := models.ParseDuration(dur)
+							durParsed = &d
+						}
 						if m.apiClient != nil {
-							return m, ToggleModelDisabledCmd(m.apiClient, rm.ID, !rm.Disabled)
+							return m, ToggleModelDisabledCmd(m.apiClient, rm.ID, !rm.Disabled, dur)
 						} else if m.modelRepo != nil {
-							return m, ToggleModelDisabledLocalCmd(m.modelRepo, rm.ID, !rm.Disabled)
+							return m, ToggleModelDisabledLocalCmd(m.modelRepo, rm.ID, !rm.Disabled, durParsed)
 						}
 					}
 				}
+				return m, nil
+			case "esc":
+				m.showDurationPicker = false
+				return m, nil
 			}
 		}
 
@@ -555,6 +636,20 @@ func (m Model) View() string {
 		b.WriteString(m.settingsView.View())
 	}
 
+	if m.showDurationPicker {
+		b.WriteString("\n")
+		b.WriteString(MutedStyle.Render("  Duration: "))
+		for i, opt := range durationOptions {
+			if i == m.durationCursor {
+				b.WriteString(SuccessStyle.Render("["+opt+"]"))
+			} else {
+				b.WriteString(MutedStyle.Render(" " + opt + " "))
+			}
+			b.WriteString("  ")
+		}
+		b.WriteString(MutedStyle.Render("  enter: confirm  esc: cancel"))
+	}
+
 	b.WriteString(m.renderFooter())
 
 	return b.String()
@@ -611,12 +706,14 @@ func (m Model) renderHeader() string {
 
 func (m Model) renderFooter() string {
 	help := HelpStyle.Render("tab/shift+tab: switch view  ↑/↓: scroll  ←/→: horizontal scroll  pgup/pgdown: jump  r: reset stats  q: quit")
-	if m.tab == TabStatus {
-		help = HelpStyle.Render("↑/↓: navigate  d: toggle disable  c: clear rate limit  r: refresh  tab: switch view  q: quit")
+	if m.showDurationPicker {
+		help = HelpStyle.Render("←/→: select duration  enter: confirm  esc: cancel")
+	} else if m.tab == TabStatus {
+		help = HelpStyle.Render("↑/↓: navigate  d: disable with duration  c: clear rate limit  r: refresh  tab: switch view  q: quit")
 	} else if m.tab == TabMappings {
 		help = HelpStyle.Render("↑/↓: navigate  d: delete mapping  r: refresh  tab: switch view  q: quit")
 	} else if m.tab == TabVM && m.vmView.modelTab == ModelTabRaw {
-		help = HelpStyle.Render("↑/↓: navigate  m: map model  M: unmap  x: toggle disable  ←/→: switch to Virtual  tab: switch view  r: refresh  q: quit")
+		help = HelpStyle.Render("↑/↓: navigate  m: map model  M: unmap  x: disable with duration  ←/→: switch to Virtual  tab: switch view  r: refresh  q: quit")
 	} else if m.tab == TabVM && m.vmView.detailMode {
 		help = HelpStyle.Render("↑/↓: navigate  enter: select  esc: back  ←/→: switch tab  tab: switch view  q: quit")
 	} else if m.tab == TabVM {

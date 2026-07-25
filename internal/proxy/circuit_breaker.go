@@ -161,7 +161,7 @@ func (cb *CircuitBreaker) disableModel(ctx context.Context, providerID int64, mo
 		return
 	}
 
-	if err := cb.modelRepo.ToggleDisabled(ctx, model.ID, true); err != nil {
+	if err := cb.modelRepo.ToggleDisabled(ctx, model.ID, true, nil); err != nil {
 		cb.logger.Error("circuit breaker: failed to disable model", "model", modelName, "provider_id", providerID, "error", err)
 		return
 	}
@@ -232,7 +232,7 @@ func (cb *CircuitBreaker) reenableExpired() {
 			return true
 		}
 
-		if err := cb.modelRepo.ToggleDisabled(ctx, model.ID, false); err != nil {
+		if err := cb.modelRepo.ToggleDisabled(ctx, model.ID, false, nil); err != nil {
 			cb.logger.Error("circuit breaker: failed to re-enable model", "model", mName, "provider_id", pID, "error", err)
 			return true
 		}

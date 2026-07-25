@@ -3,12 +3,13 @@ package models
 import "time"
 
 type Model struct {
-	ID         int64     `json:"id"`
-	ProviderID int64     `json:"provider_id"`
-	Name       string    `json:"name"`
-	Disabled   bool      `json:"disabled"`
-	Tags       []Tag     `json:"tags,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID            int64      `json:"id"`
+	ProviderID    int64      `json:"provider_id"`
+	Name          string     `json:"name"`
+	Disabled      bool       `json:"disabled"`
+	DisabledUntil *time.Time `json:"disabled_until,omitempty"`
+	Tags          []Tag      `json:"tags,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 type Tag struct {

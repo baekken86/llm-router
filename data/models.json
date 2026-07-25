@@ -198,7 +198,7 @@
       "has_reasoning_effort": false
     },
     {
-      "name": "claude-fable-5-(with-fallback)",
+      "name": "claude-fable-5",
       "intelligence": 60.0,
       "coding": 76.5,
       "hallucination": 55.0,
@@ -281,6 +281,8 @@
     },
     {
       "name": "claude-sonnet-4-6",
+      "cost_per_1m_input": 3.0,
+      "cost_per_1m_output": 15.0,
       "has_reasoning_effort": true,
       "efforts": {
         "max": {
@@ -288,7 +290,9 @@
           "coding": 63.0,
           "hallucination": 46.0,
           "cost_per_task": 1.14,
-          "speed": 56.0
+          "speed": 56.0,
+          "cost_per_1m_input": 3.0,
+          "cost_per_1m_output": 15.0
         }
       }
     },
@@ -308,37 +312,27 @@
     },
     {
       "name": "claude-sonnet-5",
-      "cost_per_1m_input": 2.0,
-      "cost_per_1m_output": 10.0,
+      "cost_per_1m_input": 3.0,
+      "cost_per_1m_output": 15.0,
       "has_reasoning_effort": true,
       "efforts": {
         "high": {
-          "speed": 67.0,
-          "cost_per_1m_input": 2.0,
-          "cost_per_1m_output": 10.0
+          "speed": 67.0
         },
-        "low": {
-          "cost_per_1m_input": 2.0,
-          "cost_per_1m_output": 10.0
-        },
+        "low": {},
         "max": {
           "intelligence": 53.0,
           "coding": 71.5,
           "hallucination": 37.0,
           "cost_per_task": 1.53,
           "speed": 72.0,
-          "cost_per_1m_input": 2.0,
-          "cost_per_1m_output": 10.0
+          "cost_per_1m_input": 3.0,
+          "cost_per_1m_output": 15.0
         },
         "medium": {
-          "speed": 56.0,
-          "cost_per_1m_input": 2.0,
-          "cost_per_1m_output": 10.0
+          "speed": 56.0
         },
-        "xhigh": {
-          "cost_per_1m_input": 2.0,
-          "cost_per_1m_output": 10.0
-        }
+        "xhigh": {}
       }
     },
     {

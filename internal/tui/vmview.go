@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -29,6 +30,7 @@ type RawModelInfo struct {
 	ID                int64
 	MappingTargetName string
 	Disabled          bool
+	DisabledUntil     *time.Time
 }
 
 type VirtualModelInfo struct {
@@ -314,6 +316,16 @@ func (m VMViewModel) viewRawModels() string {
 			modelDisplay := trunc(rm.Name, 20)
 			if rm.Disabled {
 				modelDisplay = MutedStyle.Render(modelDisplay)
+				if rm.DisabledUntil != nil {
+					remaining := time.Until(*rm.DisabledUntil)
+					if remaining > 0 {
+						modelDisplay += MutedStyle.Render(" " + formatRemaining(remaining))
+					} else {
+						modelDisplay += MutedStyle.Render(" ...")
+					}
+				} else {
+					modelDisplay += MutedStyle.Render(" (perm)")
+				}
 			}
 			if rm.MappingTargetName != "" {
 				modelDisplay += MutedStyle.Render(fmt.Sprintf(" [→ %s]", rm.MappingTargetName))
@@ -917,6 +929,7 @@ func FetchRawModelsLocal(modelRepo repository.ModelRepository, tagRepo repositor
 					ID:                m.ID,
 					MappingTargetName: targetName,
 					Disabled:          m.Disabled,
+					DisabledUntil:     m.DisabledUntil,
 				})
 				}
 			} else {
@@ -947,6 +960,7 @@ func FetchRawModelsLocal(modelRepo repository.ModelRepository, tagRepo repositor
 					GlobalMetadata: gm,
 					ID:             m.ID,
 					Disabled:       m.Disabled,
+					DisabledUntil:  m.DisabledUntil,
 				})
 				}
 			}
@@ -1151,6 +1165,7 @@ func FetchRawModels(client *APIClient) tea.Cmd {
 				ID:                m.ModelID,
 				MappingTargetName: mappingTarget,
 				Disabled:          m.Disabled,
+				DisabledUntil:     m.DisabledUntil,
 			})
 		}
 

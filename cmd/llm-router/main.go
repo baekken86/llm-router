@@ -56,9 +56,12 @@ func main() {
 		case "import":
 			runImportCmd(os.Args[2:])
 			return
-		case "toggle-provider":
-			runToggleProvider(os.Args[2:])
-			return
+	case "toggle-provider":
+		runToggleProvider(os.Args[2:])
+		return
+	case "toggle-model":
+		runToggleModel(os.Args[2:])
+		return
 		case "create-key":
 			runCreateKey(os.Args[2:])
 			return
@@ -82,6 +85,7 @@ Usage:
   llm-router discover             Discover models from a provider
   llm-router tag                  Set metadata tags on models
   llm-router toggle-provider      Enable/disable a provider
+  llm-router toggle-model         Enable/disable a model
   llm-router create-key [flags]   Create a new proxy API key
   llm-router admin [flags]        Connect to running proxy as admin viewer
   llm-router import [flags]       Import CSV metadata
@@ -130,6 +134,13 @@ Toggle-provider flags:
   --name string                   Provider name (required)
   --enable                        Enable the provider
   --disable                       Disable the provider
+  --duration string               Disable duration: 10m, 1h, 24h (default: indefinite)
+
+Toggle-model flags:
+  --name string                   Model name (required)
+  --enable                        Enable the model
+  --disable                       Disable the model
+  --duration string               Disable duration: 10m, 1h, 24h (default: indefinite)
 
 Import flags:
   --file string                   CSV file path (required)
@@ -348,6 +359,9 @@ func runProxy(args []string) {
 	engine.GetCaveman().SetEnabled(settings.CavemanEnabled)
 	engine.ApplySettings(settings.MaxRetries, settings.TimeoutSeconds, settings.MaxTokens)
 
+	expirer := proxy.NewReenableExpirer(modelRepo, providerRepo, logger)
+	go expirer.Start(context.Background())
+
 	cb := proxy.NewCircuitBreaker(modelRepo, providerRepo, logger)
 	cb.ApplySettings(proxy.CircuitBreakerSettings{
 		Enabled:             settings.CircuitBreakerEnabled,
@@ -433,6 +447,7 @@ func runProxy(args []string) {
 	}
 
 	logger.Info("shutting down...")
+	expirer.Stop()
 	cb.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

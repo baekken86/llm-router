@@ -19,6 +19,7 @@ type ModelEffortEntry struct {
 	ProviderName      string            `json:"provider_name"`
 	ReasoningEffort   string            `json:"reasoning_effort"`
 	Disabled          bool              `json:"disabled"`
+	DisabledUntil     *time.Time        `json:"disabled_until,omitempty"`
 	Tags              map[string]string `json:"tags"`
 	GlobalMetadata    map[string]string `json:"global_metadata"`
 	MappingTargetName *string           `json:"mapping_target_name,omitempty"`
@@ -32,7 +33,7 @@ type ModelService interface {
 	SetTags(ctx context.Context, modelID int64, tags map[string]string) error
 	GetTags(ctx context.Context, modelID int64) ([]models.Tag, error)
 	Delete(ctx context.Context, id int64) error
-	ToggleDisabled(ctx context.Context, id int64, disabled bool) error
+	ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration) error
 }
 
 type modelService struct {
@@ -116,8 +117,8 @@ func (s *modelService) Discover(ctx context.Context, providerID int64) (int64, e
 	return deactivated, nil
 }
 
-func (s *modelService) ToggleDisabled(ctx context.Context, id int64, disabled bool) error {
-	return s.modelRepo.ToggleDisabled(ctx, id, disabled)
+func (s *modelService) ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration) error {
+	return s.modelRepo.ToggleDisabled(ctx, id, disabled, duration)
 }
 
 func fetchModels(baseURL, apiKey string, apiType models.APIType) ([]string, error) {
@@ -282,6 +283,7 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelEffortEntry, error) 
 					ProviderName:      providerName,
 					ReasoningEffort:   effort,
 					Disabled:          m.Disabled,
+					DisabledUntil:     m.DisabledUntil,
 					Tags:              targetModelTags,
 					GlobalMetadata:    gm,
 					MappingTargetName: mappingTarget,
@@ -324,6 +326,7 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelEffortEntry, error) 
 					ProviderName:    providerName,
 					ReasoningEffort: effort,
 					Disabled:        m.Disabled,
+					DisabledUntil:   m.DisabledUntil,
 					Tags:            tagMap,
 					GlobalMetadata:  gm,
 				})

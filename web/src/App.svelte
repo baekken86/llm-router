@@ -205,7 +205,7 @@
       </a>
     </nav>
 
-    <main class="max-w-6xl mx-auto p-6">
+    <main class="max-w-[90rem] mx-auto p-6">
       {#if mainTab === 'raw' && view === 'metadata'}
         <ModelMetadataEdit
           provider={metaProvider}

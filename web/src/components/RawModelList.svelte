@@ -99,6 +99,21 @@
     return entry.global_metadata?.[colKey] || entry.tags?.[colKey] || '-';
   }
 
+  function getOverrideForCell(entry, colKey) {
+    const effortKey = `${entry.model_id}:${entry.reasoning_effort}`;
+    const overrides = allOverrides[effortKey];
+    if (!overrides) return undefined;
+    const raw = colKey.startsWith('mc.') ? colKey.slice(3) : colKey.startsWith('m.') ? colKey.slice(2) : colKey;
+    return raw in overrides ? overrides[raw] : undefined;
+  }
+
+  function isCellOverriddenStatic(entry, colKey) {
+    const imported = getImportedValue(entry, colKey);
+    const override = getOverrideForCell(entry, colKey);
+    if (override === undefined) return false;
+    return String(override) !== String(imported ?? '');
+  }
+
   function toggleProvider(provider) {
     expandedProviders[provider] = !expandedProviders[provider];
   }
@@ -244,19 +259,24 @@
 
   function handleCellInput(entry, colKey, value) {
     const key = overrideKey(entry, colKey);
-    const imported = getImportedValue(entry, colKey);
-    if (value === (imported ?? '')) {
-      const next = { ...editValues };
-      delete next[key];
-      editValues = next;
-    } else {
-      editValues = { ...editValues, [key]: value };
-    }
+    editValues = { ...editValues, [key]: value };
   }
 
   const editHasChanges = $derived.by(() => {
-    for (const key of Object.keys(editValues)) {
-      return true;
+    for (const m of models) {
+      for (const col of columns) {
+        const key = overrideKey(m, col.key);
+        const edited = key in editValues ? editValues[key] : undefined;
+        const effortKey = `${m.model_id}:${m.reasoning_effort}`;
+        const overrides = allOverrides[effortKey];
+        const raw = col.key.startsWith('mc.') ? col.key.slice(3) : col.key.startsWith('m.') ? col.key.slice(2) : col.key;
+        const existingOverride = overrides && raw in overrides ? overrides[raw] : undefined;
+        const imported = getImportedValue(m, col.key);
+        const effective = edited !== undefined ? edited : existingOverride;
+        if (String(effective ?? '') !== String(imported ?? '')) {
+          return true;
+        }
+      }
     }
     return false;
   });
@@ -265,30 +285,12 @@
     overrideLoading = true;
     editMode = true;
     editValues = {};
-    const effortKeys = new Map();
-    for (const m of models) {
-      const k = `${m.model_id}:${m.reasoning_effort}`;
-      if (!effortKeys.has(k)) effortKeys.set(k, m);
-    }
-    const results = await Promise.allSettled(
-      [...effortKeys.entries()].map(async ([k, m]) => {
-        const data = await apiFetch(`/api/v1/models/${m.model_id}/overrides?effort=${encodeURIComponent(m.reasoning_effort)}`);
-        return [k, data.overrides || {}];
-      })
-    );
-    const overrides = {};
-    for (const r of results) {
-      if (r.status === 'fulfilled') {
-        overrides[r.value[0]] = r.value[1];
-      }
-    }
-    allOverrides = overrides;
+    await loadAllOverrides();
     overrideLoading = false;
   }
 
   function exitEditMode() {
     editMode = false;
-    allOverrides = {};
     editValues = {};
   }
 
@@ -328,7 +330,7 @@
       addToast(`${successCount} model${successCount > 1 ? 's' : ''} overrides saved`, 'success');
     }
     exitEditMode();
-    await load();
+    await loadAllOverrides();
   }
 
   async function load() {
@@ -338,11 +340,33 @@
       for (const p of providers) {
         expandedProviders[p] = true;
       }
+      await loadAllOverrides();
     } catch (e) {
       addToast(e.message, 'error');
     } finally {
       loading = false;
     }
+  }
+
+  async function loadAllOverrides() {
+    const effortKeys = new Map();
+    for (const m of models) {
+      const k = `${m.model_id}:${m.reasoning_effort}`;
+      if (!effortKeys.has(k)) effortKeys.set(k, m);
+    }
+    const results = await Promise.allSettled(
+      [...effortKeys.entries()].map(async ([k, m]) => {
+        const data = await apiFetch(`/api/v1/models/${m.model_id}/overrides?effort=${encodeURIComponent(m.reasoning_effort)}`);
+        return [k, data.overrides || {}];
+      })
+    );
+    const overrides = {};
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        overrides[r.value[0]] = r.value[1];
+      }
+    }
+    allOverrides = overrides;
   }
 
   onMount(() => {
@@ -558,7 +582,8 @@
                               {/if}
                             </td>
                           {:else}
-                            <td class="text-right pr-3 py-1 text-gray-300">{getTagValue(m, col.key)}</td>
+                            {@const overridden = isCellOverriddenStatic(m, col.key)}
+                            <td class="text-right pr-3 py-1 {overridden ? 'text-amber-200 bg-amber-900/20' : 'text-gray-300'}">{getTagValue(m, col.key)}</td>
                           {/if}
                         {/each}
                       </tr>

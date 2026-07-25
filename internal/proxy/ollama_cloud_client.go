@@ -260,6 +260,7 @@ func (c *OllamaCloudClient) ChatCompletion(baseURL, apiKey string, req ChatCompl
 			StatusCode: resp.StatusCode,
 			Message:    string(respBody),
 			RetryAfter: parseRetryAfter(resp),
+			RawBody:    respBody,
 		}
 	}
 
@@ -300,6 +301,7 @@ func (c *OllamaCloudClient) ChatCompletionStream(baseURL, apiKey string, req Cha
 			StatusCode: resp.StatusCode,
 			Message:    string(respBody),
 			RetryAfter: parseRetryAfter(resp),
+			RawBody:    respBody,
 		}
 	}
 

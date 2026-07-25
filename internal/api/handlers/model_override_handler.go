@@ -70,9 +70,16 @@ func (h *ModelOverrideHandler) SetOverrides(w http.ResponseWriter, r *http.Reque
 	}
 
 	for k, v := range body.Tags {
-		if err := h.repo.Set(r.Context(), id, effort, k, v); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
+		if v == "" {
+			if err := h.repo.Delete(r.Context(), id, effort, k); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		} else {
+			if err := h.repo.Set(r.Context(), id, effort, k, v); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 		}
 	}
 

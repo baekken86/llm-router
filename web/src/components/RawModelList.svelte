@@ -1,7 +1,8 @@
 <script>
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/api.js';
-  import { addToast } from '../lib/stores.js';
+  import { addToast, metadataFields } from '../lib/stores.js';
+  import { getFieldType, getFieldValues } from '../lib/fields.js';
   import ModelPicker from './ModelPicker.svelte';
 
   let {
@@ -14,6 +15,16 @@
   let pickerModelId = $state(null);
   let unmapConfirmId = $state(null);
   let refreshing = $state(false);
+  let showDisableModal = $state(false);
+  let disableTarget = $state(null);
+  let disableDuration = $state('10m');
+  let now = $state(Date.now());
+
+  let editMode = $state(false);
+  let allOverrides = $state({});
+  let editValues = $state({});
+  let savingOverrides = $state(false);
+  let overrideLoading = $state(false);
 
   function abbrevKey(key) {
     return key;
@@ -116,19 +127,60 @@
     }
   }
 
-  async function toggleDisabled(modelId, disabled) {
+  async function toggleDisabled(modelId, disabled, duration) {
     try {
+      const body = { disabled };
+      if (disabled && duration) body.duration = duration;
       await apiFetch(`/api/v1/models/${modelId}/disabled`, {
         method: 'PUT',
-        body: { disabled }
+        body
       });
-      models = models.map(m =>
-        m.model_id === modelId ? { ...m, disabled } : m
-      );
+      models = models.map(m => {
+        if (m.model_id === modelId) {
+          const updated = { ...m, disabled };
+          if (disabled && duration) {
+            const ms = { '10m': 600000, '1h': 3600000, '24h': 86400000 }[duration];
+            updated.disabled_until = new Date(Date.now() + ms).toISOString();
+          } else if (disabled) {
+            updated.disabled_until = null;
+          } else {
+            updated.disabled_until = null;
+          }
+          return updated;
+        }
+        return m;
+      });
       addToast(disabled ? 'Model disabled' : 'Model enabled', 'success');
     } catch (e) {
       addToast(e.message, 'error');
     }
+  }
+
+  function openDisableModal(model) {
+    disableTarget = model;
+    disableDuration = '10m';
+    showDisableModal = true;
+  }
+
+  async function confirmDisable() {
+    if (!disableTarget) return;
+    const dur = disableDuration === 'indefinite' ? null : disableDuration;
+    await toggleDisabled(disableTarget.model_id, true, dur);
+    showDisableModal = false;
+    disableTarget = null;
+  }
+
+  function formatRemaining(disabledUntil) {
+    if (!disabledUntil) return 'permanent';
+    const remaining = new Date(disabledUntil) - now;
+    if (remaining <= 0) return 're-enabling...';
+    const mins = Math.floor(remaining / 60000);
+    const secs = Math.floor((remaining % 60000) / 1000);
+    if (mins >= 60) {
+      const hrs = Math.floor(mins / 60);
+      return `${hrs}h ${mins % 60}m`;
+    }
+    return `${mins}m ${secs}s`;
   }
 
   async function refreshAll() {
@@ -156,6 +208,129 @@
     }
   }
 
+  function getImportedValue(entry, colKey) {
+    if (colKey.startsWith('mc.')) {
+      const raw = colKey.slice(3);
+      return entry.tags?.[raw] ?? null;
+    }
+    if (colKey.startsWith('m.')) {
+      const raw = colKey.slice(2);
+      return entry.global_metadata?.[raw] ?? null;
+    }
+    return null;
+  }
+
+  function overrideKey(entry, colKey) {
+    return `${entry.model_id}:${entry.reasoning_effort}:${colKey}`;
+  }
+
+  function getEffectiveValue(entry, colKey) {
+    const key = overrideKey(entry, colKey);
+    if (key in editValues) return editValues[key];
+    const effortKey = `${entry.model_id}:${entry.reasoning_effort}`;
+    const overrides = allOverrides[effortKey];
+    if (overrides) {
+      const raw = colKey.startsWith('mc.') ? colKey.slice(3) : colKey.startsWith('m.') ? colKey.slice(2) : colKey;
+      if (raw in overrides) return overrides[raw];
+    }
+    return getImportedValue(entry, colKey) ?? '';
+  }
+
+  function isCellOverridden(entry, colKey) {
+    const imported = getImportedValue(entry, colKey);
+    const effective = getEffectiveValue(entry, colKey);
+    return String(effective) !== String(imported ?? '');
+  }
+
+  function handleCellInput(entry, colKey, value) {
+    const key = overrideKey(entry, colKey);
+    const imported = getImportedValue(entry, colKey);
+    if (value === (imported ?? '')) {
+      const next = { ...editValues };
+      delete next[key];
+      editValues = next;
+    } else {
+      editValues = { ...editValues, [key]: value };
+    }
+  }
+
+  const editHasChanges = $derived.by(() => {
+    for (const key of Object.keys(editValues)) {
+      return true;
+    }
+    return false;
+  });
+
+  async function enterEditMode() {
+    overrideLoading = true;
+    editMode = true;
+    editValues = {};
+    const effortKeys = new Map();
+    for (const m of models) {
+      const k = `${m.model_id}:${m.reasoning_effort}`;
+      if (!effortKeys.has(k)) effortKeys.set(k, m);
+    }
+    const results = await Promise.allSettled(
+      [...effortKeys.entries()].map(async ([k, m]) => {
+        const data = await apiFetch(`/api/v1/models/${m.model_id}/overrides?effort=${encodeURIComponent(m.reasoning_effort)}`);
+        return [k, data.overrides || {}];
+      })
+    );
+    const overrides = {};
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        overrides[r.value[0]] = r.value[1];
+      }
+    }
+    allOverrides = overrides;
+    overrideLoading = false;
+  }
+
+  function exitEditMode() {
+    editMode = false;
+    allOverrides = {};
+    editValues = {};
+  }
+
+  async function submitAllOverrides() {
+    savingOverrides = true;
+    const effortGroups = new Map();
+    for (const m of models) {
+      const groupKey = `${m.model_id}:${m.reasoning_effort}`;
+      if (!effortGroups.has(groupKey)) effortGroups.set(groupKey, { modelId: m.model_id, effort: m.reasoning_effort, changes: {} });
+    }
+    for (const [key, value] of Object.entries(editValues)) {
+      const [modelIdStr, effort, ...colParts] = key.split(':');
+      const colKey = colParts.join(':');
+      const modelId = Number(modelIdStr);
+      const groupKey = `${modelId}:${effort}`;
+      if (!effortGroups.has(groupKey)) continue;
+      const group = effortGroups.get(groupKey);
+      const raw = colKey.startsWith('mc.') ? colKey.slice(3) : colKey.startsWith('m.') ? colKey.slice(2) : colKey;
+      group.changes[raw] = value;
+    }
+    let successCount = 0;
+    let errorCount = 0;
+    const requests = [];
+    for (const group of effortGroups.values()) {
+      if (Object.keys(group.changes).length === 0) continue;
+      requests.push(
+        apiFetch(`/api/v1/models/${group.modelId}/overrides?effort=${encodeURIComponent(group.effort)}`, {
+          method: 'PUT',
+          body: { tags: group.changes }
+        }).then(() => successCount++).catch(() => errorCount++)
+      );
+    }
+    await Promise.allSettled(requests);
+    if (errorCount > 0) {
+      addToast(`${successCount} saved, ${errorCount} failed`, 'error');
+    } else if (successCount > 0) {
+      addToast(`${successCount} model${successCount > 1 ? 's' : ''} overrides saved`, 'success');
+    }
+    exitEditMode();
+    await load();
+  }
+
   async function load() {
     loading = true;
     try {
@@ -170,8 +345,36 @@
     }
   }
 
-  onMount(() => { load(); });
+  onMount(() => {
+    load();
+    const interval = setInterval(() => { now = Date.now(); }, 1000);
+    return () => clearInterval(interval);
+  });
 </script>
+
+{#if showDisableModal}
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onclick={() => showDisableModal = false}>
+    <div class="bg-gray-900 rounded-lg border border-gray-700 p-6 w-80" onclick={(e) => e.stopPropagation()}>
+      <h3 class="text-white font-medium mb-4">
+        Disable {disableTarget?.model_name}
+      </h3>
+      <label class="block text-gray-400 text-sm mb-2">Duration</label>
+      <select bind:value={disableDuration}
+              class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm">
+        <option value="indefinite">Indefinite</option>
+        <option value="10m">10 minutes</option>
+        <option value="1h">1 hour</option>
+        <option value="24h">24 hours</option>
+      </select>
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="px-3 py-1.5 text-sm text-gray-400 hover:text-white"
+                onclick={() => showDisableModal = false}>Cancel</button>
+        <button class="px-3 py-1.5 text-sm bg-amber-600 text-white rounded hover:bg-amber-500"
+                onclick={confirmDisable}>Disable</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#if pickerModelId !== null}
   <ModelPicker
@@ -188,10 +391,34 @@
       <button
         class="px-3 py-1.5 text-sm bg-gray-800 text-gray-300 rounded hover:bg-gray-700 hover:text-white transition disabled:opacity-50 disabled:cursor-not-allowed"
         onclick={refreshAll}
-        disabled={refreshing}
+        disabled={refreshing || editMode}
       >
         {refreshing ? 'Refreshing...' : 'Refresh All'}
       </button>
+      {#if editMode}
+        <button
+          class="px-3 py-1.5 text-sm bg-emerald-600 text-white rounded hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={savingOverrides || !editHasChanges}
+          onclick={submitAllOverrides}
+        >
+          {savingOverrides ? 'Saving...' : 'Submit Changes'}
+        </button>
+        <button
+          class="px-3 py-1.5 text-sm bg-gray-700 text-gray-300 rounded hover:bg-gray-600 hover:text-white transition disabled:opacity-50"
+          disabled={savingOverrides}
+          onclick={exitEditMode}
+        >
+          Cancel
+        </button>
+      {:else}
+        <button
+          class="px-3 py-1.5 text-sm bg-gray-800 text-gray-300 rounded hover:bg-gray-700 hover:text-white transition disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={overrideLoading}
+          onclick={enterEditMode}
+        >
+          {overrideLoading ? 'Loading...' : 'Edit Overrides'}
+        </button>
+      {/if}
     </div>
     <span class="text-sm text-gray-500">{models.length} rows across {providers.length} providers ({enabledModelCount} / {modelCount} models active)</span>
   </div>
@@ -235,11 +462,15 @@
                     {#each grouped[provider] as m}
                       <tr class="border-b border-gray-850 hover:bg-gray-850/50 {m.disabled ? 'opacity-40' : ''}">
                         <td class="text-left pr-3 py-1">
-                          <a
-                            href="#"
-                            class="text-emerald-400 hover:text-emerald-300 no-underline {m.disabled ? 'line-through' : ''}"
-                            onclick={(e) => { e.preventDefault(); onEditMetadata(m.provider_name, m.model_name, m.reasoning_effort); }}
-                          >{m.model_name}</a>
+                          {#if editMode}
+                            <span class="text-gray-400 {m.disabled ? 'line-through' : ''}">{m.model_name}</span>
+                          {:else}
+                            <a
+                              href="#"
+                              class="text-emerald-400 hover:text-emerald-300 no-underline {m.disabled ? 'line-through' : ''}"
+                              onclick={(e) => { e.preventDefault(); onEditMetadata(m.provider_name, m.model_name, m.reasoning_effort); }}
+                            >{m.model_name}</a>
+                          {/if}
                         </td>
                         <td class="text-left pr-3 py-1 text-gray-400">{m.reasoning_effort || '—'}</td>
                         <td class="text-left pr-3 py-1">
@@ -248,23 +479,25 @@
                               <span class="text-xs bg-blue-900/50 text-blue-300 px-2 py-0.5 rounded">
                                 → {m.mapping_target_name}
                               </span>
-                              {#if unmapConfirmId === m.model_id}
-                                <button
-                                  class="text-xs text-red-400 hover:text-red-300"
-                                  onclick={() => deleteMapping(m.model_id)}
-                                >Yes</button>
-                                <button
-                                  class="text-xs text-gray-500 hover:text-gray-300"
-                                  onclick={() => unmapConfirmId = null}
-                                >No</button>
-                              {:else}
-                                <button
-                                  class="text-xs text-gray-500 hover:text-red-400"
-                                  onclick={() => unmapConfirmId = m.model_id}
-                                >✕</button>
+                              {#if !editMode}
+                                {#if unmapConfirmId === m.model_id}
+                                  <button
+                                    class="text-xs text-red-400 hover:text-red-300"
+                                    onclick={() => deleteMapping(m.model_id)}
+                                  >Yes</button>
+                                  <button
+                                    class="text-xs text-gray-500 hover:text-gray-300"
+                                    onclick={() => unmapConfirmId = null}
+                                  >No</button>
+                                {:else}
+                                  <button
+                                    class="text-xs text-gray-500 hover:text-red-400"
+                                    onclick={() => unmapConfirmId = m.model_id}
+                                  >✕</button>
+                                {/if}
                               {/if}
                             </span>
-                          {:else}
+                          {:else if !editMode}
                             <button
                               class="text-xs text-gray-600 hover:text-emerald-400"
                               onclick={() => pickerModelId = m.model_id}
@@ -272,16 +505,61 @@
                           {/if}
                         </td>
                         <td class="text-left pr-3 py-1">
-                          <button
-                            class="text-xs px-2 py-0.5 rounded transition {m.disabled ? 'bg-gray-800 text-gray-500 hover:text-emerald-400' : 'bg-emerald-900/50 text-emerald-400 hover:text-red-400'}"
-                            onclick={() => toggleDisabled(m.model_id, !m.disabled)}
-                            title={m.disabled ? 'Enable model' : 'Disable model'}
-                          >
-                            {m.disabled ? 'enable' : 'disable'}
-                          </button>
+                          {#if !editMode}
+                            <span class="inline-flex items-center gap-1.5">
+                              <button
+                                class="text-xs px-2 py-0.5 rounded transition {m.disabled ? 'bg-gray-800 text-gray-500 hover:text-emerald-400' : 'bg-emerald-900/50 text-emerald-400 hover:text-red-400'}"
+                                onclick={() => m.disabled ? toggleDisabled(m.model_id, false) : openDisableModal(m)}
+                                title={m.disabled ? 'Enable model' : 'Disable model'}
+                              >
+                                {m.disabled ? 'enable' : 'disable'}
+                              </button>
+                              {#if m.disabled}
+                                <span class="text-xs text-amber-400/70">
+                                  {formatRemaining(m.disabled_until)}
+                                </span>
+                              {/if}
+                            </span>
+                          {/if}
                         </td>
                         {#each columns as col}
-                          <td class="text-right pr-3 py-1 text-gray-300">{getTagValue(m, col.key)}</td>
+                          {#if editMode}
+                            {@const effective = getEffectiveValue(m, col.key)}
+                            {@const overridden = isCellOverridden(m, col.key)}
+                            {@const fieldType = getFieldType($metadataFields, col.key)}
+                            {@const fieldValues = getFieldValues($metadataFields, col.key)}
+                            <td class="text-right pr-3 py-1 {overridden ? 'bg-amber-900/30' : ''}">
+                              {#if fieldValues}
+                                <select
+                                  class="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-sm text-gray-100 text-right focus:outline-none focus:border-emerald-500 {overridden ? 'border-amber-600' : ''}"
+                                  value={effective ?? ''}
+                                  onchange={(e) => handleCellInput(m, col.key, e.target.value)}
+                                >
+                                  <option value="">{overridden ? '(clear)' : '(imported)'}</option>
+                                  {#each fieldValues as val}
+                                    <option value={val}>{val}</option>
+                                  {/each}
+                                </select>
+                              {:else if fieldType === 'number'}
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  class="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-sm text-gray-100 text-right w-24 focus:outline-none focus:border-emerald-500 {overridden ? 'border-amber-600' : ''}"
+                                  value={effective ?? ''}
+                                  oninput={(e) => handleCellInput(m, col.key, e.target.value)}
+                                />
+                              {:else}
+                                <input
+                                  type="text"
+                                  class="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-sm text-gray-100 text-right w-24 focus:outline-none focus:border-emerald-500 {overridden ? 'border-amber-600' : ''}"
+                                  value={effective ?? ''}
+                                  oninput={(e) => handleCellInput(m, col.key, e.target.value)}
+                                />
+                              {/if}
+                            </td>
+                          {:else}
+                            <td class="text-right pr-3 py-1 text-gray-300">{getTagValue(m, col.key)}</td>
+                          {/if}
                         {/each}
                       </tr>
                     {/each}

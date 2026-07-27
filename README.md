@@ -1,189 +1,94 @@
 # llm-router
 
-OpenAI-compatible LLM proxy with dynamic virtual models, provider failover, and metadata-based routing.
+OpenAI-compatible LLM proxy that routes requests to the best provider using metadata, not model names.
 
-## Why llm-router?
+## What it does
 
-Most LLM proxies (OpenRouter, LiteLLM, etc.) route by model name. You configure `gpt-4o` → OpenAI, `claude-3` → Anthropic. Static.
+llm-router sits between your AI tools and LLM providers (OpenAI, Anthropic, Ollama, etc.). Instead of hardcoding "gpt-4o goes to OpenAI", you tag models with metadata like `intelligence=85`, `cost=free`, `speed=high` — then create virtual models that pick the best match at runtime.
 
-llm-router is different: **models are tagged with metadata, and virtual models select dynamically based on filters and sorting.**
+**Example:** A virtual model `smart-free` picks the cheapest model with intelligence ≥ 70. When a new model is tagged and uploaded, it's automatically included — no config changes needed.
 
-| Feature | OpenRouter / LiteLLM | llm-router |
-|---------|---------------------|------------|
-| Routing | Static model → provider mapping | Dynamic: filter by metadata, sort by priority |
-| Virtual models | No | Yes: `"smart-free"` = best free model with intel≥50 |
-| Model tagging | No | Arbitrary key-value: `intel=85`, `hallucination=12`, `cost-type=free` |
-| Metadata import | No | CSV import from benchmarks (intelligence, speed, cost) |
-| Failover | Basic retry | Silent failover through sorted model list |
-| Token tracking | Basic | Cached tokens, reasoning tokens, headroom, cost estimation |
-| UI | Web dashboard | Built-in TUI with live log + stats |
+## How it's different
 
-**Example:** Create a virtual model `smart-cheap` that always picks the cheapest model with intelligence≥70. No code changes needed when new models are added — just tag them.
+| | OpenRouter / LiteLLM | llm-router |
+|-|----------------------|------------|
+| Routing | Static: model name → provider | Dynamic: filter metadata, sort by priority |
+| Virtual models | No | Yes — `"smart-free"` = best match at runtime |
+| Model tagging | No | Any key-value pairs: `intel=85`, `cost=free` |
+| Failover | Basic retry | Silent: tries next model if one fails |
+| Token savings | No | RTK compresses tool outputs, Caveman trims verbose responses |
+| Circuit breaker | No | Auto-disables failing models/providers, re-enables after cooldown |
+| Claude Code cloaking | No | Proxies Claude Code through non-Anthropic backends |
+| Deploy | Docker / cloud | Single Go binary, SQLite database |
 
-```
-Filter: {"and":[{"key":"intel","op":"gte","value":"70"},{"key":"cost-type","op":"eq","value":"free"}]}
-Sort:   [{"key":"intel","direction":"desc"}]
-```
-
-## Quick Start
+## Quick start
 
 ```bash
+# Build
 go build -o llm-router ./cmd/llm-router
 
-# 1. Setup: initialize Claude Code + default models with tags
-./llm-router setup --db ./data/router.db
+# Set up a provider (e.g. Claude Code)
+./llm-router setup --provider claude-code
 
-# 2. Start proxy
-./llm-router proxy --port 8080 --db ./data/router.db
+# Start proxy
+./llm-router proxy --port 8080
 
-# 3. Connect Claude Code
+# Connect Claude Code
 export ANTHROPIC_BASE_URL=http://localhost:8080/v1
 claude
 ```
 
-The `setup` command creates:
-- **claude-code** provider with pre-tagged Claude models (opus, sonnet, haiku)
-- Default models with intelligence, speed, cost metadata
-
-All models are taggable via API or CSV import.
-
-## Multi-Instance
-
-Run proxy and admin dashboard separately:
+### Setup options
 
 ```bash
-# Terminal 1: Proxy (no TUI, just HTTP server)
-./llm-router proxy --port 8080 --db ./data/router.db --no-tui
-
-# Terminal 2: Admin dashboard (connects to proxy via HTTP)
-./llm-router admin --connect http://localhost:8080 --key lmr_...
-
-# Terminal 3: Another admin (multiple viewers supported)
-./llm-router admin --connect http://localhost:8080 --key lmr_...
+./llm-router setup --provider openai --key sk-...
+./llm-router setup --provider anthropic --key sk-ant-...
+./llm-router setup --provider ollama
+./llm-router setup --provider cloudflare --account-id XXX --key XXX
+./llm-router setup --provider claude-code --url https://your-custom-url  # OAuth
 ```
 
-Admin connects via HTTP — no direct DB access needed. Can run on different machines.
+## Virtual models
 
-## CLI Commands
+Create virtual models via the API:
 
-```
-llm-router [flags]              Start proxy (default, same as 'proxy')
-llm-router proxy [flags]        Start proxy server
-llm-router admin [flags]        Connect to running proxy as admin viewer
-llm-router import [flags]       Import CSV metadata
-llm-router setup [flags]        Initialize Claude Code + default models
-llm-router help                 Show help
-```
-
-### Proxy flags
-
-| Flag | Env | Default | Description |
-|------|-----|---------|-------------|
-| `--port` | `LLM_ROUTER_PORT` | `8080` | HTTP port |
-| `--db` | `LLM_ROUTER_DB` | `./data/llm-router.db` | SQLite path |
-| `--encryption-key` | `LLM_ROUTER_ENCRYPTION_KEY` | auto-generated | 32-byte hex key |
-| `--no-tui` | | `false` | Disable terminal UI |
-
-### Admin flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--connect` | `http://localhost:8080` | Proxy URL |
-| `--key` | | Proxy API key (required) |
-
-### Import flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--file` | | CSV file path (required) |
-| `--mode` | `merge` | `merge` or `replace` |
-| `--db` | `./data/llm-router.db` | SQLite path |
-
-# Create virtual model
+```bash
 curl -X POST http://localhost:8080/api/v1/virtual-models \
   -H "Authorization: Bearer <admin-key>" \
   -H "Content-Type: application/json" \
-  -d '{"name":"smart-free","filter_expr":{"and":[{"key":"cost-type","op":"eq","value":"free"},{"key":"intel","op":"gte","value":"50"}]},"sort_expr":[{"key":"intel","direction":"desc"}]}'
+  -d '{
+    "name": "smart-free",
+    "filter_expr": {
+      "and": [
+        {"key": "cost-type", "op": "eq", "value": "free"},
+        {"key": "intel", "op": "gte", "value": "50"}
+      ]
+    },
+    "sort_expr": [{"key": "intel", "direction": "desc"}]
+  }'
+```
 
-# Use it
+Then use it like any model:
+
+```bash
 curl http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer <proxy-key>" \
   -H "Content-Type: application/json" \
-  -d '{"model":"smart-free","messages":[{"role":"user","content":"Hello"}]}'
+  -d '{"model": "smart-free", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
-## Architecture
+### Filter operators
 
-```
-Client (OpenAI SDK) → /v1/chat/completions → Routing Engine → Provider A (OpenAI)
-                       model="smart-free"       ↓ fail       → Provider B (Anthropic)
-                                                ↓ retry      → Provider C (OpenAI)
-```
+| Op | Description | Example |
+|----|-------------|---------|
+| `eq` | Equals | `{"key":"cost-type","op":"eq","value":"free"}` |
+| `neq` | Not equals | `{"key":"cost-type","op":"neq","value":"paid"}` |
+| `gt` / `gte` | Greater than / or equal | `{"key":"intel","op":"gte","value":"80"}` |
+| `lt` / `lte` | Less than / or equal | `{"key":"intel","op":"lt","value":"80"}` |
+| `in` | In list | `{"key":"cost-type","op":"in","value":["free","sub"]}` |
+| `contains` | String contains | `{"key":"name","op":"contains","value":"gpt"}` |
 
-Silent failover: if the best model fails, the next one in the sorted list is tried transparently.
-
-## Claude Code Integration
-
-### Option 1: API Key (simple)
-
-```bash
-# Start proxy
-./llm-router proxy --port 8080 --db ./data/router.db
-
-# Configure Claude Code with API key
-export ANTHROPIC_BASE_URL=http://localhost:8080/v1
-export ANTHROPIC_API_KEY=lmr_dein-proxy-key
-```
-
-### Option 2: OAuth (like 9router)
-
-```bash
-# 1. Start proxy
-./llm-router proxy --port 8080 --db ./data/router.db
-
-# 2. Configure Claude Code to use your proxy
-export ANTHROPIC_BASE_URL=http://localhost:8080/v1
-
-# 3. Start Claude Code - it will open browser for auth
-claude
-# → Browser opens http://localhost:8080/v1/oauth/authorize
-# → Enter your proxy key (lmr_...)
-# → Claude Code gets OAuth token automatically
-```
-
-OAuth endpoints (compatible with Claude Code):
-- `GET /v1/oauth/authorize` — Authorization page (browser)
-- `POST /v1/oauth/token` — Token exchange
-- `POST /v1/oauth/revoke` — Token revocation
-
-### Other tools
-
-```bash
-# Cursor: Settings → Models → Advanced
-#   OpenAI API Base URL: http://localhost:8080/v1
-#   OpenAI API Key: lmr_...
-
-# Codex CLI
-export OPENAI_BASE_URL=http://localhost:8080
-export OPENAI_API_KEY=lmr_...
-```
-
-Claude Code sends Anthropic-format requests → llm-router translates and routes to any provider (OpenAI, Anthropic, etc.) → translates response back.
-
-## Metadata Filter Operators
-
-| Op | Example | Description |
-|----|---------|-------------|
-| `eq` | `{"key":"cost-type","op":"eq","value":"free"}` | Equals |
-| `neq` | `{"key":"cost-type","op":"neq","value":"free"}` | Not equals |
-| `gt` | `{"key":"intel","op":"gt","value":"80"}` | Greater than |
-| `gte` | `{"key":"intel","op":"gte","value":"80"}` | Greater or equal |
-| `lt` | `{"key":"intel","op":"lt","value":"80"}` | Less than |
-| `lte` | `{"key":"intel","op":"lte","value":"80"}` | Less or equal |
-| `in` | `{"key":"cost-type","op":"in","value":["free","sub"]}` | In list |
-| `contains` | `{"key":"name","op":"contains","value":"gpt"}` | String contains |
-
-## Sort
+### Sort
 
 ```json
 [
@@ -192,33 +97,94 @@ Claude Code sends Anthropic-format requests → llm-router translates and routes
 ]
 ```
 
-`direction`: numeric/string sort. `order`: explicit categorical priority.
+## Tags & metadata
 
-## CSV Import
-
-```csv
-model_name,key,value
-gpt-4o,intelligence,85.2
-gpt-4o,speed,78.5
-gpt-4o,cost_per_1m_input,2.50
-gpt-4o,hallucination,12
-claude-3.5-sonnet,intelligence,88.1
-```
+Tag models with any key-value pairs. Import from CSV benchmarks or set via API:
 
 ```bash
-# CLI import
+# CSV import
 ./llm-router import --file data.csv --mode merge
 
-# API import
-curl -X POST "http://localhost:8080/api/v1/import/csv?mode=merge" \
+# API — set tags on a model
+curl -X PUT http://localhost:8080/api/v1/models/:id/tags \
   -H "Authorization: Bearer <admin-key>" \
-  -H "Content-Type: text/csv" \
-  --data-binary @data.csv
+  -H "Content-Type: application/json" \
+  -d '{"tags": [{"key": "intel", "value": "85"}, {"key": "cost-type", "value": "free"}]}'
 ```
 
-## API Endpoints
+## Architecture
 
-### Management (Bearer: admin key)
+```
+Client (OpenAI SDK) → /v1/chat/completions → Routing Engine → Provider A
+                       model="smart-free"       ↓ fail       → Provider B
+                                                ↓ fail       → Provider C
+```
+
+Silent failover: if the best model fails, the next one in the sorted list is tried transparently. No client changes needed.
+
+## Integrating tools
+
+### Claude Code
+
+```bash
+# Option 1: API key
+export ANTHROPIC_BASE_URL=http://localhost:8080/v1
+export ANTHROPIC_API_KEY=lmr_...
+
+# Option 2: OAuth (browser-based)
+export ANTHROPIC_BASE_URL=http://localhost:8080/v1
+claude  # opens browser for auth
+```
+
+### Cursor / Codex CLI
+
+```bash
+export OPENAI_BASE_URL=http://localhost:8080/v1
+export OPENAI_API_KEY=lmr_...
+```
+
+## Multi-instance
+
+Run proxy and admin separately:
+
+```bash
+# Terminal 1: Proxy (headless)
+./llm-router proxy --port 8080 --no-tui
+
+# Terminal 2: Admin dashboard (connects via HTTP)
+./llm-router admin --connect http://localhost:8080 --key lmr_...
+```
+
+Multiple admin viewers can connect simultaneously.
+
+## CLI
+
+```
+llm-router                    Start proxy (default)
+llm-router proxy [flags]      Start proxy server
+llm-router admin [flags]      Connect as admin viewer
+llm-router setup [flags]      Initialize a provider
+llm-router add-provider       Add custom provider
+llm-router discover           Discover models from provider
+llm-router tag                Set model metadata
+llm-router import             Import CSV metadata
+llm-router toggle-provider    Enable/disable provider
+llm-router toggle-model       Enable/disable model
+llm-router create-key         Create proxy API key
+```
+
+### Key flags
+
+| Flag | Env | Default | Description |
+|------|-----|---------|-------------|
+| `--port` | `LLM_ROUTER_PORT` | `8080` | HTTP port |
+| `--db` | `LLM_ROUTER_DB` | `~/.local/share/llm-router/llm-router.db` | SQLite path |
+| `--encryption-key` | `LLM_ROUTER_ENCRYPTION_KEY` | auto-generated | AES key |
+| `--no-tui` | | `false` | Disable terminal UI |
+
+## API endpoints
+
+### Management (admin key)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -228,14 +194,14 @@ curl -X POST "http://localhost:8080/api/v1/import/csv?mode=merge" \
 | `PUT` | `/api/v1/models/:id/tags` | Set model tags |
 | `POST` | `/api/v1/virtual-models` | Create virtual model |
 | `GET` | `/api/v1/virtual-models` | List virtual models |
-| `GET` | `/api/v1/virtual-models/:id/resolved` | Show resolved models (filter + sort) |
+| `GET` | `/api/v1/virtual-models/:id/resolved` | Show resolved models |
 | `POST` | `/api/v1/keys` | Create proxy key |
 | `POST` | `/api/v1/import/csv` | Import CSV metadata |
-| `GET` | `/api/v1/stats` | Get aggregated statistics |
-| `GET` | `/api/v1/stats/logs` | Get recent request logs |
-| `GET` | `/api/v1/stats/logs/stream` | SSE stream of live logs |
+| `GET` | `/api/v1/stats` | Aggregated statistics |
+| `GET` | `/api/v1/stats/logs` | Recent request logs |
+| `GET` | `/api/v1/stats/logs/stream` | SSE live log stream |
 
-### Proxy (Bearer: proxy key)
+### Proxy (proxy key)
 
 | Method | Path | Format | Description |
 |--------|------|--------|-------------|
@@ -244,40 +210,17 @@ curl -X POST "http://localhost:8080/api/v1/import/csv?mode=merge" \
 | `POST` | `/v1/messages/stream` | Anthropic | Messages (streaming) |
 | `GET` | `/v1/models` | OpenAI | List virtual models |
 
-### OAuth (for Claude Code)
+## Provider types
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/v1/oauth/authorize` | Authorization page (browser) |
-| `POST` | `/v1/oauth/authorize` | Submit proxy key for auth |
-| `POST` | `/v1/oauth/token` | Token exchange / refresh |
-| `POST` | `/v1/oauth/revoke` | Revoke token |
+- `openai` — OpenAI-compatible APIs (OpenAI, Groq, Together, vLLM, etc.)
+- `anthropic` — Anthropic API (auto-translated to/from OpenAI format)
+- `cloudflare` — Cloudflare Workers AI
+- `ollama` — Local Ollama
+- `ollama-cloud` — Ollama Cloud (ollama.com)
 
-## Provider Types
+## Tech stack
 
-- `openai`: OpenAI-compatible APIs (OpenAI, Groq, Together, vLLM, etc.)
-- `anthropic`: Anthropic API (Claude models). Request/response auto-translated.
-
-## Project Structure
-
-```
-cmd/llm-router/         # Entry point
-internal/
-  api/                   # HTTP handlers, middleware, router
-  config/                # Configuration
-  db/                    # SQLite connection, migrations
-  models/                # Domain structs
-  repository/            # Data access layer
-  service/               # Business logic
-  proxy/                 # Routing engine, provider clients, format translation
-  tui/                   # Terminal UI (bubbletea)
-specs/                   # Design specs (spec-query)
-```
-
-## Development
-
-```bash
-go build ./...          # Build
-go test ./...           # Test
-go vet ./...            # Lint
-```
+- **Backend:** Go, chi router, SQLite (pure Go via modernc.org/sqlite)
+- **Frontend:** Svelte 5, Tailwind CSS 4, Vite (embedded in Go binary)
+- **TUI:** Bubble Tea + Lip Gloss
+- **Encryption:** AES-256 at rest

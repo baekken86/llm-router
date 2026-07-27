@@ -2,13 +2,13 @@
 
 OpenAI-compatible LLM proxy that routes requests to the best provider using metadata, not model names.
 
-## What it does
+## 🔍 What it does
 
 llm-router sits between your AI tools and LLM providers (OpenAI, Anthropic, Ollama, etc.). Like other proxies, it lets you group models into virtual models and use them as fallbacks. The difference: llm-router **enriches models with metadata** (intelligence, hallucination rate, cost, speed) — imported from benchmarks or set manually — and virtual models **automatically pick the best match** based on rules you define.
 
 **Example:** A virtual model `smart-free` picks the cheapest model with intelligence ≥ 70 and hallucination ≤ 15. When a new model is tagged and added, it's automatically included — no manual curation needed.
 
-## How it's different
+## ⚡ How it's different
 
 Most LLM proxies let you create virtual models, but you have to curate them by hand — pick specific models, rearrange them when priorities change, add new ones manually.
 
@@ -26,7 +26,7 @@ llm-router automates this. You tag models with metadata (from CSV benchmarks or 
 | Claude Code cloaking | No | Proxies Claude Code through non-Anthropic backends |
 | Deploy | Docker / cloud | Single Go binary, SQLite database |
 
-## Quick start
+## 🚀 Quick start
 
 ```bash
 # Build
@@ -43,7 +43,7 @@ export ANTHROPIC_BASE_URL=http://localhost:8080/v1
 claude
 ```
 
-### Setup options
+### 📦 Setup options
 
 ```bash
 ./llm-router setup --provider openai --key sk-...
@@ -53,7 +53,7 @@ claude
 ./llm-router setup --provider claude-code --url https://your-custom-url  # OAuth
 ```
 
-## Virtual models
+## 🎯 Virtual models
 
 Create virtual models via the API. Define rules that filter and sort models by metadata:
 
@@ -83,7 +83,7 @@ curl http://localhost:8080/v1/chat/completions \
   -d '{"model": "smart-free", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
-### Filter operators
+### 🔧 Filter operators
 
 | Op | Description | Example |
 |----|-------------|---------|
@@ -94,7 +94,7 @@ curl http://localhost:8080/v1/chat/completions \
 | `in` | In list | `{"key":"cost-type","op":"in","value":["free","sub"]}` |
 | `contains` | String contains | `{"key":"name","op":"contains","value":"gpt"}` |
 
-### Sort
+### 📊 Sort
 
 ```json
 [
@@ -103,7 +103,7 @@ curl http://localhost:8080/v1/chat/completions \
 ]
 ```
 
-## Tags & metadata
+## 🏷️ Tags & metadata
 
 Tag models with any key-value pairs — intelligence scores, hallucination rates, cost per task, speed ratings, or whatever matters for your use case. Import from CSV benchmarks or set via API:
 
@@ -118,7 +118,7 @@ curl -X PUT http://localhost:8080/api/v1/models/:id/tags \
   -d '{"tags": [{"key": "intelligence", "value": "85"}, {"key": "hallucination", "value": "12"}, {"key": "cost_per_task", "value": "0.30"}]}'
 ```
 
-## Architecture
+## 🏗️ Architecture
 
 ```
 Client (OpenAI SDK) → /v1/chat/completions → Routing Engine → Provider A
@@ -128,9 +128,9 @@ Client (OpenAI SDK) → /v1/chat/completions → Routing Engine → Provider A
 
 Silent failover: if the best model fails, the next one in the sorted list is tried transparently. No client changes needed.
 
-## Integrating tools
+## 🔌 Integrating tools
 
-### Claude Code
+### 🤖 Claude Code
 
 ```bash
 # Option 1: API key
@@ -142,14 +142,14 @@ export ANTHROPIC_BASE_URL=http://localhost:8080/v1
 claude  # opens browser for auth
 ```
 
-### Cursor / Codex CLI
+### ✏️ Cursor / Codex CLI
 
 ```bash
 export OPENAI_BASE_URL=http://localhost:8080/v1
 export OPENAI_API_KEY=lmr_...
 ```
 
-## Multi-instance
+## 🖥️ Multi-instance
 
 Run proxy and admin separately:
 
@@ -163,7 +163,7 @@ Run proxy and admin separately:
 
 Multiple admin viewers can connect simultaneously.
 
-## CLI
+## ⌨️ CLI
 
 ```
 llm-router                    Start proxy (default)
@@ -179,7 +179,7 @@ llm-router toggle-model       Enable/disable model
 llm-router create-key         Create proxy API key
 ```
 
-### Key flags
+### 🚩 Key flags
 
 | Flag | Env | Default | Description |
 |------|-----|---------|-------------|
@@ -188,9 +188,9 @@ llm-router create-key         Create proxy API key
 | `--encryption-key` | `LLM_ROUTER_ENCRYPTION_KEY` | auto-generated | AES key |
 | `--no-tui` | | `false` | Disable terminal UI |
 
-## API endpoints
+## 📡 API endpoints
 
-### Management (admin key)
+### 🔐 Management (admin key)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -207,7 +207,7 @@ llm-router create-key         Create proxy API key
 | `GET` | `/api/v1/stats/logs` | Recent request logs |
 | `GET` | `/api/v1/stats/logs/stream` | SSE live log stream |
 
-### Proxy (proxy key)
+### 🔑 Proxy (proxy key)
 
 | Method | Path | Format | Description |
 |--------|------|--------|-------------|
@@ -216,7 +216,7 @@ llm-router create-key         Create proxy API key
 | `POST` | `/v1/messages/stream` | Anthropic | Messages (streaming) |
 | `GET` | `/v1/models` | OpenAI | List virtual models |
 
-## Provider types
+## 🌐 Provider types
 
 - `openai` — OpenAI-compatible APIs (OpenAI, Groq, Together, vLLM, etc.)
 - `anthropic` — Anthropic API (auto-translated to/from OpenAI format)
@@ -224,7 +224,7 @@ llm-router create-key         Create proxy API key
 - `ollama` — Local Ollama
 - `ollama-cloud` — Ollama Cloud (ollama.com)
 
-## Tech stack
+## 🛠️ Tech stack
 
 - **Backend:** Go, chi router, SQLite (pure Go via modernc.org/sqlite)
 - **Frontend:** Svelte 5, Tailwind CSS 4, Vite (embedded in Go binary)

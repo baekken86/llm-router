@@ -4,18 +4,23 @@ OpenAI-compatible LLM proxy that routes requests to the best provider using meta
 
 ## What it does
 
-llm-router sits between your AI tools and LLM providers (OpenAI, Anthropic, Ollama, etc.). Instead of hardcoding "gpt-4o goes to OpenAI", you tag models with metadata like `intelligence=85`, `cost=free`, `speed=high` — then create virtual models that pick the best match at runtime.
+llm-router sits between your AI tools and LLM providers (OpenAI, Anthropic, Ollama, etc.). Like other proxies, it lets you group models into virtual models and use them as fallbacks. The difference: llm-router **enriches models with metadata** (intelligence, hallucination rate, cost, speed) — imported from benchmarks or set manually — and virtual models **automatically pick the best match** based on rules you define.
 
-**Example:** A virtual model `smart-free` picks the cheapest model with intelligence ≥ 70. When a new model is tagged and uploaded, it's automatically included — no config changes needed.
+**Example:** A virtual model `smart-free` picks the cheapest model with intelligence ≥ 70 and hallucination ≤ 15. When a new model is tagged and added, it's automatically included — no manual curation needed.
 
 ## How it's different
 
-| | OpenRouter / LiteLLM | llm-router |
-|-|----------------------|------------|
-| Routing | Static: model name → provider | Dynamic: filter metadata, sort by priority |
-| Virtual models | No | Yes — `"smart-free"` = best match at runtime |
-| Model tagging | No | Any key-value pairs: `intel=85`, `cost=free` |
-| Failover | Basic retry | Silent: tries next model if one fails |
+Most LLM proxies let you create virtual models, but you have to curate them by hand — pick specific models, rearrange them when priorities change, add new ones manually.
+
+llm-router automates this. You tag models with metadata (from CSV benchmarks or manually), then define rules. The routing engine picks the best model at request time.
+
+| | Other proxies (OpenRouter, LiteLLM) | llm-router |
+|-|--------------------------------------|------------|
+| Virtual models | Yes, but manually curated | Yes, auto-resolved by metadata rules |
+| Model selection | You pick and order models yourself | Filter by metadata (`intel >= 70`, `hallucination <= 15`, `cost <= 0.50`) |
+| Adding new models | Update virtual model config manually | Tag it — rules pick it up automatically |
+| Metadata | No | Import from benchmarks or set manually |
+| Failover | Basic retry | Silent failover through sorted model list |
 | Token savings | No | RTK compresses tool outputs, Caveman trims verbose responses |
 | Circuit breaker | No | Auto-disables failing models/providers, re-enables after cooldown |
 | Claude Code cloaking | No | Proxies Claude Code through non-Anthropic backends |
@@ -50,21 +55,22 @@ claude
 
 ## Virtual models
 
-Create virtual models via the API:
+Create virtual models via the API. Define rules that filter and sort models by metadata:
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/virtual-models \
   -H "Authorization: Bearer <admin-key>" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "smart-free",
+    "name": "smart-cheap",
     "filter_expr": {
       "and": [
-        {"key": "cost-type", "op": "eq", "value": "free"},
-        {"key": "intel", "op": "gte", "value": "50"}
+        {"key": "intelligence", "op": "gte", "value": "70"},
+        {"key": "hallucination", "op": "lte", "value": "15"},
+        {"key": "cost_per_task", "op": "lte", "value": "0.50"}
       ]
     },
-    "sort_expr": [{"key": "intel", "direction": "desc"}]
+    "sort_expr": [{"key": "intelligence", "direction": "desc"}]
   }'
 ```
 
@@ -99,7 +105,7 @@ curl http://localhost:8080/v1/chat/completions \
 
 ## Tags & metadata
 
-Tag models with any key-value pairs. Import from CSV benchmarks or set via API:
+Tag models with any key-value pairs — intelligence scores, hallucination rates, cost per task, speed ratings, or whatever matters for your use case. Import from CSV benchmarks or set via API:
 
 ```bash
 # CSV import
@@ -109,15 +115,15 @@ Tag models with any key-value pairs. Import from CSV benchmarks or set via API:
 curl -X PUT http://localhost:8080/api/v1/models/:id/tags \
   -H "Authorization: Bearer <admin-key>" \
   -H "Content-Type: application/json" \
-  -d '{"tags": [{"key": "intel", "value": "85"}, {"key": "cost-type", "value": "free"}]}'
+  -d '{"tags": [{"key": "intelligence", "value": "85"}, {"key": "hallucination", "value": "12"}, {"key": "cost_per_task", "value": "0.30"}]}'
 ```
 
 ## Architecture
 
 ```
 Client (OpenAI SDK) → /v1/chat/completions → Routing Engine → Provider A
-                       model="smart-free"       ↓ fail       → Provider B
-                                                ↓ fail       → Provider C
+                       model="smart-cheap"    ↓ fail       → Provider B
+                                              ↓ fail       → Provider C
 ```
 
 Silent failover: if the best model fails, the next one in the sorted list is tried transparently. No client changes needed.

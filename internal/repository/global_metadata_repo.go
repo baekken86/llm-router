@@ -10,6 +10,7 @@ type GlobalMetadataRepository interface {
 	Set(ctx context.Context, modelName, effort string, tags map[string]string) error
 	GetByModel(ctx context.Context, modelName string) (map[string]map[string]string, error)
 	GetByModelEffort(ctx context.Context, modelName, effort string) (map[string]string, error)
+	GetAll(ctx context.Context) (map[string]map[string]map[string]string, error)
 	ListModels(ctx context.Context) ([]string, error)
 	ListAllKeys(ctx context.Context) ([]string, error)
 }
@@ -23,6 +24,10 @@ func NewGlobalMetadataRepository(db *sql.DB) GlobalMetadataRepository {
 }
 
 func (r *sqliteGlobalMetadataRepo) Set(ctx context.Context, modelName, effort string, tags map[string]string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -86,6 +91,35 @@ func (r *sqliteGlobalMetadataRepo) GetByModelEffort(ctx context.Context, modelNa
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		result[key] = value
+	}
+	return result, nil
+}
+
+func (r *sqliteGlobalMetadataRepo) GetAll(ctx context.Context) (map[string]map[string]map[string]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT model_name, reasoning_effort, key, value FROM model_metadata_global ORDER BY model_name, reasoning_effort, key`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get all: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]map[string]map[string]string)
+	for rows.Next() {
+		var modelName, effort, key, value string
+		if err := rows.Scan(&modelName, &effort, &key, &value); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		if result[modelName] == nil {
+			result[modelName] = make(map[string]map[string]string)
+		}
+		if result[modelName][effort] == nil {
+			result[modelName][effort] = make(map[string]string)
+		}
+		result[modelName][effort][key] = value
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iter rows: %w", err)
 	}
 	return result, nil
 }

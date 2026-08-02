@@ -80,6 +80,11 @@ func NewRouter(
 			r.Get("/models", metadataHandler.ListModels)
 		})
 
+		r.Route("/model-metadata", func(r chi.Router) {
+			r.Get("/", metadataHandler.ListEntries)
+			r.Put("/", metadataHandler.SetEntry)
+		})
+
 		r.Route("/syslog", func(r chi.Router) {
 			r.Mount("/", syslogHandler.Routes())
 		})

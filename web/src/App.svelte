@@ -5,7 +5,7 @@
   import VirtualModelList from './components/VirtualModelList.svelte';
   import VirtualModelForm from './components/VirtualModelForm.svelte';
   import RawModelList from './components/RawModelList.svelte';
-  import ModelMetadataEdit from './components/ModelMetadataEdit.svelte';
+  import ModelsView from './components/ModelsView.svelte';
   import MappingsTab from './components/MappingsTab.svelte';
   import StatusView from './components/StatusView.svelte';
   import StatsView from './components/StatsView.svelte';
@@ -19,25 +19,11 @@
   let editingId = $state(null);
   let authenticated = $state(false);
   let mainTab = $state('virtual');
-  let metaProvider = $state('');
-  let metaModel = $state('');
-  let metaEffort = $state('');
 
   function parsePath(pathname) {
-    if (pathname === '/raw') return { tab: 'raw', view: 'list', id: null };
-    if (pathname.startsWith('/raw/metadata/')) {
-      const parts = pathname.split('/').filter(Boolean);
-      // parts: ['raw', 'metadata', provider, model, effort?]
-      if (parts.length >= 4) {
-        return {
-          tab: 'raw',
-          view: 'metadata',
-          provider: decodeURIComponent(parts[2]),
-          model: decodeURIComponent(parts[3]),
-          effort: parts[4] || ''
-        };
-      }
-    }
+    if (pathname === '/raw' || pathname.startsWith('/raw/')) return { tab: 'providers', view: 'list', id: null };
+    if (pathname === '/providers') return { tab: 'providers', view: 'list', id: null };
+    if (pathname === '/models') return { tab: 'models', view: 'list', id: null };
     if (pathname === '/mappings') return { tab: 'mappings', view: 'list', id: null };
     if (pathname === '/status') return { tab: 'status', view: 'list', id: null };
     if (pathname === '/stats') return { tab: 'stats', view: 'list', id: null };
@@ -53,11 +39,8 @@
   }
 
   function pathFor(tab, view, id) {
-    if (tab === 'raw' && view === 'metadata' && metaProvider && metaModel) {
-      const effort = metaEffort || '';
-      return `/raw/metadata/${encodeURIComponent(metaProvider)}/${encodeURIComponent(metaModel)}${effort ? '/' + encodeURIComponent(effort) : ''}`;
-    }
-    if (tab === 'raw') return '/raw';
+    if (tab === 'providers') return '/providers';
+    if (tab === 'models') return '/models';
     if (tab === 'mappings') return '/mappings';
     if (tab === 'status') return '/status';
     if (tab === 'stats') return '/stats';
@@ -95,9 +78,6 @@
     mainTab = parsed.tab;
     view = parsed.view;
     editingId = parsed.id;
-      metaProvider = parsed.provider || '';
-      metaModel = parsed.model || '';
-      metaEffort = parsed.effort !== undefined ? parsed.effort : '';
   }
 
   async function loadFields() {
@@ -120,9 +100,6 @@
       mainTab = parsed.tab;
       view = parsed.view;
       editingId = parsed.id;
-      metaProvider = parsed.provider || '';
-      metaModel = parsed.model || '';
-      metaEffort = parsed.effort !== undefined ? parsed.effort : '';
       await loadFields();
     } catch {
       authenticated = false;
@@ -148,11 +125,18 @@
     <nav class="bg-gray-900 border-b border-gray-800 px-6 py-3 flex flex-wrap items-center gap-x-6 gap-y-2">
       <h1 class="text-lg font-bold text-emerald-400">LLM Router</h1>
       <a
-        href="/raw"
-        class="text-sm no-underline {mainTab === 'raw' ? 'text-white border-b-2 border-emerald-400 pb-1' : 'text-gray-400 hover:text-white pb-1'}"
-        onclick={(e) => handleTabClick(e, 'raw')}
+        href="/models"
+        class="text-sm no-underline {mainTab === 'models' ? 'text-white border-b-2 border-emerald-400 pb-1' : 'text-gray-400 hover:text-white pb-1'}"
+        onclick={(e) => handleTabClick(e, 'models')}
       >
-        Raw Models
+        Models
+      </a>
+      <a
+        href="/providers"
+        class="text-sm no-underline {mainTab === 'providers' ? 'text-white border-b-2 border-emerald-400 pb-1' : 'text-gray-400 hover:text-white pb-1'}"
+        onclick={(e) => handleTabClick(e, 'providers')}
+      >
+        Providers
       </a>
       <a
         href="/mappings"
@@ -206,29 +190,10 @@
     </nav>
 
     <main class="max-w-[90rem] mx-auto p-6">
-      {#if mainTab === 'raw' && view === 'metadata'}
-        <ModelMetadataEdit
-          provider={metaProvider}
-          model={metaModel}
-          effort={metaEffort}
-          onBack={(p, m, e) => {
-            if (p !== undefined) {
-              metaProvider = p; metaModel = m; metaEffort = e || '';
-              const path = pathFor('raw', 'metadata', null);
-              history.pushState({ path }, '', path);
-            } else {
-              mainTab = 'raw'; view = 'list';
-              history.pushState({ path: '/raw' }, '', '/raw');
-            }
-          }}
-        />
-      {:else if mainTab === 'raw'}
-        <RawModelList onEditMetadata={(provider, model, effort) => {
-          metaProvider = provider; metaModel = model; metaEffort = effort || '';
-          view = 'metadata';
-          const path = pathFor('raw', 'metadata', null);
-          history.pushState({ path }, '', path);
-        }} />
+      {#if mainTab === 'providers'}
+        <RawModelList />
+      {:else if mainTab === 'models'}
+        <ModelsView />
       {:else if mainTab === 'mappings'}
         <MappingsTab />
       {:else if mainTab === 'status'}

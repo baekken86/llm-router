@@ -3,6 +3,7 @@ package handlers
 import (
 	_ "embed"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -104,6 +105,69 @@ func (h *MetadataHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(models)
+}
+
+type modelMetadataEntry struct {
+	ModelName   string            `json:"model_name"`
+	ReasoningEffort string        `json:"reasoning_effort"`
+	Metadata    map[string]string `json:"metadata"`
+}
+
+func (h *MetadataHandler) ListEntries(w http.ResponseWriter, r *http.Request) {
+	all, err := h.globalMetaRepo.GetAll(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var entries []modelMetadataEntry
+	for modelName, efforts := range all {
+		for effort, metadata := range efforts {
+			entries = append(entries, modelMetadataEntry{
+				ModelName:       modelName,
+				ReasoningEffort: effort,
+				Metadata:        metadata,
+			})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entries)
+}
+
+func (h *MetadataHandler) SetEntry(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ModelName       string            `json:"model_name"`
+		ReasoningEffort string            `json:"reasoning_effort"`
+		Metadata        map[string]string `json:"metadata"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.ModelName == "" {
+		http.Error(w, "model_name is required", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Metadata) == 0 {
+		http.Error(w, "metadata must not be empty", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.globalMetaRepo.Set(r.Context(), req.ModelName, req.ReasoningEffort, req.Metadata); err != nil {
+		log.Printf("SetEntry error: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(modelMetadataEntry{
+		ModelName:       req.ModelName,
+		ReasoningEffort: req.ReasoningEffort,
+		Metadata:        req.Metadata,
+	})
 }
 
 func inferType(key string) string {

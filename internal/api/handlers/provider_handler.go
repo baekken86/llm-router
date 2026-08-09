@@ -168,15 +168,16 @@ func (h *ProviderHandler) Discover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deactivated, err := h.modelService.Discover(r.Context(), id)
+	result, err := h.modelService.Discover(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"provider_id":  id,
-		"deactivated": deactivated,
+		"provider_id": id,
+		"added":       result.Added,
+		"removed":     result.Removed,
 	})
 }
 
@@ -189,10 +190,11 @@ func (h *ProviderHandler) DiscoverAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type providerResult struct {
-		ID          int64  `json:"id"`
-		Name        string `json:"name"`
-		Deactivated int64  `json:"deactivated"`
-		Error       string `json:"error,omitempty"`
+		ID      int64    `json:"id"`
+		Name    string   `json:"name"`
+		Added   []string `json:"added"`
+		Removed []string `json:"removed"`
+		Error   string   `json:"error,omitempty"`
 	}
 
 	var results []providerResult
@@ -201,11 +203,12 @@ func (h *ProviderHandler) DiscoverAll(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		pr := providerResult{ID: p.ID, Name: p.Name}
-		deactivated, err := h.modelService.Discover(ctx, p.ID)
+		result, err := h.modelService.Discover(ctx, p.ID)
 		if err != nil {
 			pr.Error = err.Error()
 		} else {
-			pr.Deactivated = deactivated
+			pr.Added = result.Added
+			pr.Removed = result.Removed
 		}
 		results = append(results, pr)
 	}

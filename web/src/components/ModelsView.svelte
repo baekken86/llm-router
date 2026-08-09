@@ -9,6 +9,7 @@
   let editMode = $state(false);
   let editValues = $state({});
   let saving = $state(false);
+  let filterText = $state('');
   let showAddModal = $state(false);
   let newModelName = $state('');
   let newEffort = $state('');
@@ -42,10 +43,15 @@
     return cols;
   });
 
-  const sortedEntries = $derived.by(() => {
-    return [...entries].sort((a, b) =>
+  const filteredEntries = $derived.by(() => {
+    let list = [...entries].sort((a, b) =>
       a.model_name.localeCompare(b.model_name) || a.reasoning_effort.localeCompare(b.reasoning_effort)
     );
+    if (filterText.trim()) {
+      const needle = filterText.trim().toLowerCase();
+      list = list.filter(e => e.model_name.toLowerCase().includes(needle));
+    }
+    return list;
   });
 
   function getOriginalValue(entry, colKey) {
@@ -75,11 +81,11 @@
   }
 
   const editHasChanges = $derived.by(() => {
-    for (let i = 0; i < sortedEntries.length; i++) {
+    for (let i = 0; i < filteredEntries.length; i++) {
       for (const col of columns) {
         const key = overrideKey(i, col.key);
         if (key in editValues) {
-          const original = getOriginalValue(sortedEntries[i], col.key);
+          const original = getOriginalValue(filteredEntries[i], col.key);
           if (editValues[key] !== original) return true;
         }
       }
@@ -100,8 +106,8 @@
   async function submitChanges() {
     saving = true;
     const byEntry = new Map();
-    for (let i = 0; i < sortedEntries.length; i++) {
-      const entry = sortedEntries[i];
+    for (let i = 0; i < filteredEntries.length; i++) {
+      const entry = filteredEntries[i];
       const entryKey = `${entry.model_name}||${entry.reasoning_effort}`;
       if (!byEntry.has(entryKey)) {
         byEntry.set(entryKey, { ...entry, changes: {} });
@@ -111,7 +117,7 @@
       const sepIdx = key.indexOf(':');
       const idx = parseInt(key.substring(0, sepIdx), 10);
       const colKey = key.substring(sepIdx + 1);
-      const entry = sortedEntries[idx];
+      const entry = filteredEntries[idx];
       if (!entry) continue;
       const entryKey = `${entry.model_name}||${entry.reasoning_effort}`;
       if (!byEntry.has(entryKey)) continue;
@@ -299,7 +305,17 @@
         </button>
       {/if}
     </div>
-    <span class="text-sm text-gray-500">{entries.length} model+effort entries</span>
+    <div class="flex items-center gap-4">
+      <input
+        type="text"
+        class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-emerald-500 w-48"
+        placeholder="Filter models..."
+        bind:value={filterText}
+      />
+      <span class="text-sm text-gray-500">
+        {filteredEntries.length}{filterText.trim() ? ` / ${entries.length}` : ''} model+effort entries
+      </span>
+    </div>
   </div>
 
   {#if loading}
@@ -320,7 +336,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each sortedEntries as entry, entryIdx}
+            {#each filteredEntries as entry, entryIdx}
               <tr class="border-b border-gray-850 hover:bg-gray-850/50">
                 <td class="text-left px-4 py-1.5 text-gray-300">{entry.model_name}</td>
                 <td class="text-left px-4 py-1.5 text-gray-400">{entry.reasoning_effort || '—'}</td>

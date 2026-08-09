@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/chris/llm-router/internal/models"
@@ -42,6 +43,22 @@ func (m *effortAwareGlobalMetaRepo) ListModels(_ context.Context) ([]string, err
 
 func (m *effortAwareGlobalMetaRepo) ListAllKeys(_ context.Context) ([]string, error) {
 	return nil, nil
+}
+
+func (m *effortAwareGlobalMetaRepo) GetAll(_ context.Context) (map[string]map[string]map[string]string, error) {
+	result := make(map[string]map[string]map[string]string)
+	for key, tags := range m.data {
+		parts := strings.SplitN(key, "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		modelName, effort := parts[0], parts[1]
+		if result[modelName] == nil {
+			result[modelName] = make(map[string]map[string]string)
+		}
+		result[modelName][effort] = tags
+	}
+	return result, nil
 }
 
 var _ repository.GlobalMetadataRepository = (*effortAwareGlobalMetaRepo)(nil)

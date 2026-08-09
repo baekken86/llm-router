@@ -51,13 +51,16 @@ func runDiscover(args []string) {
 
 	fmt.Printf("Discovering models from %s...\n", *providerName)
 
-	deactivated, err := modelService.Discover(ctx, provider.ID)
+	result, err := modelService.Discover(ctx, provider.ID)
 	if err != nil {
 		logger.Error("discovery failed", "error", err)
 		os.Exit(1)
 	}
 
-	if deactivated > 0 {
-		fmt.Printf("\n⚠ %d stale models deactivated\n", deactivated)
+	if len(result.Added) > 0 {
+		fmt.Printf("\n+ %d new models discovered\n", len(result.Added))
+	}
+	if len(result.Removed) > 0 {
+		fmt.Printf("\n- %d models removed from provider\n", len(result.Removed))
 	}
 }

@@ -15,6 +15,8 @@
   let disableDuration = $state('10m');
   let now = $state(Date.now());
   let allOverrides = $state({});
+  let showRefreshModal = $state(false);
+  let refreshResults = $state([]);
 
   const grouped = $derived.by(() => {
     const groups = {};
@@ -198,23 +200,33 @@
     return `${mins}m ${secs}s`;
   }
 
+  function formatDate(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  }
+
+  const refreshSummary = $derived.by(() => {
+    let added = 0;
+    let removed = 0;
+    let errors = 0;
+    for (const r of refreshResults) {
+      if (r.error) {
+        errors++;
+      } else {
+        added += (r.added || []).length;
+        removed += (r.removed || []).length;
+      }
+    }
+    return { added, removed, errors, total: refreshResults.length };
+  });
+
   async function refreshAll() {
     refreshing = true;
     try {
       const results = await apiFetch('/api/v1/providers/discover-all', { method: 'POST' });
-      let totalDeactivated = 0;
-      for (const r of results) {
-        if (r.error) {
-          addToast(`${r.name}: ${r.error}`, 'error');
-        } else {
-          totalDeactivated += r.deactivated;
-        }
-      }
-      if (totalDeactivated > 0) {
-        addToast(`Refreshed ${results.length} providers — ${totalDeactivated} stale models deactivated`, 'success');
-      } else {
-        addToast(`Refreshed ${results.length} providers — all models up to date`, 'success');
-      }
+      refreshResults = results;
+      showRefreshModal = true;
       await load();
     } catch (e) {
       addToast(e.message, 'error');
@@ -290,6 +302,71 @@
   </div>
 {/if}
 
+{#if showRefreshModal}
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onclick={() => showRefreshModal = false}>
+    <div class="bg-gray-900 rounded-lg border border-gray-700 p-6 w-full max-w-lg max-h-[80vh] flex flex-col" onclick={(e) => e.stopPropagation()}>
+      <h3 class="text-white font-medium mb-4">Refresh Results</h3>
+
+      <div class="flex gap-3 mb-4 text-sm">
+        {#if refreshSummary.added > 0}
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-900/50 text-emerald-400">
+            + {refreshSummary.added} new
+          </span>
+        {/if}
+        {#if refreshSummary.removed > 0}
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-900/50 text-red-400">
+            − {refreshSummary.removed} removed
+          </span>
+        {/if}
+        {#if refreshSummary.errors > 0}
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded bg-amber-900/50 text-amber-400">
+            ! {refreshSummary.errors} error{refreshSummary.errors > 1 ? 's' : ''}
+          </span>
+        {/if}
+        {#if refreshSummary.added === 0 && refreshSummary.removed === 0 && refreshSummary.errors === 0}
+          <span class="text-gray-500">All models up to date</span>
+        {/if}
+      </div>
+
+      <div class="overflow-y-auto flex-1 space-y-3 text-sm">
+        {#each refreshResults as r}
+          {#if r.error}
+            <div class="bg-red-900/20 border border-red-800/50 rounded p-3">
+              <div class="text-red-400 font-medium">{r.name}</div>
+              <div class="text-red-400/70 text-xs mt-1">{r.error}</div>
+            </div>
+          {:else if (r.added || []).length > 0 || (r.removed || []).length > 0}
+            <div class="bg-gray-800/50 border border-gray-700/50 rounded p-3">
+              <div class="text-gray-300 font-medium mb-2">{r.name}</div>
+              {#if (r.added || []).length > 0}
+                <div class="mb-1">
+                  <span class="text-emerald-400 text-xs font-medium">Added:</span>
+                  {#each r.added as model}
+                    <div class="text-emerald-400/80 text-xs ml-2">+ {model}</div>
+                  {/each}
+                </div>
+              {/if}
+              {#if (r.removed || []).length > 0}
+                <div>
+                  <span class="text-red-400 text-xs font-medium">Removed:</span>
+                  {#each r.removed as model}
+                    <div class="text-red-400/80 text-xs ml-2">− {model}</div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
+        {/each}
+      </div>
+
+      <div class="flex justify-end mt-4">
+        <button class="px-3 py-1.5 text-sm text-gray-400 hover:text-white"
+                onclick={() => showRefreshModal = false}>Close</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if pickerModelId !== null}
   <ModelPicker
     excludeModelName={models.find(m => m.model_id === pickerModelId)?.model_name || ''}
@@ -342,6 +419,7 @@
                       <th class="text-left pr-3 py-1">model</th>
                       <th class="text-left pr-3 py-1">effort</th>
                       <th class="text-left pr-3 py-1">mapping</th>
+                      <th class="text-left pr-3 py-1">added at</th>
                       <th class="text-left pr-3 py-1 w-16">status</th>
                       {#each columns as col}
                         <th class="text-right pr-3 py-1">{col.key}</th>
@@ -384,6 +462,7 @@
                             >🔗 map</button>
                           {/if}
                         </td>
+                        <td class="text-left pr-3 py-1 text-gray-500 text-xs">{formatDate(m.created_at)}</td>
                         <td class="text-left pr-3 py-1">
                           <span class="inline-flex items-center gap-1.5">
                             <button

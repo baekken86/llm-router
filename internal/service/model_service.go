@@ -23,10 +23,16 @@ type ModelEffortEntry struct {
 	Tags              map[string]string `json:"tags"`
 	GlobalMetadata    map[string]string `json:"global_metadata"`
 	MappingTargetName *string           `json:"mapping_target_name,omitempty"`
+	CreatedAt         time.Time         `json:"created_at"`
+}
+
+type DiscoverResult struct {
+	Added   []string `json:"added"`
+	Removed []string `json:"removed"`
 }
 
 type ModelService interface {
-	Discover(ctx context.Context, providerID int64) (int64, error)
+	Discover(ctx context.Context, providerID int64) (*DiscoverResult, error)
 	ListByProvider(ctx context.Context, providerID int64) ([]models.Model, error)
 	ListAll(ctx context.Context) ([]ModelEffortEntry, error)
 	GetByID(ctx context.Context, id int64) (*models.Model, error)
@@ -69,13 +75,13 @@ type openAIModelsResponse struct {
 	} `json:"data"`
 }
 
-func (s *modelService) Discover(ctx context.Context, providerID int64) (int64, error) {
+func (s *modelService) Discover(ctx context.Context, providerID int64) (*DiscoverResult, error) {
 	provider, err := s.providerRepo.GetByID(ctx, providerID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if provider == nil {
-		return 0, fmt.Errorf("provider not found: %d", providerID)
+		return nil, fmt.Errorf("provider not found: %d", providerID)
 	}
 
 	var apiKey string
@@ -84,19 +90,36 @@ func (s *modelService) Discover(ctx context.Context, providerID int64) (int64, e
 	} else {
 		apiKey, err = s.provService.DecryptAPIKey(provider.APIKeyEncrypted)
 		if err != nil {
-			return 0, fmt.Errorf("decrypt api key: %w", err)
+			return nil, fmt.Errorf("decrypt api key: %w", err)
 		}
+	}
+
+	existingModels, err := s.modelRepo.ListByProvider(ctx, providerID)
+	if err != nil {
+		return nil, fmt.Errorf("list existing models: %w", err)
+	}
+	existingNames := make(map[string]bool, len(existingModels))
+	for _, m := range existingModels {
+		existingNames[m.Name] = true
 	}
 
 	modelNames, err := fetchModels(provider.BaseURL, apiKey, provider.APIType)
 	if err != nil {
-		return 0, fmt.Errorf("fetch models: %w", err)
+		return nil, fmt.Errorf("fetch models: %w", err)
 	}
 
+	result := &DiscoverResult{}
+	fetchedNames := make(map[string]bool, len(modelNames))
+
 	for _, name := range modelNames {
+		fetchedNames[name] = true
 		m, err := s.modelRepo.Upsert(ctx, providerID, name)
 		if err != nil {
-			return 0, fmt.Errorf("upsert model %s: %w", name, err)
+			return nil, fmt.Errorf("upsert model %s: %w", name, err)
+		}
+
+		if !existingNames[name] {
+			result.Added = append(result.Added, name)
 		}
 
 		if s.globalMetaRepo != nil {
@@ -109,12 +132,18 @@ func (s *modelService) Discover(ctx context.Context, providerID int64) (int64, e
 		}
 	}
 
-	deactivated, err := s.modelRepo.DisableByProviderExcept(ctx, providerID, modelNames)
-	if err != nil {
-		return 0, fmt.Errorf("disable stale models: %w", err)
+	for n := range existingNames {
+		if !fetchedNames[n] {
+			result.Removed = append(result.Removed, n)
+		}
 	}
 
-	return deactivated, nil
+	_, err = s.modelRepo.DisableByProviderExcept(ctx, providerID, modelNames)
+	if err != nil {
+		return nil, fmt.Errorf("disable stale models: %w", err)
+	}
+
+	return result, nil
 }
 
 func (s *modelService) ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration) error {
@@ -276,18 +305,19 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelEffortEntry, error) 
 						}
 					}
 				}
-				result = append(result, ModelEffortEntry{
-					ModelID:           m.ID,
-					ModelName:         m.Name,
-					ProviderID:        m.ProviderID,
-					ProviderName:      providerName,
-					ReasoningEffort:   effort,
-					Disabled:          m.Disabled,
-					DisabledUntil:     m.DisabledUntil,
-					Tags:              targetModelTags,
-					GlobalMetadata:    gm,
-					MappingTargetName: mappingTarget,
-				})
+			result = append(result, ModelEffortEntry{
+				ModelID:           m.ID,
+				ModelName:         m.Name,
+				ProviderID:        m.ProviderID,
+				ProviderName:      providerName,
+				ReasoningEffort:   effort,
+				Disabled:          m.Disabled,
+				DisabledUntil:     m.DisabledUntil,
+				Tags:              targetModelTags,
+				GlobalMetadata:    gm,
+				MappingTargetName: mappingTarget,
+				CreatedAt:         m.CreatedAt,
+			})
 			}
 		} else {
 			// Not-mapped path: get per-effort tags + global metadata
@@ -319,17 +349,18 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelEffortEntry, error) 
 					}
 				}
 
-				result = append(result, ModelEffortEntry{
-					ModelID:         m.ID,
-					ModelName:       m.Name,
-					ProviderID:      m.ProviderID,
-					ProviderName:    providerName,
-					ReasoningEffort: effort,
-					Disabled:        m.Disabled,
-					DisabledUntil:   m.DisabledUntil,
-					Tags:            tagMap,
-					GlobalMetadata:  gm,
-				})
+			result = append(result, ModelEffortEntry{
+				ModelID:         m.ID,
+				ModelName:       m.Name,
+				ProviderID:      m.ProviderID,
+				ProviderName:    providerName,
+				ReasoningEffort: effort,
+				Disabled:        m.Disabled,
+				DisabledUntil:   m.DisabledUntil,
+				Tags:            tagMap,
+				GlobalMetadata:  gm,
+				CreatedAt:       m.CreatedAt,
+			})
 			}
 		}
 	}

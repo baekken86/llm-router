@@ -382,6 +382,10 @@ func (m *mockGlobalMetaRepo) ListAllKeys(_ context.Context) ([]string, error) {
 	return nil, nil
 }
 
+func (m *mockGlobalMetaRepo) GetAll(_ context.Context) (map[string]map[string]map[string]string, error) {
+	return m.data, nil
+}
+
 // Compile-time interface checks
 var _ repository.VirtualModelRepository = (*mockVMRepo)(nil)
 var _ repository.ModelRepository = (*mockModelRepo)(nil)

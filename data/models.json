@@ -3514,6 +3514,7 @@
       "cost_per_task": 0.22,
       "cost_per_1m_input": 0.32,
       "cost_per_1m_output": 1.28,
+      "cost_per_1m_cache": 0.04,
       "has_reasoning_effort": false
     },
     {

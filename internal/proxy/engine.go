@@ -132,10 +132,19 @@ func (e *Engine) getAPIKey(ctx context.Context, provider models.Provider) (strin
 	if err == nil && token != "" {
 		return token, nil
 	}
-	// Fall back to encrypted API key
-	// If APIKeyEncrypted is empty, return empty key (for providers like Ollama that don't need one)
+	// OAuth token unavailable — check if provider has an API key fallback
 	if provider.APIKeyEncrypted == "" {
-		return "", nil
+		// Allow empty key for providers that don't need auth (e.g. local Ollama)
+		if provider.APIType == models.APITypeOllama || provider.APIType == models.APITypeOllamaCloud {
+			return "", nil
+		}
+		// No API key and no valid OAuth token — this is an OAuth-only provider
+		// that can't authenticate. Return a clear error instead of silently
+		// sending an empty bearer token which causes confusing 401s.
+		if err != nil {
+			return "", fmt.Errorf("oauth token unavailable (re-run 'llm-router setup --provider %s' to re-authenticate): %w", provider.Name, err)
+		}
+		return "", fmt.Errorf("no credentials available for provider %s (re-run 'llm-router setup --provider %s')", provider.Name, provider.Name)
 	}
 	return e.providerService.DecryptAPIKey(provider.APIKeyEncrypted)
 }

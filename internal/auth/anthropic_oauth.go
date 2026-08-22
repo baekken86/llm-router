@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	AnthropicAuthURL  = "https://claude.ai/oauth/authorize"
-	AnthropicTokenURL = "https://api.anthropic.com/v1/oauth/token"
-	AnthropicClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	DefaultRedirectURI = "http://localhost:8080/callback"
+	AnthropicAuthURL       = "https://claude.ai/oauth/authorize"
+	AnthropicTokenURL      = "https://api.anthropic.com/v1/oauth/token"
+	AnthropicClientID      = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+	DefaultRedirectURI     = "http://localhost:8080/callback"
 )
 
 type AnthropicOAuth struct {
@@ -67,8 +67,9 @@ func (a *AnthropicOAuth) GetAuthorizationURL(state string) string {
 	codeChallenge := generateCodeChallenge(a.codeVerifier)
 
 	params := url.Values{
-		"response_type":         {"code"},
+		"code":                  {"true"},
 		"client_id":             {a.clientID},
+		"response_type":         {"code"},
 		"redirect_uri":          {a.redirectURI},
 		"state":                 {state},
 		"scope":                 {"org:create_api_key user:profile user:inference"},
@@ -79,15 +80,26 @@ func (a *AnthropicOAuth) GetAuthorizationURL(state string) string {
 }
 
 func (a *AnthropicOAuth) ExchangeCode(ctx context.Context, code, state string) (*AnthropicTokenInfo, error) {
+	// 9router-style: code may contain "#state" fragment (claude.ai sometimes appends #)
+	authCode := code
+	codeState := ""
+	if idx := strings.Index(authCode, "#"); idx != -1 {
+		codeState = authCode[idx+1:]
+		authCode = authCode[:idx]
+	}
+	effectiveState := state
+	if codeState != "" {
+		effectiveState = codeState
+	}
 	body := map[string]string{
-		"code":          code,
+		"code":          authCode,
 		"grant_type":    "authorization_code",
 		"client_id":     a.clientID,
 		"redirect_uri":  a.redirectURI,
 		"code_verifier": a.codeVerifier,
 	}
-	if state != "" {
-		body["state"] = state
+	if effectiveState != "" {
+		body["state"] = effectiveState
 	}
 
 	return a.doTokenRequestJSON(ctx, body)

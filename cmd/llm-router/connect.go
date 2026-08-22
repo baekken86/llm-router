@@ -114,9 +114,35 @@ func runManual(ctx context.Context, oauthService service.OAuthService, authURL, 
 }
 
 func extractCodeAndState(rawURL string) (code, state string) {
-	u, err := url.Parse(strings.TrimSpace(rawURL))
+	raw := strings.TrimSpace(rawURL)
+	u, err := url.Parse(raw)
 	if err != nil {
 		return "", ""
 	}
-	return u.Query().Get("code"), u.Query().Get("state")
+	code = u.Query().Get("code")
+	state = u.Query().Get("state")
+	// 9router-style: handle fragment after # in code or state (claude.ai sometimes appends state as fragment)
+	if frag := u.Fragment; frag != "" && state == "" {
+		// fragment may be state or code#state
+		if strings.Contains(frag, "=") {
+			if vals, err := url.ParseQuery(frag); err == nil {
+				if s := vals.Get("state"); s != "" {
+					state = s
+				}
+				if c := vals.Get("code"); c != "" && code == "" {
+					code = c
+				}
+			}
+		} else if state == "" {
+			state = frag
+		}
+	}
+	// code itself may contain #state (e.g. "abc#xyz")
+	if idx := strings.Index(code, "#"); idx != -1 {
+		if state == "" {
+			state = code[idx+1:]
+		}
+		code = code[:idx]
+	}
+	return code, state
 }

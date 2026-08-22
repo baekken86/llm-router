@@ -324,14 +324,14 @@
     <p class="text-gray-500">No model metadata entries found. Add models manually or import from data/models.json.</p>
   {:else}
     <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-      <div class="overflow-x-auto">
+      <div class="overflow-auto max-h-[60vh]">
         <table class="w-full text-sm font-mono">
           <thead>
             <tr class="text-gray-500 border-b border-gray-800">
-              <th class="text-left px-4 py-2">model</th>
-              <th class="text-left px-4 py-2">effort</th>
+              <th class="sticky top-0 z-10 bg-gray-900 text-left px-4 py-2">model</th>
+              <th class="sticky top-0 z-10 bg-gray-900 text-left px-4 py-2">effort</th>
               {#each columns as col}
-                <th class="text-right px-4 py-2">{col.key}</th>
+                <th class="sticky top-0 z-10 bg-gray-900 text-right px-4 py-2">{col.key}</th>
               {/each}
             </tr>
           </thead>

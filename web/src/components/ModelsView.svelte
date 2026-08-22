@@ -272,7 +272,8 @@
 {/if}
 
 <div>
-  <div class="flex items-center justify-between mb-6">
+  <div class="flex flex-col h-[calc(100dvh-9rem)]">
+  <div class="flex flex-none items-center justify-between mb-6">
     <div class="flex items-center gap-4">
       <h2 class="text-xl font-bold text-gray-100">Models</h2>
       {#if editMode}
@@ -323,12 +324,12 @@
   {:else if entries.length === 0}
     <p class="text-gray-500">No model metadata entries found. Add models manually or import from data/models.json.</p>
   {:else}
-    <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-      <div class="overflow-auto max-h-[60vh]">
+    <div class="flex-1 min-h-0 bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+      <div class="h-full overflow-auto">
         <table class="w-full text-sm font-mono">
           <thead>
             <tr class="text-gray-500 border-b border-gray-800">
-              <th class="sticky top-0 z-10 bg-gray-900 text-left px-4 py-2">model</th>
+              <th class="sticky top-0 left-0 z-20 bg-gray-900 text-left px-4 py-2">model</th>
               <th class="sticky top-0 z-10 bg-gray-900 text-left px-4 py-2">effort</th>
               {#each columns as col}
                 <th class="sticky top-0 z-10 bg-gray-900 text-right px-4 py-2">{col.key}</th>
@@ -338,7 +339,7 @@
           <tbody>
             {#each filteredEntries as entry, entryIdx}
               <tr class="border-b border-gray-850 hover:bg-gray-850/50">
-                <td class="text-left px-4 py-1.5 text-gray-300">{entry.model_name}</td>
+                <td class="sticky left-0 z-10 bg-gray-900 text-left px-4 py-1.5 text-gray-300">{entry.model_name}</td>
                 <td class="text-left px-4 py-1.5 text-gray-400">{entry.reasoning_effort || '—'}</td>
                 {#each columns as col}
                   {#if editMode}
@@ -386,4 +387,5 @@
       </div>
     </div>
   {/if}
+  </div>
 </div>

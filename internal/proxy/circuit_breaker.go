@@ -200,6 +200,34 @@ func (cb *CircuitBreaker) disableProvider(ctx context.Context, providerID int64,
 	)
 }
 
+// DisableModelPermanent disables a model with no expiry (e.g. HTTP 402
+// subscription required). It bypasses the circuit-breaker Enabled setting and
+// registers no cooldown, so the re-enable loop never auto re-enables it.
+// Returns true only when the model transitioned disabled=0 → disabled=1.
+func (cb *CircuitBreaker) DisableModelPermanent(ctx context.Context, providerID int64, modelName string) bool {
+	model, err := cb.modelRepo.GetByProviderAndName(ctx, providerID, modelName)
+	if err != nil || model == nil {
+		cb.logger.Error("circuit breaker: permanent disable: model not found",
+			"model", modelName, "provider_id", providerID, "error", err)
+		return false
+	}
+	if model.Disabled {
+		return false
+	}
+
+	if err := cb.modelRepo.ToggleDisabled(ctx, model.ID, true, nil); err != nil {
+		cb.logger.Error("circuit breaker: failed to permanently disable model",
+			"model", modelName, "provider_id", providerID, "error", err)
+		return false
+	}
+
+	cb.logger.Warn("circuit breaker: model permanently disabled (subscription required)",
+		"model", modelName,
+		"provider_id", providerID,
+	)
+	return true
+}
+
 func (cb *CircuitBreaker) reenableLoop() {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()

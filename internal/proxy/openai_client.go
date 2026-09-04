@@ -160,12 +160,7 @@ func (c *OpenAIClient) ChatCompletion(baseURL, apiKey string, req ChatCompletion
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, &ProviderError{
-			StatusCode: resp.StatusCode,
-			Message:    string(respBody),
-			RetryAfter: parseRetryAfter(resp),
-			RawBody:    respBody,
-		}
+		return nil, newProviderError(resp, respBody)
 	}
 
 	var result ChatCompletionResponse
@@ -202,12 +197,7 @@ func (c *OpenAIClient) ChatCompletionStream(baseURL, apiKey string, req ChatComp
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, nil, &ProviderError{
-			StatusCode: resp.StatusCode,
-			Message:    string(respBody),
-			RetryAfter: parseRetryAfter(resp),
-			RawBody:    respBody,
-		}
+		return nil, nil, newProviderError(resp, respBody)
 	}
 
 	return resp.Body, resp, nil
@@ -254,6 +244,31 @@ type ProviderError struct {
 
 func (e *ProviderError) Error() string {
 	return fmt.Sprintf("provider error %d: %s", e.StatusCode, e.Message)
+}
+
+// SubscriptionRequiredError signals a permanent, billing-related provider
+// failure (HTTP 402). Wraps the underlying ProviderError.
+type SubscriptionRequiredError struct {
+	ProviderError *ProviderError
+}
+
+func (e *SubscriptionRequiredError) Error() string { return e.ProviderError.Error() }
+func (e *SubscriptionRequiredError) Unwrap() error { return e.ProviderError }
+
+// newProviderError builds the appropriate error for a failed provider HTTP
+// response: *SubscriptionRequiredError for 402, *ProviderError otherwise.
+// Preserves Retry-After parsing and raw body (used by classifyRateLimit).
+func newProviderError(resp *http.Response, body []byte) error {
+	pe := &ProviderError{
+		StatusCode: resp.StatusCode,
+		Message:    string(body),
+		RetryAfter: parseRetryAfter(resp),
+		RawBody:    body,
+	}
+	if resp.StatusCode == http.StatusPaymentRequired {
+		return &SubscriptionRequiredError{ProviderError: pe}
+	}
+	return pe
 }
 
 func parseRetryAfter(resp *http.Response) time.Duration {

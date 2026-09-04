@@ -1,0 +1,12 @@
+{
+  "id": "005",
+  "title": "Permanent Model Disable on 402 Subscription Required",
+  "status": "active",
+  "created": "2026-09-04",
+  "completed": null,
+  "branch": "spec/005-permanent-model-disable-on-402-subscription-required",
+  "prs": [],
+  "tags": [],
+  "description": "When a provider returns HTTP 402 (subscription/payment required), permanently disable the model until manual re-enable. Includes typed SubscriptionRequiredError, shared newProviderError constructor across clients, CircuitBreaker.DisableModelPermanent, and Engine.processProviderError helper refactoring the 4 duplicated engine error paths. Spec doc: docs/superpowers/specs/2026-09-04-402-subscription-disable-design.md",
+  "sections": []
+}

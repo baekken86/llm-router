@@ -256,12 +256,7 @@ func (c *OllamaCloudClient) ChatCompletion(baseURL, apiKey string, req ChatCompl
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, &ProviderError{
-			StatusCode: resp.StatusCode,
-			Message:    string(respBody),
-			RetryAfter: parseRetryAfter(resp),
-			RawBody:    respBody,
-		}
+		return nil, newProviderError(resp, respBody)
 	}
 
 	var ollamaResp ollamaResponse
@@ -297,12 +292,7 @@ func (c *OllamaCloudClient) ChatCompletionStream(baseURL, apiKey string, req Cha
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, nil, &ProviderError{
-			StatusCode: resp.StatusCode,
-			Message:    string(respBody),
-			RetryAfter: parseRetryAfter(resp),
-			RawBody:    respBody,
-		}
+		return nil, nil, newProviderError(resp, respBody)
 	}
 
 	pr, pw := io.Pipe()

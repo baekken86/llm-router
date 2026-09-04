@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -324,22 +325,7 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		providerErr, ok := err.(*ProviderError)
-		if !ok {
-			providerErr = &ProviderError{StatusCode: 500, Message: err.Error()}
-		}
-
-		if providerErr.StatusCode == http.StatusTooManyRequests {
-			cooldown := providerErr.RetryAfter
-			if cooldown == 0 {
-				cooldown = classifyRateLimit(providerErr.RawBody)
-			}
-			e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
-		}
-
-		if e.circuitBreaker != nil && providerErr.StatusCode >= 500 {
-			e.circuitBreaker.Record5xx(r.Context(), rm.Provider.ID, rm.Model.Name)
-		}
+		providerErr := e.processProviderError(r.Context(), err, rm)
 
 		e.logRequest(RequestLog{
 				Type:          "proxy",
@@ -570,22 +556,7 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 				return
 			}
 
-			providerErr, ok := err.(*ProviderError)
-			if !ok {
-				providerErr = &ProviderError{StatusCode: 500, Message: err.Error()}
-			}
-
-		if providerErr.StatusCode == http.StatusTooManyRequests {
-			cooldown := providerErr.RetryAfter
-			if cooldown == 0 {
-				cooldown = classifyRateLimit(providerErr.RawBody)
-			}
-			e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
-		}
-
-		if e.circuitBreaker != nil && providerErr.StatusCode >= 500 {
-			e.circuitBreaker.Record5xx(r.Context(), rm.Provider.ID, rm.Model.Name)
-		}
+			providerErr := e.processProviderError(r.Context(), err, rm)
 
 		e.logRequest(RequestLog{
 			Type:          "proxy",
@@ -919,8 +890,43 @@ func (e *Engine) logRequest(log RequestLog) {
 	}
 }
 
-func shouldRetry(statusCode int, retryOnStatus []int) bool {
-	if len(retryOnStatus) == 0 {
+// processProviderError normalizes err to *ProviderError (via errors.As,
+// unknown errors → 500) and applies all side effects:
+//   - 402 (SubscriptionRequiredError) → circuitBreaker.DisableModelPermanent
+//   - 429 → rateLimits.MarkLimited (RetryAfter, then classifyRateLimit fallback)
+//   - >=500 → circuitBreaker.Record5xx
+//
+// Returns the normalized error for the caller's logging/retry logic.
+func (e *Engine) processProviderError(ctx context.Context, err error, rm service.ResolvedModel) *ProviderError {
+	var subErr *SubscriptionRequiredError
+	if errors.As(err, &subErr) {
+		if cb := e.circuitBreaker; cb != nil {
+			cb.DisableModelPermanent(ctx, rm.Provider.ID, rm.Model.Name)
+		}
+		return subErr.ProviderError
+	}
+
+	var providerErr *ProviderError
+	if !errors.As(err, &providerErr) {
+		providerErr = &ProviderError{StatusCode: 500, Message: err.Error()}
+	}
+
+	if providerErr.StatusCode == http.StatusTooManyRequests {
+		cooldown := providerErr.RetryAfter
+		if cooldown == 0 {
+			cooldown = classifyRateLimit(providerErr.RawBody)
+		}
+		e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
+	}
+
+	if e.circuitBreaker != nil && providerErr.StatusCode >= 500 {
+		e.circuitBreaker.Record5xx(ctx, rm.Provider.ID, rm.Model.Name)
+	}
+
+	return providerErr
+}
+
+func shouldRetry(statusCode int, retryOnStatus []int) bool {	if len(retryOnStatus) == 0 {
 		retryOnStatus = []int{429, 500, 502, 503, 504}
 	}
 	for _, s := range retryOnStatus {
@@ -1134,22 +1140,7 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 				return
 			}
 
-			providerErr, ok := err.(*ProviderError)
-			if !ok {
-				providerErr = &ProviderError{StatusCode: 500, Message: err.Error()}
-			}
-
-			if providerErr.StatusCode == http.StatusTooManyRequests {
-				cooldown := providerErr.RetryAfter
-				if cooldown == 0 {
-					cooldown = classifyRateLimit(providerErr.RawBody)
-				}
-				e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
-			}
-
-			if e.circuitBreaker != nil && providerErr.StatusCode >= 500 {
-				e.circuitBreaker.Record5xx(r.Context(), rm.Provider.ID, rm.Model.Name)
-			}
+			providerErr := e.processProviderError(r.Context(), err, rm)
 
 			e.logRequest(RequestLog{
 				Type:          "proxy",
@@ -1432,22 +1423,7 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 				lastErr = err
 			}
 
-			providerErr, ok := lastErr.(*ProviderError)
-			if !ok {
-				providerErr = &ProviderError{StatusCode: 500, Message: lastErr.Error()}
-			}
-
-			if providerErr.StatusCode == http.StatusTooManyRequests {
-				cooldown := providerErr.RetryAfter
-				if cooldown == 0 {
-					cooldown = classifyRateLimit(providerErr.RawBody)
-				}
-				e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
-			}
-
-			if e.circuitBreaker != nil && providerErr.StatusCode >= 500 {
-				e.circuitBreaker.Record5xx(r.Context(), rm.Provider.ID, rm.Model.Name)
-			}
+			providerErr := e.processProviderError(r.Context(), lastErr, rm)
 
 			e.logRequest(RequestLog{
 				Type:          "proxy",

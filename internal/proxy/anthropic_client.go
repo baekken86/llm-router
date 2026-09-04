@@ -145,12 +145,7 @@ func (c *AnthropicClient) ChatCompletion(baseURL, apiKey string, req AnthropicRe
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, &ProviderError{
-			StatusCode: resp.StatusCode,
-			Message:    string(respBody),
-			RetryAfter: parseRetryAfter(resp),
-			RawBody:    respBody,
-		}
+		return nil, newProviderError(resp, respBody)
 	}
 
 	var result AnthropicResponse
@@ -201,12 +196,7 @@ func (c *AnthropicClient) ChatCompletionStream(baseURL, apiKey string, req Anthr
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, nil, &ProviderError{
-			StatusCode: resp.StatusCode,
-			Message:    string(respBody),
-			RetryAfter: parseRetryAfter(resp),
-			RawBody:    respBody,
-		}
+		return nil, nil, newProviderError(resp, respBody)
 	}
 
 	return resp.Body, resp, nil

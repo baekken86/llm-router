@@ -1,0 +1,9 @@
+{
+  "spec": "005",
+  "status": "draft",
+  "created": "2026-09-04",
+  "tags": [],
+  "description": "",
+  "summary": "Approach C: typed SubscriptionRequiredError + shared newProviderError constructor in clients, CircuitBreaker.DisableModelPermanent (bypasses Enabled, no cooldown), Engine.processProviderError helper replacing 4 duplicated error-path blocks, permanent disable via ToggleDisabled(id,true,nil) which ListEnabled filters from routing",
+  "phases": []
+}

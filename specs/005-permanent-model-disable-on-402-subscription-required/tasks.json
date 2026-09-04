@@ -1,0 +1,59 @@
+{
+  "spec": "005",
+  "tasks": [
+    {
+      "id": "S005T001",
+      "title": "Add SubscriptionRequiredError + newProviderError constructor; switch 6 client sites",
+      "description": "",
+      "status": "done",
+      "priority": 1,
+      "depends_on": [],
+      "owns": [
+        "internal/proxy/openai_client.go",
+        "internal/proxy/anthropic_client.go",
+        "internal/proxy/ollama_cloud_client.go"
+      ]
+    },
+    {
+      "id": "S005T002",
+      "title": "Add CircuitBreaker.DisableModelPermanent (no cooldown, bypasses Enabled)",
+      "description": "",
+      "status": "done",
+      "priority": 2,
+      "depends_on": [
+        "S005T001"
+      ],
+      "owns": [
+        "internal/proxy/circuit_breaker.go"
+      ]
+    },
+    {
+      "id": "S005T003",
+      "title": "Add Engine.processProviderError helper; replace 4 duplicated error-path blocks",
+      "description": "",
+      "status": "done",
+      "priority": 2,
+      "depends_on": [
+        "S005T001",
+        "S005T002"
+      ],
+      "owns": [
+        "internal/proxy/engine.go"
+      ]
+    },
+    {
+      "id": "S005T004",
+      "title": "Tests: engine 402 disable (4 handler paths), CB permanent disable unit, client classification, 5xx regression",
+      "description": "",
+      "status": "done",
+      "priority": 2,
+      "depends_on": [
+        "S005T003"
+      ],
+      "owns": [
+        "internal/proxy/engine_test.go",
+        "internal/proxy/circuit_breaker_test.go"
+      ]
+    }
+  ]
+}

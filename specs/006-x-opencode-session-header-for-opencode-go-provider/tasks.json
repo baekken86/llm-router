@@ -1,0 +1,42 @@
+{
+  "spec": "006",
+  "tasks": [
+    {
+      "id": "S006T001",
+      "title": "OpenAIClient: sessionID param + opencode.ai header logic",
+      "description": "",
+      "status": "done",
+      "priority": 1,
+      "depends_on": [],
+      "owns": [
+        "internal/proxy/openai_client.go"
+      ]
+    },
+    {
+      "id": "S006T002",
+      "title": "Engine: sessionIDForRequest helper + pass through 8 call sites",
+      "description": "",
+      "status": "done",
+      "priority": 2,
+      "depends_on": [
+        "S006T001"
+      ],
+      "owns": [
+        "internal/proxy/engine.go"
+      ]
+    },
+    {
+      "id": "S006T003",
+      "title": "Tests: header logic unit + engine integration (X-Request-ID forwarded)",
+      "description": "",
+      "status": "done",
+      "priority": 2,
+      "depends_on": [
+        "S006T002"
+      ],
+      "owns": [
+        "internal/proxy/engine_test.go"
+      ]
+    }
+  ]
+}

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chris/llm-router/internal/models"
@@ -154,6 +157,34 @@ func (e *Engine) ApplySettings(maxRetries, timeoutSeconds, maxTokens int) {
 	e.maxRetries = maxRetries
 	e.timeoutSeconds = timeoutSeconds
 	e.maxTokens = maxTokens
+}
+
+// fallbackSessionID is a process-wide stable ID used when an incoming request
+// carries no X-Request-ID. Generated once per process.
+var (
+	fallbackSessionIDOnce sync.Once
+	fallbackSessionID     string
+)
+
+// sessionIDForRequest returns a stable per-conversation ID for provider
+// session headers (e.g. X-Opencode-Session). Uses the incoming X-Request-ID
+// (opencode sends its session ID there) when present, otherwise a
+// process-wide stable UUID so all conversation-less traffic shares one ID.
+func sessionIDForRequest(r *http.Request) string {
+	if r != nil {
+		if id := r.Header.Get("X-Request-ID"); id != "" {
+			return id
+		}
+	}
+	fallbackSessionIDOnce.Do(func() {
+		b := make([]byte, 16)
+		if _, err := rand.Read(b); err != nil {
+			fallbackSessionID = fmt.Sprintf("router-%d", time.Now().UnixNano())
+			return
+		}
+		fallbackSessionID = hex.EncodeToString(b)
+	})
+	return fallbackSessionID
 }
 
 func (e *Engine) HandleChatCompletionRoute(w http.ResponseWriter, r *http.Request) {
@@ -609,6 +640,7 @@ e.logRequest(RequestLog{
 func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey string, req ChatCompletionRequest) (*ChatCompletionResponse, *SendRequestResult, error) {
 	var resp *ChatCompletionResponse
 	var err error
+	sessionID := sessionIDForRequest(r)
 
 	if rm.Provider.APIType == models.APITypeAnthropic {
 		anthReq := OpenAIToAnthropic(req)
@@ -630,7 +662,7 @@ func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey s
 		if rm.ReasoningEffort != "" {
 			req.ReasoningEffort = &rm.ReasoningEffort
 		}
-		resp, err = e.openaiClient.ChatCompletion(rm.Provider.BaseURL, apiKey, req)
+		resp, err = e.openaiClient.ChatCompletion(rm.Provider.BaseURL, apiKey, sessionID, req)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -643,7 +675,7 @@ func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey s
 		if rm.ReasoningEffort != "" {
 			req.ReasoningEffort = &rm.ReasoningEffort
 		}
-		resp, err = e.openaiClient.ChatCompletion(rm.Provider.BaseURL, apiKey, req)
+		resp, err = e.openaiClient.ChatCompletion(rm.Provider.BaseURL, apiKey, sessionID, req)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -663,7 +695,7 @@ func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey s
 		if rm.ReasoningEffort != "" {
 			req.ReasoningEffort = &rm.ReasoningEffort
 		}
-		resp, err = e.openaiClient.ChatCompletion(rm.Provider.BaseURL, apiKey, req)
+		resp, err = e.openaiClient.ChatCompletion(rm.Provider.BaseURL, apiKey, sessionID, req)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -686,6 +718,7 @@ func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey s
 }
 
 func (e *Engine) sendStreamRequest(r *http.Request, rm service.ResolvedModel, apiKey string, req ChatCompletionRequest) (io.ReadCloser, *http.Response, error) {
+	sessionID := sessionIDForRequest(r)
 	if rm.Provider.APIType == models.APITypeAnthropic {
 		anthReq := OpenAIToAnthropic(req)
 		anthReq.Model = rm.Model.Name
@@ -701,7 +734,7 @@ func (e *Engine) sendStreamRequest(r *http.Request, rm service.ResolvedModel, ap
 		if rm.ReasoningEffort != "" {
 			req.ReasoningEffort = &rm.ReasoningEffort
 		}
-		return e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, req)
+		return e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, sessionID, req)
 	} else if rm.Provider.APIType == models.APITypeOllama {
 		// Ollama local: OpenAI-compatible wire format.
 		// Explicit branch (not generic else) to allow per-provider hooks
@@ -711,7 +744,7 @@ func (e *Engine) sendStreamRequest(r *http.Request, rm service.ResolvedModel, ap
 		if rm.ReasoningEffort != "" {
 			req.ReasoningEffort = &rm.ReasoningEffort
 		}
-		return e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, req)
+		return e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, sessionID, req)
 	} else if rm.Provider.APIType == models.APITypeOllamaCloud {
 		// Ollama Cloud (ollama.com): native Ollama format at /api/chat.
 		req.Model = rm.Model.Name
@@ -725,7 +758,7 @@ func (e *Engine) sendStreamRequest(r *http.Request, rm service.ResolvedModel, ap
 	if rm.ReasoningEffort != "" {
 		req.ReasoningEffort = &rm.ReasoningEffort
 	}
-	return e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, req)
+	return e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, sessionID, req)
 }
 
 func (e *Engine) streamPassthrough(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser, httpResp *http.Response, onProgress func(StreamProgress)) *Usage {
@@ -1350,7 +1383,7 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 				lastErr = err
 			} else {
 				openReq.Model = rm.Model.Name
-				streamBody, _, err := e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, openReq)
+				streamBody, _, err := e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, requestID, openReq)
 				if err == nil {
 					e.logRequest(RequestLog{
 						Type:          "proxy",

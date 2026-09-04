@@ -1,0 +1,12 @@
+{
+  "id": "006",
+  "title": "X-Opencode-Session Header for OpenCode Go Provider",
+  "status": "active",
+  "created": "2026-09-04",
+  "completed": null,
+  "branch": "spec/006-x-opencode-session-header-for-opencode-go-provider",
+  "prs": [],
+  "tags": [],
+  "description": "OpenCode Go requires X-Opencode-Session header (stable per-conversation ID) from 09/06. Forward incoming X-Request-ID (opencode sends its session ID there), fallback to process-wide stable UUID. Header only sent to opencode.ai hosts via the OpenAI-compatible client.",
+  "sections": []
+}

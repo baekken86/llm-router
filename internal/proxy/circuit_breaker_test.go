@@ -424,3 +424,112 @@ func TestHandleChatCompletion_5xx_DoesNotPermanentDisable(t *testing.T) {
 		t.Errorf("5xx must not permanently disable; got %d ToggleDisabled calls", calls)
 	}
 }
+
+// --- X-Opencode-Session header tests ---
+
+// captureServer records request headers and returns 200 with a minimal completion.
+func captureServer(t *testing.T, captured *http.Header) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*captured = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+}
+
+func TestApplySessionHeader_OpencodeHost(t *testing.T) {
+	for _, baseURL := range []string{
+		"https://opencode.ai/zen/go",
+		"https://opencode.ai/zen",
+		"https://api.opencode.ai/v1",
+	} {
+		req, _ := http.NewRequest("POST", baseURL+"/v1/chat/completions", nil)
+		applySessionHeader(req, baseURL, "sess-123")
+		if got := req.Header.Get("X-Opencode-Session"); got != "sess-123" {
+			t.Errorf("baseURL %q: expected header sess-123, got %q", baseURL, got)
+		}
+	}
+}
+
+func TestApplySessionHeader_OtherHosts(t *testing.T) {
+	for _, baseURL := range []string{
+		"https://api.openai.com/v1",
+		"https://notopencode.ai/v1",
+		"https://evil-opencode.ai.com/v1",
+		"https://localhost:11434/v1",
+	} {
+		req, _ := http.NewRequest("POST", baseURL+"/v1/chat/completions", nil)
+		applySessionHeader(req, baseURL, "sess-123")
+		if got := req.Header.Get("X-Opencode-Session"); got != "" {
+			t.Errorf("baseURL %q: expected no header, got %q", baseURL, got)
+		}
+	}
+}
+
+func TestApplySessionHeader_EmptySessionID(t *testing.T) {
+	req, _ := http.NewRequest("POST", "https://opencode.ai/zen/go", nil)
+	applySessionHeader(req, "https://opencode.ai/zen/go", "")
+	if req.Header.Get("X-Opencode-Session") != "" {
+		t.Error("empty sessionID must not set header")
+	}
+}
+
+func TestSessionIDForRequest_UsesXRequestID(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	r.Header.Set("X-Request-ID", "my-session-id")
+	if got := sessionIDForRequest(r); got != "my-session-id" {
+		t.Errorf("expected my-session-id, got %q", got)
+	}
+}
+
+func TestSessionIDForRequest_FallbackStable(t *testing.T) {
+	r1 := httptest.NewRequest(http.MethodPost, "/", nil)
+	r2 := httptest.NewRequest(http.MethodPost, "/", nil)
+	id1 := sessionIDForRequest(r1)
+	id2 := sessionIDForRequest(r2)
+	if id1 == "" {
+		t.Fatal("fallback ID must not be empty")
+	}
+	if id1 != id2 {
+		t.Errorf("fallback ID must be process-stable: %q != %q", id1, id2)
+	}
+}
+
+func TestOpenCodeGo_SessionHeaderForwarded(t *testing.T) {
+	origHostCheck := isOpencodeHost
+	isOpencodeHost = func(string) bool { return true }
+	defer func() { isOpencodeHost = origHostCheck }()
+
+	var captured http.Header
+	srv := captureServer(t, &captured)
+	defer srv.Close()
+
+	vmSvc := &mockVMService{
+		getByNameFn: func(_ context.Context, _ string) (*models.VirtualModel, error) {
+			return &models.VirtualModel{ID: 1, Name: "test-vm", MaxRetries: 0}, nil
+		},
+		resolveFn: func(_ context.Context, _ *models.VirtualModel) ([]service.ResolvedModel, error) {
+			return []service.ResolvedModel{
+				{
+					Model:    models.Model{ID: 42, ProviderID: 1, Name: "go-model"},
+					Provider: models.Provider{ID: 1, Name: "opencode-go", APIType: models.APITypeOpenAI, BaseURL: srv.URL + "/go", APIKeyEncrypted: "enc:test"},
+				},
+			}, nil
+		},
+	}
+
+	engine, _ := newTestEngine(vmSvc, &mockProviderService{
+		decryptKeyFn: func(_ string) (string, error) { return "test-key", nil },
+	}, &mockOAuthService{
+		getTokenFn: func(_ context.Context, _ int64) (string, error) { return "", io.EOF },
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-vm","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("X-Request-ID", "sess_abc123")
+	w := httptest.NewRecorder()
+	engine.HandleChatCompletion(w, req)
+
+	if captured.Get("X-Opencode-Session") == "" {
+		t.Errorf("expected X-Opencode-Session to be set, headers: %v", captured)
+	}
+}

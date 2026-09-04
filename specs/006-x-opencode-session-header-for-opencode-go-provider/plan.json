@@ -1,0 +1,9 @@
+{
+  "spec": "006",
+  "status": "draft",
+  "created": "2026-09-04",
+  "tags": [],
+  "description": "",
+  "summary": "Add sessionID param to OpenAIClient ChatCompletion/ChatCompletionStream; engine passes sessionIDForRequest(r) (X-Request-ID or process-stable UUID); client sets X-Opencode-Session header only when host is opencode.ai",
+  "phases": []
+}

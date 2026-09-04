@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -138,7 +139,29 @@ type StreamChunk struct {
 	Usage   *Usage         `json:"usage,omitempty"`
 }
 
-func (c *OpenAIClient) ChatCompletion(baseURL, apiKey string, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
+// isOpencodeHost reports whether the provider host is an OpenCode host.
+// Package var so tests can override it (test servers run on localhost).
+var isOpencodeHost = func(host string) bool {
+	return host == "opencode.ai" || strings.HasSuffix(host, ".opencode.ai")
+}
+
+// applySessionHeader sets X-Opencode-Session for OpenCode hosts. OpenCode Go
+// requires a stable per-conversation session ID and errors without it. The
+// header is only sent to opencode.ai hosts; other providers are unaffected.
+func applySessionHeader(httpReq *http.Request, baseURL, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return
+	}
+	if isOpencodeHost(u.Hostname()) {
+		httpReq.Header.Set("X-Opencode-Session", sessionID)
+	}
+}
+
+func (c *OpenAIClient) ChatCompletion(baseURL, apiKey, sessionID string, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -151,6 +174,7 @@ func (c *OpenAIClient) ChatCompletion(baseURL, apiKey string, req ChatCompletion
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	applySessionHeader(httpReq, baseURL, sessionID)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -171,7 +195,7 @@ func (c *OpenAIClient) ChatCompletion(baseURL, apiKey string, req ChatCompletion
 	return &result, nil
 }
 
-func (c *OpenAIClient) ChatCompletionStream(baseURL, apiKey string, req ChatCompletionRequest) (io.ReadCloser, *http.Response, error) {
+func (c *OpenAIClient) ChatCompletionStream(baseURL, apiKey, sessionID string, req ChatCompletionRequest) (io.ReadCloser, *http.Response, error) {
 	req.Stream = true
 	req.StreamOptions = &StreamOptions{IncludeUsage: true}
 
@@ -188,6 +212,7 @@ func (c *OpenAIClient) ChatCompletionStream(baseURL, apiKey string, req ChatComp
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("Accept", "text/event-stream")
+	applySessionHeader(httpReq, baseURL, sessionID)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {

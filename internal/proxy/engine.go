@@ -1629,7 +1629,7 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 func (e *Engine) streamAnthropicPassthrough(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser, onProgress func(StreamProgress)) *Usage {
 	defer body.Close()
 
-	var inputTokens, outputTokens, cachedTokens int
+	parts := anthropicUsageParts{}
 	reader := bufio.NewReader(body)
 
 	if onProgress != nil {
@@ -1641,11 +1641,16 @@ func (e *Engine) streamAnthropicPassthrough(w http.ResponseWriter, flusher http.
 			for {
 				select {
 				case <-ticker.C:
-					onProgress(StreamProgress{
-						InputTokens:  inputTokens,
-						OutputTokens: outputTokens,
-						CachedTokens: cachedTokens,
-					})
+					usage := parts.build()
+					var progress StreamProgress
+					if usage != nil {
+						progress.InputTokens = usage.PromptTokens
+						progress.OutputTokens = usage.CompletionTokens
+						if usage.PromptTokensDetails != nil {
+							progress.CachedTokens = usage.PromptTokensDetails.CachedTokens
+						}
+					}
+					onProgress(progress)
 				case <-done:
 					return
 				}
@@ -1664,22 +1669,20 @@ func (e *Engine) streamAnthropicPassthrough(w http.ResponseWriter, flusher http.
 				data := strings.TrimPrefix(trimmed, "data: ")
 				var event AnthropicStreamEvent
 				if jsonErr := json.Unmarshal([]byte(data), &event); jsonErr == nil {
-					switch event.Type {
-					case "message_start":
-						var msg struct {
-							Usage struct {
-								InputTokens              int `json:"input_tokens"`
-								CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-								CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-							} `json:"usage"`
-						}
-						if json.Unmarshal(event.Message, &msg) == nil {
-							inputTokens = msg.Usage.InputTokens + msg.Usage.CacheReadInputTokens + msg.Usage.CacheCreationInputTokens
-							cachedTokens = msg.Usage.CacheReadInputTokens
-						}
-					case "message_delta":
-						if event.Usage != nil {
-							outputTokens = event.Usage.OutputTokens
+					// Usage accounting mirrors ClaudeStreamState's translator
+					// path: presence-aware cumulative overwrite from the
+					// top-level usage or one nested inside delta.
+					if nested := extractNestedDeltaUsage(event.Delta); len(nested) > 0 {
+						parts.applyRaw(nested)
+					}
+					if usageRaw := extractUsageRaw([]byte(data)); len(usageRaw) > 0 {
+						parts.applyRaw(usageRaw)
+					}
+					if event.Type == "message_start" {
+						if msgUsage := extractUsageRaw(event.Message); len(msgUsage) > 0 {
+							if parts.applyRaw(msgUsage) {
+								parts.seen = true
+							}
 						}
 					}
 				}
@@ -1690,17 +1693,7 @@ func (e *Engine) streamAnthropicPassthrough(w http.ResponseWriter, flusher http.
 		}
 	}
 
-	if inputTokens > 0 || outputTokens > 0 {
-		return &Usage{
-			PromptTokens:     inputTokens,
-			CompletionTokens: outputTokens,
-			TotalTokens:      inputTokens + outputTokens,
-			PromptTokensDetails: &PromptTokensDetails{
-				CachedTokens: cachedTokens,
-			},
-		}
-	}
-	return nil
+	return parts.build()
 }
 
 func (e *Engine) streamOpenAIToAnthropic(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser, model string, requestID string, onProgress func(StreamProgress)) *Usage {

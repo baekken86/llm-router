@@ -68,6 +68,20 @@ func TestSetup_ExistingProvidersUnchanged(t *testing.T) {
 	}
 }
 
+// TestSetup_ZaiBaseURLIncludesV1 pins the zai Anthropic-compatible base URL to
+// the /v1 suffix: the router POSTs {baseURL}/messages, and z.ai only serves
+// /api/anthropic/v1/messages (without /v1 it answers HTTP 200 with a
+// {"code":500,"msg":"404 NOT_FOUND"} JSON envelope).
+func TestSetup_ZaiBaseURLIncludesV1(t *testing.T) {
+	cfg, ok := supportedProviders["zai"]
+	if !ok {
+		t.Fatal("zai missing from supportedProviders")
+	}
+	if cfg.baseURL != "https://api.z.ai/api/anthropic/v1" {
+		t.Errorf("zai baseURL = %q, want https://api.z.ai/api/anthropic/v1", cfg.baseURL)
+	}
+}
+
 // --- Predefined models ----------------------------------------------------------------
 
 // TestSetup_ChatgptPredefinedModelsAreCodexSeed verifies createPredefinedModels

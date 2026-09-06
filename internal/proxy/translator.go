@@ -193,6 +193,7 @@ type ClaudeStreamState struct {
 	ToolCallIndex     int
 	ToolCalls         map[int]*ToolCallState
 	Usage             *Usage
+	usageParts        anthropicUsageParts
 	FinishReasonSent  bool
 }
 
@@ -225,27 +226,21 @@ func (s *ClaudeStreamState) ProcessEvent(event AnthropicStreamEvent) []*StreamCh
 		var msg struct {
 			ID    string `json:"id"`
 			Model string `json:"model"`
-			Usage *struct {
-				InputTokens           int `json:"input_tokens"`
-				CacheReadInputTokens  int `json:"cache_read_input_tokens"`
-				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-			} `json:"usage"`
 		}
 		if err := json.Unmarshal(event.Message, &msg); err == nil {
 			s.MessageID = msg.ID
 			if msg.Model != "" {
 				s.Model = msg.Model
 			}
-			if msg.Usage != nil {
-				promptTokens := msg.Usage.InputTokens + msg.Usage.CacheReadInputTokens + msg.Usage.CacheCreationInputTokens
-				s.Usage = &Usage{
-					PromptTokens: promptTokens,
-					CompletionTokens: 0,
-					TotalTokens: promptTokens,
-					PromptTokensDetails: &PromptTokensDetails{
-						CachedTokens: msg.Usage.CacheReadInputTokens,
-					},
+			// message.usage is the initial usage snapshot (real Anthropic:
+			// input/cache counts with output 0; zai: everything zeroed).
+			// Decode presence-aware so a later cumulative delta overwrites
+			// per-field and OpenAI-style names are accepted.
+			if raw := extractUsageRaw(event.Message); len(raw) > 0 {
+				if s.usageParts.applyRaw(raw) {
+					s.usageParts.seen = true // usage key present → non-nil Usage
 				}
+				s.Usage = s.usageParts.build()
 			}
 		}
 		results = append(results, s.createChunk(StreamDelta{Role: "assistant"}, nil, nil))
@@ -341,13 +336,17 @@ func (s *ClaudeStreamState) ProcessEvent(event AnthropicStreamEvent) []*StreamCh
 		s.TextBlockStarted = false
 
 	case "message_delta":
-		if event.Usage != nil {
-			prev := s.Usage
-			outputTokens := event.Usage.OutputTokens
-			if prev != nil {
-				prev.CompletionTokens = outputTokens
-				prev.TotalTokens = prev.PromptTokens + outputTokens
-			}
+		// Usage on message_delta is CUMULATIVE (Anthropic contract). Some
+		// providers (zai) only send the real totals here — top-level or nested
+		// inside delta — with message_start's usage zeroed. Read both shapes;
+		// present fields overwrite the running totals, absent fields are
+		// retained.
+		if nested := extractNestedDeltaUsage(event.Delta); len(nested) > 0 {
+			s.usageParts.applyRaw(nested)
+		}
+		s.usageParts.applyRaw(event.UsageRaw)
+		if merged := s.usageParts.build(); merged != nil {
+			s.Usage = merged
 		}
 		if event.Delta != nil {
 			var delta struct {
@@ -374,6 +373,109 @@ func (s *ClaudeStreamState) ProcessEvent(event AnthropicStreamEvent) []*StreamCh
 	}
 
 	return results
+}
+
+// --- Usage accounting (Anthropic SSE) -----------------------------------------
+
+// usageFieldSet decodes one usage payload with per-field presence (a pointer
+// per field) so an explicit 0 (zai) is distinguishable from an absent field
+// (canonical Anthropic output-only message_delta). Unknown extras
+// (server_tool_use, service_tier, ...) are ignored. OpenAI-style names
+// (prompt_tokens / completion_tokens / prompt_tokens_details.cached_tokens)
+// are accepted as fallbacks when the Anthropic name is absent.
+type usageFieldSet struct {
+	Input         *int `json:"input_tokens"`
+	Output        *int `json:"output_tokens"`
+	CacheRead     *int `json:"cache_read_input_tokens"`
+	CacheCreation *int `json:"cache_creation_input_tokens"`
+
+	// OpenAI-style fallbacks, consulted only when the Anthropic name is absent.
+	Prompt        *int `json:"prompt_tokens"`
+	Completion    *int `json:"completion_tokens"`
+	OpenAIDetails *struct {
+		CachedTokens *int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+}
+
+// anthropicUsageParts tracks the Anthropic usage components across a stream.
+// message_delta usage is CUMULATIVE per the Anthropic contract, so present
+// fields OVERWRITE the running values — never sum. Providers like zai send a
+// zeroed message_start usage and the real totals only in the final
+// message_delta (top-level or nested inside delta); overwrite semantics make
+// both layouts converge on the correct totals.
+type anthropicUsageParts struct {
+	input         int
+	output        int
+	cacheRead     int
+	cacheCreation int
+	seen          bool
+}
+
+// apply folds decoded usage payloads into the running parts with field-level
+// overwrite. Later payloads win per field.
+func (p *anthropicUsageParts) apply(f usageFieldSet) {
+	if f.Input != nil {
+		p.input = *f.Input
+		p.seen = true
+	} else if f.Prompt != nil {
+		p.input = *f.Prompt
+		p.seen = true
+	}
+	if f.Output != nil {
+		p.output = *f.Output
+		p.seen = true
+	} else if f.Completion != nil {
+		p.output = *f.Completion
+		p.seen = true
+	}
+	if f.CacheRead != nil {
+		p.cacheRead = *f.CacheRead
+		p.seen = true
+	} else if f.OpenAIDetails != nil && f.OpenAIDetails.CachedTokens != nil {
+		p.cacheRead = *f.OpenAIDetails.CachedTokens
+		p.seen = true
+	}
+	if f.CacheCreation != nil {
+		p.cacheCreation = *f.CacheCreation
+		p.seen = true
+	}
+}
+
+// applyRaw decodes raw usage-object bytes and folds them in. Used when the
+// field presence itself matters (an explicit 0 must overwrite a nonzero
+// running value; an absent field must not). Returns whether a JSON object was
+// decoded; null / malformed payloads are rejected.
+func (p *anthropicUsageParts) applyRaw(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &probe); err != nil || probe == nil {
+		return false
+	}
+	var f usageFieldSet
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return false
+	}
+	p.apply(f)
+	return true
+}
+
+// build returns the OpenAI-style Usage snapshot, or nil when no usage payload
+// has been seen anywhere in the stream.
+func (p *anthropicUsageParts) build() *Usage {
+	if !p.seen {
+		return nil
+	}
+	promptTokens := p.input + p.cacheRead + p.cacheCreation
+	return &Usage{
+		PromptTokens:     promptTokens,
+		CompletionTokens: p.output,
+		TotalTokens:      promptTokens + p.output,
+		PromptTokensDetails: &PromptTokensDetails{
+			CachedTokens: p.cacheRead,
+		},
+	}
 }
 
 func ExtractTokenUsage(resp *ChatCompletionResponse) (input, output, cached, reasoning int) {

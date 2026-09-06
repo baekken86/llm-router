@@ -99,6 +99,43 @@ type AnthropicUsage struct {
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 }
 
+// UnmarshalJSON tolerates non-Anthropic usage payloads: OpenAI-style field
+// names (prompt_tokens / completion_tokens / prompt_tokens_details.cached_tokens)
+// are mapped in as fallbacks when the Anthropic names are absent, and unknown
+// extras (server_tool_use, service_tier, prompt_tokens_details, ...) are
+// ignored instead of failing the parse. Anthropic field names always win when
+// present.
+func (u *AnthropicUsage) UnmarshalJSON(data []byte) error {
+	type plain AnthropicUsage
+	var canonical plain
+	if err := json.Unmarshal(data, &canonical); err != nil {
+		return err
+	}
+	*u = AnthropicUsage(canonical)
+
+	var loose struct {
+		PromptTokens        *int `json:"prompt_tokens"`
+		CompletionTokens    *int `json:"completion_tokens"`
+		PromptTokensDetails *struct {
+			CachedTokens *int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+	}
+	if err := json.Unmarshal(data, &loose); err != nil {
+		// Canonical fields already parsed; OpenAI-name probing is best-effort.
+		return nil
+	}
+	if u.InputTokens == 0 && loose.PromptTokens != nil {
+		u.InputTokens = *loose.PromptTokens
+	}
+	if u.OutputTokens == 0 && loose.CompletionTokens != nil {
+		u.OutputTokens = *loose.CompletionTokens
+	}
+	if u.CacheReadInputTokens == 0 && loose.PromptTokensDetails != nil && loose.PromptTokensDetails.CachedTokens != nil {
+		u.CacheReadInputTokens = *loose.PromptTokensDetails.CachedTokens
+	}
+	return nil
+}
+
 type AnthropicStreamEvent struct {
 	Type         string          `json:"type"`
 	Message      json.RawMessage `json:"message,omitempty"`
@@ -106,6 +143,12 @@ type AnthropicStreamEvent struct {
 	Delta        json.RawMessage `json:"delta,omitempty"`
 	ContentBlock json.RawMessage `json:"content_block,omitempty"`
 	Usage        *AnthropicUsage `json:"usage,omitempty"`
+
+	// UsageRaw preserves the raw usage object bytes (top-level; falls back to
+	// a delta-nested usage) so usage accounting can distinguish an explicit 0
+	// from an absent field and accept non-Anthropic field names. Set by
+	// ParseAnthropicSSEStream; never serialized.
+	UsageRaw json.RawMessage `json:"-"`
 }
 
 func (c *AnthropicClient) ChatCompletion(baseURL, apiKey string, req AnthropicRequest) (*AnthropicResponse, error) {
@@ -202,6 +245,31 @@ func (c *AnthropicClient) ChatCompletionStream(baseURL, apiKey string, req Anthr
 	return resp.Body, resp, nil
 }
 
+// extractUsageRaw returns the raw bytes of the top-level "usage" object of an
+// SSE data payload (or nil when absent).
+func extractUsageRaw(data []byte) json.RawMessage {
+	var probe struct {
+		Usage json.RawMessage `json:"usage"`
+	}
+	if json.Unmarshal(data, &probe) == nil && len(probe.Usage) > 0 {
+		return probe.Usage
+	}
+	return nil
+}
+
+// extractNestedDeltaUsage returns raw usage bytes nested inside a delta
+// object: {"delta":{"usage":{...}}} — a layout some Anthropic-compatible
+// providers (e.g. zai) use.
+func extractNestedDeltaUsage(delta json.RawMessage) json.RawMessage {
+	var probe struct {
+		Usage json.RawMessage `json:"usage"`
+	}
+	if json.Unmarshal(delta, &probe) == nil && len(probe.Usage) > 0 {
+		return probe.Usage
+	}
+	return nil
+}
+
 func ParseAnthropicSSEStream(reader io.ReadCloser) <-chan AnthropicStreamEvent {
 	ch := make(chan AnthropicStreamEvent)
 
@@ -222,6 +290,14 @@ func ParseAnthropicSSEStream(reader io.ReadCloser) <-chan AnthropicStreamEvent {
 			var event AnthropicStreamEvent
 			if err := json.Unmarshal([]byte(data), &event); err != nil {
 				continue
+			}
+
+			// Preserve raw usage bytes for presence-aware accounting; also
+			// surface usage objects nested inside the delta object ({"delta":
+			// {"usage":{...}}) which some providers emit.
+			event.UsageRaw = extractUsageRaw([]byte(data))
+			if len(event.UsageRaw) == 0 && len(event.Delta) > 0 {
+				event.UsageRaw = extractNestedDeltaUsage(event.Delta)
 			}
 
 			ch <- event

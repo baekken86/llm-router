@@ -49,7 +49,7 @@ var supportedProviders = map[string]providerConfig{
 	"zai": {
 		name:    "zai",
 		apiType: "anthropic",
-		baseURL: "https://api.z.ai/api/anthropic",
+		baseURL: "https://api.z.ai/api/anthropic/v1",
 		auth:    "apikey",
 	},
 	"openrouter": {

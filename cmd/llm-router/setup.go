@@ -46,6 +46,12 @@ var supportedProviders = map[string]providerConfig{
 		baseURL: "https://api.anthropic.com/v1",
 		auth:    "apikey",
 	},
+	"zai": {
+		name:    "zai",
+		apiType: "anthropic",
+		baseURL: "https://api.z.ai/api/anthropic",
+		auth:    "apikey",
+	},
 	"openrouter": {
 		name:    "openrouter",
 		apiType: "openai",
@@ -82,7 +88,7 @@ type providerConfig struct {
 func runSetup(args []string) {
 	fs := flag.NewFlagSet("setup", flag.ExitOnError)
 	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
-	providerName := fs.String("provider", "", "Provider name (required). Supported: claude-code, chatgpt (alias: codex), opencode-go, opencode-zen, openai, anthropic, openrouter, cloudflare")
+	providerName := fs.String("provider", "", "Provider name (required). Supported: claude-code, chatgpt (alias: codex), opencode-go, opencode-zen, openai, anthropic, zai, openrouter, cloudflare")
 	manual := fs.Bool("manual", false, "OAuth only: paste the callback URL manually instead of the local callback server")
 	apiKey := fs.String("key", "", "API key (required for API key providers)")
 	baseURL := fs.String("url", "", "Custom base URL (optional, overrides default)")
@@ -340,6 +346,15 @@ func createPredefinedModels(ctx context.Context, modelRepo repository.ModelRepos
 		// service layer; discovery (`llm-router discover --provider chatgpt`)
 		// replaces it with the live catalog when reachable.
 		"chatgpt": service.CodexFallbackModels,
+		// zai GLM Coding Plan: the Anthropic-compatible endpoint does not
+		// reliably expose /v1/models for discovery, so seed the current plan
+		// lineup ("[1m]" suffix selects the 1M-context variant).
+		"zai": {
+			"glm-5.3",
+			"glm-5.3-flash",
+			"glm-5.3[1m]",
+			"glm-5.3-flash[1m]",
+		},
 	}
 
 	modelNames, exists := predefined[providerName]
@@ -417,6 +432,7 @@ func printSupportedProviders() {
 	fmt.Println("    opencode-zen    OpenCode Zen (pay-as-you-go, free models available)")
 	fmt.Println("    openai          OpenAI (GPT-4o, o3, etc.)")
 	fmt.Println("    anthropic       Anthropic API (Claude)")
+	fmt.Println("    zai             Z.AI GLM Coding Plan subscription (Anthropic-compatible)")
 	fmt.Println("    openrouter      OpenRouter (multi-provider)")
 	fmt.Println("    cloudflare      Cloudflare Workers AI (--account-id required)")
 	fmt.Println("    ollama          Ollama local models (--host, default localhost:11434)")

@@ -54,6 +54,7 @@ func TestSetup_ExistingProvidersUnchanged(t *testing.T) {
 		"openai":      {name: "openai", apiType: "openai", auth: "apikey"},
 		"anthropic":   {name: "anthropic", apiType: "anthropic", auth: "apikey"},
 		"cloudflare":  {name: "cloudflare", apiType: "cloudflare", auth: "apikey"},
+		"zai":         {name: "zai", apiType: "anthropic", auth: "apikey"},
 	}
 	for key, want := range checks {
 		got, ok := supportedProviders[key]

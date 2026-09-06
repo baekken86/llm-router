@@ -48,6 +48,7 @@ claude
 ```bash
 ./llm-router setup --provider openai --key sk-...
 ./llm-router setup --provider anthropic --key sk-ant-...
+./llm-router setup --provider zai --key <zai-api-key>  # GLM Coding Plan
 ./llm-router setup --provider ollama
 ./llm-router setup --provider cloudflare --account-id XXX --key XXX
 ./llm-router setup --provider claude-code --url https://your-custom-url  # OAuth
@@ -220,6 +221,7 @@ llm-router create-key         Create proxy API key
 
 - `openai` — OpenAI-compatible APIs (OpenAI, Groq, Together, vLLM, etc.)
 - `anthropic` — Anthropic API (auto-translated to/from OpenAI format)
+- `zai` — Z.AI GLM Coding Plan subscription (Anthropic-compatible, `glm-5.3`/`glm-5.3-flash`, API key from z.ai/manage-apikey)
 - `cloudflare` — Cloudflare Workers AI
 - `ollama` — Local Ollama
 - `ollama-cloud` — Ollama Cloud (ollama.com)

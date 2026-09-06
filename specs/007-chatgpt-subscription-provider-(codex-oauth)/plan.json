@@ -1,0 +1,9 @@
+{
+  "spec": "007",
+  "status": "draft",
+  "created": "2026-09-05",
+  "tags": [],
+  "description": "Implementation follows docs/superpowers/specs/2026-09-05-chatgpt-codex-provider-design.md. Phases: 1) constants+OAuth client 2) OAuthService parameterization + CLI 3) translator 4) CodexClient 5) engine+discovery+CLI wiring 6) tests",
+  "summary": "Add ChatGPT Plus/Pro subscription as provider via Codex OAuth. New api_type 'codex' with Responses-API translation, OAuth PKCE (port 1455), background token refresh (5d lead / 8d max), live model discovery via GET /backend-api/codex/models (official CLI endpoint; unlike claude-code) with static fallback. Design: docs/superpowers/specs/2026-09-05-chatgpt-codex-provider-design.md",
+  "phases": []
+}

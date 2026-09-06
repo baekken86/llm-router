@@ -1,11 +1,13 @@
 {
   "id": "007",
   "title": "ChatGPT Subscription Provider (Codex OAuth)",
-  "status": "active",
+  "status": "complete",
   "created": "2026-09-05",
   "completed": null,
   "branch": "spec/007-chatgpt-codex-provider",
-  "prs": [],
+  "prs": [
+    23
+  ],
   "tags": [],
   "description": "Add ChatGPT Plus/Pro subscription as a provider via OAuth login (Codex flow). New api_type 'codex' using the chatgpt.com/backend-api/codex Responses endpoint, translated to/from the OpenAI chat/completions format. Pattern follows the existing claude-code OAuth provider + anthropic translation client. Design doc: docs/superpowers/specs/2026-09-05-chatgpt-codex-provider-design.md",
   "sections": []

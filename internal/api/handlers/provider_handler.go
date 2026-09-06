@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/chris/llm-router/internal/models"
 	"github.com/chris/llm-router/internal/service"
+	"github.com/go-chi/chi/v5"
 )
 
 type ProviderHandler struct {
@@ -43,13 +43,13 @@ func (h *ProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name, api_type, and base_url are required")
 		return
 	}
-	if req.APIKey == "" && req.APIType != models.APITypeOllama && req.APIType != models.APITypeOllamaCloud {
+	if req.APIKey == "" && req.APIType != models.APITypeOllama && req.APIType != models.APITypeOllamaCloud && req.APIType != models.APITypeCodex {
 		writeError(w, http.StatusBadRequest, "api_key is required")
 		return
 	}
 
-	if req.APIType != models.APITypeOpenAI && req.APIType != models.APITypeAnthropic && req.APIType != models.APITypeCloudflare && req.APIType != models.APITypeOllama && req.APIType != models.APITypeOllamaCloud {
-		writeError(w, http.StatusBadRequest, "api_type must be 'openai', 'anthropic', 'cloudflare', 'ollama', or 'ollama-cloud'")
+	if req.APIType != models.APITypeOpenAI && req.APIType != models.APITypeAnthropic && req.APIType != models.APITypeCloudflare && req.APIType != models.APITypeOllama && req.APIType != models.APITypeOllamaCloud && req.APIType != models.APITypeCodex {
+		writeError(w, http.StatusBadRequest, "api_type must be 'openai', 'anthropic', 'cloudflare', 'ollama', 'ollama-cloud', or 'codex'")
 		return
 	}
 

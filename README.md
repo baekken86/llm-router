@@ -223,6 +223,7 @@ llm-router create-key         Create proxy API key
 - `cloudflare` — Cloudflare Workers AI
 - `ollama` — Local Ollama
 - `ollama-cloud` — Ollama Cloud (ollama.com)
+- `codex` — ChatGPT Plus/Pro subscription (OAuth login, Codex Responses API, auto-translated to/from OpenAI format)
 
 ## 🛠️ Tech stack
 

@@ -18,21 +18,22 @@ func runAddProvider(args []string) {
 	fs := flag.NewFlagSet("add-provider", flag.ExitOnError)
 	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
 	name := fs.String("name", "", "Provider name (required)")
-	apiType := fs.String("type", "", "API type: openai, anthropic, cloudflare, ollama, or ollama-cloud (default openai)")
+	apiType := fs.String("type", "", "API type: openai, anthropic, cloudflare, ollama, ollama-cloud, or codex (default openai)")
 	baseURL := fs.String("url", "", "Base URL (required)")
 	apiKey := fs.String("key", "", "API key (required)")
 	accountID := fs.String("account-id", "", "Account ID (required for cloudflare providers)")
 	host := fs.String("host", "localhost:11434", "Ollama host (default localhost:11434; use ollama.com for hosted)")
 	fs.Parse(args)
 
-	if *name == "" || (*baseURL == "" && *apiType != "ollama" && *apiType != "ollama-cloud") || (*apiKey == "" && *apiType != "ollama") {
+	if *name == "" || (*baseURL == "" && *apiType != "ollama" && *apiType != "ollama-cloud" && *apiType != "codex") || (*apiKey == "" && *apiType != "ollama" && *apiType != "codex") {
 		fmt.Fprintln(os.Stderr, "Usage:")
 		fmt.Fprintln(os.Stderr, "  llm-router add-provider --name opencode-go --url https://opencode.ai/zen/go --key sk-...")
 		fmt.Fprintln(os.Stderr, "  llm-router add-provider --name anthropic --type anthropic --url https://api.anthropic.com/v1 --key sk-ant-...")
 		fmt.Fprintln(os.Stderr, "  llm-router add-provider --name local --type ollama")
 		fmt.Fprintln(os.Stderr, "  llm-router add-provider --name ollama-cloud --type ollama-cloud --key <api-key>")
+		fmt.Fprintln(os.Stderr, "  llm-router add-provider --name chatgpt --type codex")
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "API types: openai (default), anthropic, cloudflare, ollama, ollama-cloud")
+		fmt.Fprintln(os.Stderr, "API types: openai (default), anthropic, cloudflare, ollama, ollama-cloud, codex")
 		os.Exit(1)
 	}
 
@@ -40,8 +41,8 @@ func runAddProvider(args []string) {
 		*apiType = "openai"
 	}
 
-	if *apiType != "openai" && *apiType != "anthropic" && *apiType != "cloudflare" && *apiType != "ollama" && *apiType != "ollama-cloud" {
-		fmt.Fprintln(os.Stderr, "Error: --type must be 'openai', 'anthropic', 'cloudflare', 'ollama', or 'ollama-cloud'")
+	if *apiType != "openai" && *apiType != "anthropic" && *apiType != "cloudflare" && *apiType != "ollama" && *apiType != "ollama-cloud" && *apiType != "codex" {
+		fmt.Fprintln(os.Stderr, "Error: --type must be 'openai', 'anthropic', 'cloudflare', 'ollama', 'ollama-cloud', or 'codex'")
 		os.Exit(1)
 	}
 
@@ -52,6 +53,10 @@ func runAddProvider(args []string) {
 
 	if *accountID != "" && *apiType != "cloudflare" {
 		fmt.Fprintln(os.Stderr, "Warning: --account-id ignored (only used for cloudflare)")
+	}
+
+	if *apiType == "codex" && *baseURL == "" {
+		*baseURL = "https://chatgpt.com/backend-api/codex"
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -116,6 +121,14 @@ func runAddProvider(args []string) {
 			BaseURL: "https://ollama.com/api/chat",
 			APIKey:  *apiKey,
 		}
+	} else if *apiType == "codex" {
+		// Codex (ChatGPT subscription) uses OAuth — no API key, no account id.
+		createReq = models.CreateProviderRequest{
+			Name:    *name,
+			APIType: models.APITypeCodex,
+			BaseURL: *baseURL,
+			APIKey:  "",
+		}
 	} else {
 		createReq = models.CreateProviderRequest{
 			Name:    *name,
@@ -141,6 +154,15 @@ func runAddProvider(args []string) {
 		fmt.Printf("  URL:  %s\n", *baseURL)
 	}
 	fmt.Println()
+
+	if *apiType == "codex" {
+		// Codex uses ChatGPT OAuth: connect first, then discover.
+		fmt.Println("Codex uses ChatGPT OAuth — no API key needed.")
+		fmt.Printf("Next steps:\n")
+		fmt.Printf("  1. Connect:         llm-router connect --provider %s\n", *name)
+		fmt.Printf("  2. Discover models: llm-router discover --provider %s\n", *name)
+		return
+	}
 
 	if *apiType == "cloudflare" {
 		// For cloudflare, add 9 predefined models

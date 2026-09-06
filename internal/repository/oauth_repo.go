@@ -27,17 +27,19 @@ func (r *sqliteOAuthRepo) Upsert(ctx context.Context, token *models.OAuthToken) 
 	now := time.Now()
 
 	result, err := r.db.ExecContext(ctx,
-		`INSERT INTO oauth_tokens (provider_id, access_token, refresh_token, expires_at, account_id, email, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO oauth_tokens (provider_id, access_token, refresh_token, expires_at, account_id, email, last_refresh_at, id_token, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(provider_id) DO UPDATE SET
 		   access_token = excluded.access_token,
 		   refresh_token = excluded.refresh_token,
 		   expires_at = excluded.expires_at,
 		   account_id = excluded.account_id,
 		   email = excluded.email,
+		   last_refresh_at = excluded.last_refresh_at,
+		   id_token = excluded.id_token,
 		   updated_at = excluded.updated_at`,
 		token.ProviderID, token.AccessToken, token.RefreshToken, token.ExpiresAt,
-		token.AccountID, token.Email, now, now,
+		token.AccountID, token.Email, token.LastRefreshAt, token.IDToken, now, now,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert oauth token: %w", err)
@@ -54,10 +56,11 @@ func (r *sqliteOAuthRepo) Upsert(ctx context.Context, token *models.OAuthToken) 
 func (r *sqliteOAuthRepo) GetByProviderID(ctx context.Context, providerID int64) (*models.OAuthToken, error) {
 	token := &models.OAuthToken{}
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, provider_id, access_token, refresh_token, expires_at, account_id, email, created_at, updated_at
+		`SELECT id, provider_id, access_token, refresh_token, expires_at, account_id, email, last_refresh_at, id_token, created_at, updated_at
 		 FROM oauth_tokens WHERE provider_id = ?`, providerID,
 	).Scan(&token.ID, &token.ProviderID, &token.AccessToken, &token.RefreshToken,
-		&token.ExpiresAt, &token.AccountID, &token.Email, &token.CreatedAt, &token.UpdatedAt)
+		&token.ExpiresAt, &token.AccountID, &token.Email, &token.LastRefreshAt, &token.IDToken,
+		&token.CreatedAt, &token.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

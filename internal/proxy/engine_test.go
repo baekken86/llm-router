@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -233,11 +234,30 @@ func (m *mockProviderService) Delete(_ context.Context, _ int64) error {
 }
 
 type mockOAuthService struct {
-	getTokenFn func(ctx context.Context, providerID int64) (string, error)
+	getTokenFn   func(ctx context.Context, providerID int64) (string, error)
+	refreshNowFn func(ctx context.Context, provider *models.Provider) (*models.OAuthToken, error)
+	getRowFn     func(ctx context.Context, providerID int64) (*models.OAuthToken, error)
 }
 
 func (m *mockOAuthService) GetValidToken(ctx context.Context, providerID int64) (string, error) {
+	if m.getTokenFn == nil {
+		return "", nil
+	}
 	return m.getTokenFn(ctx, providerID)
+}
+
+func (m *mockOAuthService) RefreshNow(ctx context.Context, provider *models.Provider) (*models.OAuthToken, error) {
+	if m.refreshNowFn == nil {
+		return nil, nil
+	}
+	return m.refreshNowFn(ctx, provider)
+}
+
+func (m *mockOAuthService) GetTokenRow(ctx context.Context, providerID int64) (*models.OAuthToken, error) {
+	if m.getRowFn == nil {
+		return nil, nil
+	}
+	return m.getRowFn(ctx, providerID)
 }
 
 func (m *mockOAuthService) StartAuthFlow(_ context.Context, _ int64) (string, string, error) {
@@ -846,5 +866,468 @@ func TestSendStreamRequest_Cloudflare_ExplicitBranch(t *testing.T) {
 	}
 	if !strings.Contains(streamContent, "chat.completion.chunk") {
 		t.Errorf("stream missing chunk objects, got: %s", streamContent)
+	}
+}
+
+// --- Codex dispatch (ChatGPT subscription backend, spec 007 §4.5/§4.6) -------
+
+// codexTokenRow is a valid stored OAuth row as the engine expects it.
+func codexTokenRow(accessToken, accountID string) *models.OAuthToken {
+	return &models.OAuthToken{
+		ProviderID:   1,
+		AccessToken:  accessToken,
+		RefreshToken: "rt-1",
+		ExpiresAt:    time.Now().Add(30 * 24 * time.Hour),
+		AccountID:    accountID,
+	}
+}
+
+func TestSendRequest_Codex_ExplicitBranch(t *testing.T) {
+	var gotPath, gotMethod, gotAuth, gotAccount, gotSession, gotCacheKey, gotModel string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		gotAuth = r.Header.Get("Authorization")
+		gotAccount = r.Header.Get("ChatGPT-Account-Id")
+		gotSession = r.Header.Get("session_id")
+		var body map[string]any
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &body)
+		gotCacheKey, _ = body["prompt_cache_key"].(string)
+		gotModel, _ = body["model"].(string)
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":7}}}\n\n")
+	}))
+	defer ts.Close()
+
+	oauthSvc := &mockOAuthService{
+		getTokenFn: func(_ context.Context, _ int64) (string, error) { return "at-old", nil },
+		getRowFn:   func(_ context.Context, _ int64) (*models.OAuthToken, error) { return codexTokenRow("at-old", "acct-9"), nil },
+	}
+	engine, _ := newTestEngine(&mockVMService{}, &mockProviderService{}, oauthSvc)
+
+	rm := service.ResolvedModel{
+		Model:    models.Model{ID: 1, ProviderID: 1, Name: "gpt-5.1-codex"},
+		Provider: models.Provider{ID: 1, Name: "chatgpt", APIType: models.APITypeCodex, BaseURL: ts.URL},
+	}
+
+	chatReq := ChatCompletionRequest{
+		Model:    "whatever-virtual-name",
+		Messages: []Message{{Role: "user", Content: "hello"}},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Header.Set("X-Request-ID", "sess-req-1")
+
+	resp, result, err := engine.sendRequest(req, rm, "ignored-key", chatReq)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Request must hit the codex /responses endpoint with OAuth identity.
+	if gotPath != "/responses" {
+		t.Errorf("request path = %q, want /responses", gotPath)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("request method = %q, want POST", gotMethod)
+	}
+	if gotAuth != "Bearer at-old" {
+		t.Errorf("auth header = %q, want %q", gotAuth, "Bearer at-old")
+	}
+	if gotAccount != "acct-9" {
+		t.Errorf("ChatGPT-Account-Id = %q, want acct-9", gotAccount)
+	}
+	// session_id/prompt_cache_key must use the incoming X-Request-ID
+	// (conversation-stable, same mechanism as the opencode header).
+	if gotSession != "sess-req-1" {
+		t.Errorf("session_id = %q, want sess-req-1", gotSession)
+	}
+	if gotCacheKey != "sess-req-1" {
+		t.Errorf("prompt_cache_key = %q, want sess-req-1", gotCacheKey)
+	}
+	// req.Model must be the physical model name.
+	if gotModel != "gpt-5.1-codex" {
+		t.Errorf("body model = %q, want gpt-5.1-codex", gotModel)
+	}
+
+	// Aggregated chat-completions response.
+	if resp == nil {
+		t.Fatal("expected non-nil response")
+	}
+	if len(resp.Choices) != 1 || resp.Choices[0].Message.Content != "Hello" {
+		t.Errorf("choices = %+v, want single 'Hello' choice", resp.Choices)
+	}
+	if resp.Usage.PromptTokens != 5 || resp.Usage.CompletionTokens != 7 {
+		t.Errorf("usage = %+v, want prompt=5 completion=7", resp.Usage)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+}
+
+func TestSendRequest_Codex_MissingOAuthToken_ActionableError(t *testing.T) {
+	oauthSvc := &mockOAuthService{
+		getTokenFn: func(_ context.Context, _ int64) (string, error) {
+			return "", errors.New("chatgpt session expired — re-run 'llm-router connect --provider chatgpt' to reconnect")
+		},
+	}
+	engine, _ := newTestEngine(&mockVMService{}, &mockProviderService{}, oauthSvc)
+
+	rm := service.ResolvedModel{
+		Model:    models.Model{ID: 1, ProviderID: 1, Name: "gpt-5.1-codex"},
+		Provider: models.Provider{ID: 1, Name: "chatgpt", APIType: models.APITypeCodex, BaseURL: "http://unused"},
+	}
+
+	resp, _, err := engine.sendRequest(nil, rm, "", ChatCompletionRequest{Messages: []Message{{Role: "user", Content: "hi"}}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if resp != nil {
+		t.Fatal("expected nil response")
+	}
+
+	pe, ok := err.(*ProviderError)
+	if !ok || pe.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("error %v (%T) should be ProviderError 401", err, err)
+	}
+	if !strings.Contains(pe.Message, "llm-router connect --provider chatgpt") {
+		t.Errorf("error message must be actionable: %q", pe.Message)
+	}
+}
+
+func TestSendRequest_Codex_401RefreshesAndRetries(t *testing.T) {
+	var mu sync.Mutex
+	var calls int
+	var auths []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		auths = append(auths, r.Header.Get("Authorization"))
+		n := calls
+		mu.Unlock()
+
+		if n == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"error":"invalid_token"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n")
+	}))
+	defer ts.Close()
+
+	refreshCalls := 0
+	oauthSvc := &mockOAuthService{
+		getTokenFn: func(_ context.Context, _ int64) (string, error) { return "at-old", nil },
+		getRowFn:   func(_ context.Context, _ int64) (*models.OAuthToken, error) { return codexTokenRow("at-old", "acct-9"), nil },
+		refreshNowFn: func(_ context.Context, _ *models.Provider) (*models.OAuthToken, error) {
+			refreshCalls++
+			return codexTokenRow("at-new", "acct-9"), nil
+		},
+	}
+	engine, _ := newTestEngine(&mockVMService{}, &mockProviderService{}, oauthSvc)
+
+	rm := service.ResolvedModel{
+		Model:    models.Model{ID: 1, ProviderID: 1, Name: "gpt-5.1-codex"},
+		Provider: models.Provider{ID: 1, Name: "chatgpt", APIType: models.APITypeCodex, BaseURL: ts.URL},
+	}
+
+	resp, _, err := engine.sendRequest(nil, rm, "", ChatCompletionRequest{Messages: []Message{{Role: "user", Content: "hi"}}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.Choices[0].Message.Content != "Hello" {
+		t.Fatalf("retry response wrong: %+v", resp)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 2 {
+		t.Errorf("upstream calls = %d, want 2 (initial + single retry)", calls)
+	}
+	if refreshCalls != 1 {
+		t.Errorf("RefreshNow calls = %d, want 1", refreshCalls)
+	}
+	if len(auths) != 2 || auths[0] != "Bearer at-old" || auths[1] != "Bearer at-new" {
+		t.Errorf("auth sequence = %v, want [Bearer at-old Bearer at-new]", auths)
+	}
+}
+
+func TestSendRequest_Codex_401RefreshFails_ReconnectErrorNoSideEffects(t *testing.T) {
+	ts := codexStatusServer(t, http.StatusUnauthorized, `{"error":"invalid_token"}`)
+	defer ts.Close()
+
+	reconnectErr := fmt.Errorf("codex refresh rejected (invalid_grant): %w", service.ErrCodexReconnectRequired)
+	oauthSvc := &mockOAuthService{
+		getTokenFn:   func(_ context.Context, _ int64) (string, error) { return "at-old", nil },
+		getRowFn:     func(_ context.Context, _ int64) (*models.OAuthToken, error) { return codexTokenRow("at-old", "acct-9"), nil },
+		refreshNowFn: func(_ context.Context, _ *models.Provider) (*models.OAuthToken, error) { return nil, reconnectErr },
+	}
+	engine, _ := newTestEngine(&mockVMService{}, &mockProviderService{}, oauthSvc)
+
+	rm := service.ResolvedModel{
+		Model:    models.Model{ID: 1, ProviderID: 1, Name: "gpt-5.1-codex"},
+		Provider: models.Provider{ID: 1, Name: "chatgpt", APIType: models.APITypeCodex, BaseURL: ts.URL},
+	}
+
+	_, _, err := engine.sendRequest(nil, rm, "", ChatCompletionRequest{Messages: []Message{{Role: "user", Content: "hi"}}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	pe, ok := err.(*ProviderError)
+	if !ok || pe.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("error %v (%T) should be ProviderError 401", err, err)
+	}
+	if !strings.Contains(pe.Error(), "llm-router connect --provider chatgpt") {
+		t.Errorf("error must tell the user to re-run connect: %q", pe.Error())
+	}
+	if !strings.Contains(pe.Message, "invalid_grant") {
+		t.Errorf("error should carry the underlying refresh cause: %q", pe.Message)
+	}
+
+	// Auth failure is NOT quota: processProviderError must not mark the
+	// provider rate-limited or record a 5xx.
+	providerErr := engine.processProviderError(context.Background(), err, rm)
+	if limited, _ := engine.rateLimits.IsLimited(rm.Provider.ID); limited {
+		t.Error("401 must not trigger a rate-limit cooldown")
+	}
+	if providerErr.StatusCode >= 500 {
+		t.Errorf("unexpected 5xx classification: %d", providerErr.StatusCode)
+	}
+}
+
+func TestSendStreamRequest_Codex_ExplicitBranch(t *testing.T) {
+	var gotPath, gotAuth, gotAccount, gotSession string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		gotAccount = r.Header.Get("ChatGPT-Account-Id")
+		gotSession = r.Header.Get("session_id")
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hel\"}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n")
+	}))
+	defer ts.Close()
+
+	oauthSvc := &mockOAuthService{
+		getTokenFn: func(_ context.Context, _ int64) (string, error) { return "at-old", nil },
+		getRowFn:   func(_ context.Context, _ int64) (*models.OAuthToken, error) { return codexTokenRow("at-old", "acct-9"), nil },
+	}
+	engine, _ := newTestEngine(&mockVMService{}, &mockProviderService{}, oauthSvc)
+
+	rm := service.ResolvedModel{
+		Model:    models.Model{ID: 1, ProviderID: 1, Name: "gpt-5.1-codex"},
+		Provider: models.Provider{ID: 1, Name: "chatgpt", APIType: models.APITypeCodex, BaseURL: ts.URL},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Header.Set("X-Request-ID", "sess-req-2")
+
+	body, httpResp, err := engine.sendStreamRequest(req, rm, "ignored-key", ChatCompletionRequest{Messages: []Message{{Role: "user", Content: "hi"}}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer body.Close()
+
+	if gotPath != "/responses" {
+		t.Errorf("request path = %q, want /responses", gotPath)
+	}
+	if gotAuth != "Bearer at-old" {
+		t.Errorf("auth header = %q, want %q", gotAuth, "Bearer at-old")
+	}
+	if gotAccount != "acct-9" {
+		t.Errorf("ChatGPT-Account-Id = %q, want acct-9", gotAccount)
+	}
+	if gotSession != "sess-req-2" {
+		t.Errorf("session_id = %q, want sess-req-2", gotSession)
+	}
+	if httpResp == nil || httpResp.StatusCode != http.StatusOK {
+		t.Fatalf("HTTP response = %+v, want 200", httpResp)
+	}
+
+	// The pipe already emits OpenAI chat-completions SSE (streamPassthrough
+	// compatible): chunk JSON + final [DONE].
+	data, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("failed to read stream: %v", err)
+	}
+	streamContent := string(data)
+	if !strings.Contains(streamContent, "chat.completion.chunk") {
+		t.Errorf("stream missing OpenAI chunk objects: %s", streamContent)
+	}
+	if !strings.Contains(streamContent, `"delta":{"content":"Hel"}`) {
+		t.Errorf("stream missing translated text delta: %s", streamContent)
+	}
+	if !strings.Contains(streamContent, "[DONE]") {
+		t.Errorf("stream missing [DONE] marker: %s", streamContent)
+	}
+}
+
+func TestSendStreamRequest_Codex_401RefreshFails_ActionableError(t *testing.T) {
+	ts := codexStatusServer(t, http.StatusUnauthorized, `{"error":"invalid_token"}`)
+	defer ts.Close()
+
+	reconnectErr := fmt.Errorf("codex refresh rejected (invalid_grant): %w", service.ErrCodexReconnectRequired)
+	oauthSvc := &mockOAuthService{
+		getTokenFn:   func(_ context.Context, _ int64) (string, error) { return "at-old", nil },
+		getRowFn:     func(_ context.Context, _ int64) (*models.OAuthToken, error) { return codexTokenRow("at-old", "acct-9"), nil },
+		refreshNowFn: func(_ context.Context, _ *models.Provider) (*models.OAuthToken, error) { return nil, reconnectErr },
+	}
+	engine, _ := newTestEngine(&mockVMService{}, &mockProviderService{}, oauthSvc)
+
+	rm := service.ResolvedModel{
+		Model:    models.Model{ID: 1, ProviderID: 1, Name: "gpt-5.1-codex"},
+		Provider: models.Provider{ID: 1, Name: "chatgpt", APIType: models.APITypeCodex, BaseURL: ts.URL},
+	}
+
+	_, _, err := engine.sendStreamRequest(nil, rm, "", ChatCompletionRequest{Messages: []Message{{Role: "user", Content: "hi"}}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	pe, ok := err.(*ProviderError)
+	if !ok || pe.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("error %v (%T) should be ProviderError 401", err, err)
+	}
+	if !strings.Contains(pe.Error(), "llm-router connect --provider chatgpt") {
+		t.Errorf("error must tell the user to re-run connect: %q", pe.Error())
+	}
+}
+
+// End-to-end through the streaming handler: a codex 401 that survives the
+// refresh must surface an actionable 401 failure and must NOT disable the
+// model (auth failure is not quota / not a 5xx).
+func TestHandleChatCompletionStream_Codex_401NoModelDisable(t *testing.T) {
+	ts := codexStatusServer(t, http.StatusUnauthorized, `{"error":"invalid_token"}`)
+	defer ts.Close()
+
+	vmName := "test-codex-vm"
+	vmSvc := &mockVMService{
+		getByNameFn: func(_ context.Context, name string) (*models.VirtualModel, error) {
+			if name != vmName {
+				return nil, nil
+			}
+			return &models.VirtualModel{ID: 9, Name: vmName, MaxRetries: 0}, nil
+		},
+		resolveFn: func(_ context.Context, _ *models.VirtualModel) ([]service.ResolvedModel, error) {
+			return []service.ResolvedModel{
+				{
+					Model:    models.Model{ID: 77, ProviderID: 1, Name: "gpt-5.1-codex"},
+					Provider: models.Provider{ID: 1, Name: "chatgpt", APIType: models.APITypeCodex, BaseURL: ts.URL},
+				},
+			}, nil
+		},
+	}
+
+	reconnectErr := fmt.Errorf("codex refresh rejected (invalid_grant): %w", service.ErrCodexReconnectRequired)
+	oauthSvc := &mockOAuthService{
+		getTokenFn:   func(_ context.Context, _ int64) (string, error) { return "at-old", nil },
+		getRowFn:     func(_ context.Context, _ int64) (*models.OAuthToken, error) { return codexTokenRow("at-old", "acct-9"), nil },
+		refreshNowFn: func(_ context.Context, _ *models.Provider) (*models.OAuthToken, error) { return nil, reconnectErr },
+	}
+
+	engine, logChan := newTestEngine(vmSvc, &mockProviderService{}, oauthSvc)
+
+	repo := newMockModelRepo()
+	repo.add(1, 77, "gpt-5.1-codex", false)
+	engine.SetCircuitBreaker(newTestCircuitBreaker(repo))
+
+	body := `{"model":"test-codex-vm","messages":[{"role":"user","content":"hi"}],"stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	engine.HandleChatCompletionStream(w, req)
+
+	// The handler's all-failed body hardcodes "request failed" per provider
+	// (pre-existing shape); the actionable reconnect message lives in the
+	// proxy RequestLog, so assert it there.
+	logs := drainLogs(t, logChan)
+	var sawFailure bool
+	for _, l := range logs {
+		if l.Type == "proxy" && l.StatusCode == http.StatusUnauthorized && strings.Contains(l.ErrorMessage, "llm-router connect --provider chatgpt") {
+			sawFailure = true
+		}
+	}
+	if !sawFailure {
+		t.Errorf("no proxy log with actionable 401 error; logs = %+v", logs)
+	}
+
+	// The model must remain enabled: 401 is auth, not quota / not 5xx.
+	for _, tc := range repo.toggleCalls {
+		if tc.disabled {
+			t.Errorf("model should not be disabled on 401, got toggle %+v", tc)
+		}
+	}
+	if limited, _ := engine.rateLimits.IsLimited(1); limited {
+		t.Error("provider must not be rate-limited on 401")
+	}
+}
+
+// End-to-end happy path through the streaming handler: codex provider streams
+// translated OpenAI SSE to the client.
+func TestHandleChatCompletionStream_Codex_Success(t *testing.T) {
+	ts := codexSSRServer(t, []string{
+		`{"type":"response.output_text.delta","delta":"Hel"}`,
+		`{"type":"response.output_text.delta","delta":"lo"}`,
+		`{"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":2}}}`,
+	})
+	defer ts.Close()
+
+	vmName := "test-codex-vm"
+	vmSvc := &mockVMService{
+		getByNameFn: func(_ context.Context, name string) (*models.VirtualModel, error) {
+			if name != vmName {
+				return nil, nil
+			}
+			return &models.VirtualModel{ID: 9, Name: vmName, MaxRetries: 0}, nil
+		},
+		resolveFn: func(_ context.Context, _ *models.VirtualModel) ([]service.ResolvedModel, error) {
+			return []service.ResolvedModel{
+				{
+					Model:    models.Model{ID: 77, ProviderID: 1, Name: "gpt-5.1-codex"},
+					Provider: models.Provider{ID: 1, Name: "chatgpt", APIType: models.APITypeCodex, BaseURL: ts.URL},
+				},
+			}, nil
+		},
+	}
+
+	oauthSvc := &mockOAuthService{
+		getTokenFn: func(_ context.Context, _ int64) (string, error) { return "at-old", nil },
+		getRowFn:   func(_ context.Context, _ int64) (*models.OAuthToken, error) { return codexTokenRow("at-old", "acct-9"), nil },
+	}
+
+	engine, _ := newTestEngine(vmSvc, &mockProviderService{}, oauthSvc)
+
+	body := `{"model":"test-codex-vm","messages":[{"role":"user","content":"hi"}],"stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	engine.HandleChatCompletionStream(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HTTP status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want text/event-stream", ct)
+	}
+	respBody := w.Body.String()
+	if !strings.Contains(respBody, "chat.completion.chunk") {
+		t.Errorf("stream missing OpenAI chunks: %s", respBody)
+	}
+	if !strings.Contains(respBody, `"delta":{"content":"Hel"}`) || !strings.Contains(respBody, `"delta":{"content":"lo"}`) {
+		t.Errorf("stream missing text deltas: %s", respBody)
+	}
+	if !strings.Contains(respBody, "prompt_tokens\":3") {
+		t.Errorf("stream missing usage: %s", respBody)
+	}
+	if !strings.Contains(respBody, "[DONE]") {
+		t.Errorf("stream missing [DONE]: %s", respBody)
 	}
 }

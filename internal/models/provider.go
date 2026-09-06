@@ -10,6 +10,7 @@ const (
 	APITypeCloudflare  APIType = "cloudflare"
 	APITypeOllama      APIType = "ollama"
 	APITypeOllamaCloud APIType = "ollama-cloud"
+	APITypeCodex       APIType = "codex"
 )
 
 type Provider struct {
@@ -54,13 +55,15 @@ type UpdateProviderRequest struct {
 }
 
 type OAuthToken struct {
-	ID           int64     `json:"id"`
-	ProviderID   int64     `json:"provider_id"`
-	AccessToken  string    `json:"-"`
-	RefreshToken string    `json:"-"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	AccountID    string    `json:"account_id,omitempty"`
-	Email        string    `json:"email,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID            int64      `json:"id"`
+	ProviderID    int64      `json:"provider_id"`
+	AccessToken   string     `json:"-"`
+	RefreshToken  string     `json:"-"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	AccountID     string     `json:"account_id,omitempty"`
+	Email         string     `json:"email,omitempty"`
+	LastRefreshAt *time.Time `json:"last_refresh_at,omitempty"`
+	IDToken       string     `json:"-"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }

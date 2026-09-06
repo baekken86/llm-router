@@ -50,12 +50,14 @@ func newSetupTestDB(t *testing.T) *sql.DB {
 			base_url TEXT NOT NULL,
 			api_key_encrypted TEXT NOT NULL,
 			account_id TEXT NOT NULL DEFAULT '',
+			provider_key TEXT NOT NULL DEFAULT '',
 			disabled INTEGER NOT NULL DEFAULT 0,
 			disabled_until TIMESTAMP NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_name ON providers(name);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_provider_key ON providers(provider_key);
 
 		CREATE TABLE provider_metadata (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,10 +144,12 @@ func newSetupModelFixture(t *testing.T) *setupModelFixture {
 
 func (f *setupModelFixture) Close() { f.db.Close() }
 
-// seedProvider inserts a provider row directly and returns it.
+// seedProvider inserts a provider row directly and returns it. ProviderKey
+// mirrors the service-layer default (name) so direct seeds satisfy the
+// provider_key unique index.
 func (f *setupModelFixture) seedProvider(t *testing.T, name string, apiType models.APIType) *models.Provider {
 	t.Helper()
-	p := &models.Provider{Name: name, APIType: apiType, BaseURL: "https://example.invalid"}
+	p := &models.Provider{Name: name, APIType: apiType, BaseURL: "https://example.invalid", ProviderKey: name}
 	if err := f.providers.Create(context.Background(), p); err != nil {
 		t.Fatalf("seed provider: %v", err)
 	}

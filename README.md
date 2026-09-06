@@ -84,6 +84,12 @@ curl http://localhost:8080/v1/chat/completions \
   -d '{"model": "smart-free", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
+### Model addressing
+
+- `virtual/<name>` — virtual model (canonical)
+- `<name>` — virtual model (legacy, still works)
+- `<provider-key>/<model>` — direct provider model (e.g. `openai/gpt-4o`); provider keys are configurable per provider and default to the provider name
+
 ### 🔧 Filter operators
 
 | Op | Description | Example |
@@ -215,7 +221,7 @@ llm-router create-key         Create proxy API key
 | `POST` | `/v1/chat/completions` | OpenAI | Chat completion (streaming) |
 | `POST` | `/v1/messages` | Anthropic | Messages (non-streaming) |
 | `POST` | `/v1/messages/stream` | Anthropic | Messages (streaming) |
-| `GET` | `/v1/models` | OpenAI | List virtual models |
+| `GET` | `/v1/models` | OpenAI | List virtual + provider models |
 
 ## 🌐 Provider types
 

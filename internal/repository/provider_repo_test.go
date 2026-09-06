@@ -18,7 +18,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("failed to open database: %v", err)
 	}
 
-	// Create providers table matching migration 024+027 schema
+	// Create providers table matching migration 030 schema
 	_, err = database.Exec(`
 		CREATE TABLE providers (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,12 +27,14 @@ func setupTestDB(t *testing.T) *sql.DB {
 			base_url TEXT NOT NULL,
 			api_key_encrypted TEXT NOT NULL,
 			account_id TEXT NOT NULL DEFAULT '',
+			provider_key TEXT NOT NULL DEFAULT '',
 			disabled INTEGER NOT NULL DEFAULT 0,
 			disabled_until TIMESTAMP NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_name ON providers(name);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_provider_key ON providers(provider_key);
 
 		CREATE TABLE provider_metadata (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,4 +152,77 @@ func TestProviderRepo_AccountID_RoundTrip(t *testing.T) {
 
 	_ = ctx
 	_ = repo
+}
+
+// TestProviderRepo_ProviderKey_RoundTrip verifies provider_key persistence,
+// GetByKey lookup, and the empty-key→name normalization for legacy rows.
+func TestProviderRepo_ProviderKey_RoundTrip(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+
+	repo := repository.NewProviderRepository(database)
+
+	// Create with explicit key
+	p := &models.Provider{
+		Name:        "OpenAI Prod",
+		APIType:     models.APITypeOpenAI,
+		BaseURL:     "https://api.openai.com/v1",
+		ProviderKey: "openai",
+	}
+	if err := repo.Create(t.Context(), p); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	byKey, err := repo.GetByKey(t.Context(), "openai")
+	if err != nil || byKey == nil {
+		t.Fatalf("GetByKey(openai) = %v, %v; want provider", byKey, err)
+	}
+	if byKey.ID != p.ID || byKey.ProviderKey != "openai" {
+		t.Errorf("GetByKey returned %+v, want ID %d key openai", byKey, p.ID)
+	}
+
+	// Missing key → nil, no error
+	missing, err := repo.GetByKey(t.Context(), "nope")
+	if err != nil || missing != nil {
+		t.Errorf("GetByKey(nope) = %v, %v; want nil, nil", missing, err)
+	}
+
+	// Update the key
+	p.ProviderKey = "oai"
+	if err := repo.Update(t.Context(), p); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	byKey, err = repo.GetByKey(t.Context(), "oai")
+	if err != nil || byKey == nil {
+		t.Fatalf("GetByKey(oai) after update = %v, %v; want provider", byKey, err)
+	}
+	old, err := repo.GetByKey(t.Context(), "openai")
+	if err != nil || old != nil {
+		t.Errorf("GetByKey(openai) after update = %v, %v; want nil, nil", old, err)
+	}
+
+	// Legacy row: empty provider_key in DB normalizes to name on read.
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted, account_id, provider_key)
+		VALUES ('legacy', 'openai', 'https://x', 'k', '', '')`)
+	if err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	legacy, err := repo.GetByName(t.Context(), "legacy")
+	if err != nil || legacy == nil {
+		t.Fatalf("GetByName(legacy) = %v, %v; want provider", legacy, err)
+	}
+	if legacy.ProviderKey != "legacy" {
+		t.Errorf("legacy ProviderKey = %q, want %q (normalized to name)", legacy.ProviderKey, "legacy")
+	}
+
+	// All read paths normalize
+	listed, err := repo.List(t.Context())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, lp := range listed {
+		if lp.ProviderKey == "" {
+			t.Errorf("List returned empty ProviderKey for %q", lp.Name)
+		}
+	}
 }

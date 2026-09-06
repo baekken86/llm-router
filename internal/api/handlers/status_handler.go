@@ -37,22 +37,23 @@ func (h *StatusHandler) Routes() chi.Router {
 }
 
 type ProviderStatus struct {
-	ID                  int64              `json:"id"`
-	Name                string             `json:"name"`
-	RateLimited         bool               `json:"rate_limited"`
-	RetryIn             string             `json:"retry_in,omitempty"`
-	OAuthConfigured     bool               `json:"oauth_configured"`
-	OAuthExpired        bool               `json:"oauth_expired,omitempty"`
-	OAuthExpiresAt      string             `json:"oauth_expires_at,omitempty"`
-	OAuthEmail          string             `json:"oauth_email,omitempty"`
-	APIKeyConfigured    bool               `json:"api_key_configured"`
-	BaseURL             string             `json:"base_url"`
-	AccountID           string             `json:"account_id,omitempty"`
-	Metadata            map[string]string  `json:"metadata,omitempty"`
-	Disabled            bool               `json:"disabled"`
-	DisabledUntil       *time.Time         `json:"disabled_until,omitempty"`
-	CircuitBroken       bool               `json:"circuit_broken"`
-	CBCooldownRemaining string             `json:"cb_cooldown_remaining,omitempty"`
+	ID                  int64             `json:"id"`
+	Name                string            `json:"name"`
+	ProviderKey         string            `json:"provider_key"`
+	RateLimited         bool              `json:"rate_limited"`
+	RetryIn             string            `json:"retry_in,omitempty"`
+	OAuthConfigured     bool              `json:"oauth_configured"`
+	OAuthExpired        bool              `json:"oauth_expired,omitempty"`
+	OAuthExpiresAt      string            `json:"oauth_expires_at,omitempty"`
+	OAuthEmail          string            `json:"oauth_email,omitempty"`
+	APIKeyConfigured    bool              `json:"api_key_configured"`
+	BaseURL             string            `json:"base_url"`
+	AccountID           string            `json:"account_id,omitempty"`
+	Metadata            map[string]string `json:"metadata,omitempty"`
+	Disabled            bool              `json:"disabled"`
+	DisabledUntil       *time.Time        `json:"disabled_until,omitempty"`
+	CircuitBroken       bool              `json:"circuit_broken"`
+	CBCooldownRemaining string            `json:"cb_cooldown_remaining,omitempty"`
 }
 
 type StatusResponse struct {
@@ -83,10 +84,14 @@ func (h *StatusHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 		ps := ProviderStatus{
 			ID:            p.ID,
 			Name:          p.Name,
+			ProviderKey:   p.ProviderKey,
 			BaseURL:       p.BaseURL,
 			AccountID:     p.AccountID,
 			Disabled:      p.Disabled,
 			DisabledUntil: p.DisabledUntil,
+		}
+		if ps.ProviderKey == "" {
+			ps.ProviderKey = p.Name // belt-and-braces; repo already normalizes
 		}
 
 		if meta, ok := providerMetaMap[p.ID]; ok {

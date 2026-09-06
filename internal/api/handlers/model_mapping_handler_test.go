@@ -40,6 +40,7 @@ func setupMappingHandlerTest(t *testing.T) *testMappingDB {
 			base_url TEXT NOT NULL,
 			api_key_encrypted TEXT NOT NULL DEFAULT '',
 			account_id TEXT NOT NULL DEFAULT '',
+			provider_key TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -72,9 +73,9 @@ func setupMappingHandlerTest(t *testing.T) *testMappingDB {
 }
 
 func seedTestData(tdb *testMappingDB) {
-	p1 := &models.Provider{Name: "p1", APIType: models.APITypeOpenAI, BaseURL: "http://localhost"}
+	p1 := &models.Provider{Name: "p1", APIType: models.APITypeOpenAI, BaseURL: "http://localhost", ProviderKey: "p1"}
 	tdb.providerRepo.Create(context.Background(), p1)
-	p2 := &models.Provider{Name: "p2", APIType: models.APITypeOpenAI, BaseURL: "http://localhost"}
+	p2 := &models.Provider{Name: "p2", APIType: models.APITypeOpenAI, BaseURL: "http://localhost", ProviderKey: "p2"}
 	tdb.providerRepo.Create(context.Background(), p2)
 	m1 := &models.Model{ProviderID: p1.ID, Name: "@cf/meta/llama"}
 	tdb.modelRepo.Create(context.Background(), m1)

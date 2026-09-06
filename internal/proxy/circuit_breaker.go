@@ -11,20 +11,29 @@ import (
 )
 
 type CircuitBreakerSettings struct {
-	Enabled                bool
-	ModelThreshold         int
-	ModelWindowSec         int
-	ModelCooldownSec       int
-	ProviderThreshold      int
-	ProviderWindowSec      int
-	ProviderCooldownSec    int
-	ProviderMinModels      int
+	Enabled             bool
+	ModelThreshold      int
+	ModelWindowSec      int
+	ModelCooldownSec    int
+	ProviderThreshold   int
+	ProviderWindowSec   int
+	ProviderCooldownSec int
+	ProviderMinModels   int
 }
 
+const (
+	// escalationMultiplier doubles the cooldown each time a re-enabled model
+	// trips the breaker again.
+	escalationMultiplier = 2
+	// maxModelCooldownSec caps escalating cooldowns at 24h.
+	maxModelCooldownSec = 86400
+)
+
 type CircuitBreaker struct {
-	modelErrors      sync.Map // "providerID:modelName" -> []time.Time
-	modelCooldowns   sync.Map // "providerID:modelName" -> time.Time
+	modelErrors       sync.Map // "providerID:modelName" -> []time.Time
+	modelCooldowns    sync.Map // "providerID:modelName" -> time.Time
 	providerCooldowns sync.Map // providerID (int64) -> time.Time
+	modelStrikesMem   sync.Map // "providerID:modelName" -> struct{}; keys with strikes>0
 
 	settings  CircuitBreakerSettings
 	mu        sync.RWMutex
@@ -40,10 +49,10 @@ func NewCircuitBreaker(
 	logger *slog.Logger,
 ) *CircuitBreaker {
 	cb := &CircuitBreaker{
-		modelRepo:  modelRepo,
-		provRepo:   provRepo,
-		logger:     logger,
-		stopCh:     make(chan struct{}),
+		modelRepo: modelRepo,
+		provRepo:  provRepo,
+		logger:    logger,
+		stopCh:    make(chan struct{}),
 		settings: CircuitBreakerSettings{
 			Enabled:             true,
 			ModelThreshold:      5,
@@ -84,6 +93,20 @@ func (cb *CircuitBreaker) Record5xx(ctx context.Context, providerID int64, model
 		return
 	}
 
+	count := cb.recordModelError(providerID, modelName, s)
+
+	// Model-level check
+	if count >= s.ModelThreshold {
+		cb.disableModel(ctx, providerID, modelName, s.ModelCooldownSec)
+	}
+
+	// Provider-level check
+	cb.checkProvider(ctx, providerID, s)
+}
+
+// recordModelError appends now to the model's sliding-window error log and
+// returns the count of errors inside the window.
+func (cb *CircuitBreaker) recordModelError(providerID int64, modelName string, s CircuitBreakerSettings) int {
 	now := time.Now()
 	key := modelKey(providerID, modelName)
 
@@ -104,14 +127,40 @@ func (cb *CircuitBreaker) Record5xx(ctx context.Context, providerID int64, model
 	mw.timestamps = mw.timestamps[:n]
 	count := len(mw.timestamps)
 	mw.mu.Unlock()
+	return count
+}
 
-	// Model-level check
+// RecordUnavailable counts an upstream "model unavailable" style error against
+// the model-level breaker only. Stale catalog entries must not trip the
+// provider-level breaker: the provider itself is healthy.
+func (cb *CircuitBreaker) RecordUnavailable(ctx context.Context, providerID int64, modelName string) {
+	cb.mu.RLock()
+	s := cb.settings
+	cb.mu.RUnlock()
+	if !s.Enabled {
+		return
+	}
+	count := cb.recordModelError(providerID, modelName, s)
 	if count >= s.ModelThreshold {
 		cb.disableModel(ctx, providerID, modelName, s.ModelCooldownSec)
 	}
+}
 
-	// Provider-level check
-	cb.checkProvider(ctx, providerID, s)
+// RecordSuccess clears escalation strikes after a successful response, so a
+// recovered model gets a fresh cooldown on its next failure.
+func (cb *CircuitBreaker) RecordSuccess(providerID int64, modelName string) {
+	key := modelKey(providerID, modelName)
+	if _, has := cb.modelStrikesMem.Load(key); !has {
+		return
+	}
+	cb.modelStrikesMem.Delete(key)
+	if cb.modelRepo != nil {
+		if model, err := cb.modelRepo.GetByProviderAndName(context.Background(), providerID, modelName); err == nil && model != nil {
+			if err := cb.modelRepo.SetCBStrikes(context.Background(), model.ID, 0); err != nil {
+				cb.logger.Error("circuit breaker: failed to reset strikes", "model", modelName, "provider_id", providerID, "error", err)
+			}
+		}
+	}
 }
 
 func (cb *CircuitBreaker) checkProvider(ctx context.Context, providerID int64, s CircuitBreakerSettings) {
@@ -148,7 +197,7 @@ func (cb *CircuitBreaker) checkProvider(ctx context.Context, providerID int64, s
 	}
 }
 
-func (cb *CircuitBreaker) disableModel(ctx context.Context, providerID int64, modelName string, cooldownSec int) {
+func (cb *CircuitBreaker) disableModel(ctx context.Context, providerID int64, modelName string, baseCooldownSec int) {
 	key := modelKey(providerID, modelName)
 
 	// Already in cooldown?
@@ -161,17 +210,41 @@ func (cb *CircuitBreaker) disableModel(ctx context.Context, providerID int64, mo
 		return
 	}
 
-	if err := cb.modelRepo.ToggleDisabled(ctx, model.ID, true, nil); err != nil {
+	// Load + increment persisted escalation strikes and compute the escalated
+	// cooldown: each re-offense doubles the cooldown, capped at maxModelCooldownSec.
+	strikes := 1
+	if model != nil {
+		if prev, err := cb.modelRepo.GetCBStrikes(ctx, model.ID); err == nil && prev > 0 {
+			strikes = prev + 1
+		}
+	}
+	cooldownSec := baseCooldownSec
+	for i := 1; i < strikes; i++ {
+		cooldownSec *= escalationMultiplier
+		if cooldownSec >= maxModelCooldownSec {
+			cooldownSec = maxModelCooldownSec
+			break
+		}
+	}
+	duration := time.Duration(cooldownSec) * time.Second
+
+	if err := cb.modelRepo.ToggleDisabled(ctx, model.ID, true, &duration); err != nil {
 		cb.logger.Error("circuit breaker: failed to disable model", "model", modelName, "provider_id", providerID, "error", err)
 		return
 	}
 
-	cooldown := time.Now().Add(time.Duration(cooldownSec) * time.Second)
+	if err := cb.modelRepo.SetCBStrikes(ctx, model.ID, strikes); err != nil {
+		cb.logger.Error("circuit breaker: failed to record strikes", "model", modelName, "provider_id", providerID, "error", err)
+	}
+	cb.modelStrikesMem.Store(key, struct{}{})
+
+	cooldown := time.Now().Add(duration)
 	cb.modelCooldowns.Store(key, cooldown)
 	cb.logger.Warn("circuit breaker: model disabled",
 		"model", modelName,
 		"provider_id", providerID,
-		"cooldown", time.Duration(cooldownSec)*time.Second,
+		"cooldown", duration,
+		"strikes", strikes,
 	)
 }
 
@@ -320,8 +393,8 @@ func parseModelKey(key string) (int64, string) {
 }
 
 type CircuitBreakerStatus struct {
-	ModelDisabled   bool   `json:"model_disabled"`
-	ProviderDisabled bool  `json:"provider_disabled"`
+	ModelDisabled     bool   `json:"model_disabled"`
+	ProviderDisabled  bool   `json:"provider_disabled"`
 	CooldownRemaining string `json:"cooldown_remaining,omitempty"`
 }
 

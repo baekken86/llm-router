@@ -16,6 +16,7 @@ const (
 type Provider struct {
 	ID              int64              `json:"id"`
 	Name            string             `json:"name"`
+	ProviderKey     string             `json:"provider_key"`
 	APIType         APIType            `json:"api_type"`
 	BaseURL         string             `json:"base_url"`
 	APIKeyEncrypted string             `json:"-"`
@@ -36,22 +37,25 @@ type ProviderMetadata struct {
 }
 
 type CreateProviderRequest struct {
-	Name      string            `json:"name"`
-	APIType   APIType           `json:"api_type"`
-	BaseURL   string            `json:"base_url"`
-	APIKey    string            `json:"api_key"`
-	AccountID string            `json:"account_id,omitempty"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
+	Name        string            `json:"name"`
+	APIType     APIType           `json:"api_type"`
+	BaseURL     string            `json:"base_url"`
+	APIKey      string            `json:"api_key"`
+	AccountID   string            `json:"account_id,omitempty"`
+	ProviderKey string            `json:"provider_key,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 type UpdateProviderRequest struct {
-	Name     *string            `json:"name,omitempty"`
-	APIType  *APIType           `json:"api_type,omitempty"`
-	BaseURL  *string            `json:"base_url,omitempty"`
-	APIKey   *string            `json:"api_key,omitempty"`
-	Metadata *map[string]string `json:"metadata,omitempty"`
-	Disabled *bool              `json:"disabled,omitempty"`
-	Duration *string            `json:"duration,omitempty"`
+	Name        *string            `json:"name,omitempty"`
+	APIType     *APIType           `json:"api_type,omitempty"`
+	BaseURL     *string            `json:"base_url,omitempty"`
+	APIKey      *string            `json:"api_key,omitempty"`
+	AccountID   *string            `json:"account_id,omitempty"`
+	ProviderKey *string            `json:"provider_key,omitempty"`
+	Metadata    *map[string]string `json:"metadata,omitempty"`
+	Disabled    *bool              `json:"disabled,omitempty"`
+	Duration    *string            `json:"duration,omitempty"`
 }
 
 type OAuthToken struct {

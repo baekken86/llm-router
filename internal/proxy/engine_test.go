@@ -174,6 +174,7 @@ func TestShouldRetry(t *testing.T) {
 type mockVMService struct {
 	getByNameFn func(ctx context.Context, name string) (*models.VirtualModel, error)
 	resolveFn   func(ctx context.Context, vm *models.VirtualModel) ([]service.ResolvedModel, error)
+	route       func(name string) (*service.ModelRoute, error)
 }
 
 func (m *mockVMService) GetByName(ctx context.Context, name string) (*models.VirtualModel, error) {
@@ -182,6 +183,29 @@ func (m *mockVMService) GetByName(ctx context.Context, name string) (*models.Vir
 
 func (m *mockVMService) ResolveModels(ctx context.Context, vm *models.VirtualModel) ([]service.ResolvedModel, error) {
 	return m.resolveFn(ctx, vm)
+}
+
+// RouteModel mirrors production routing with the mock's limited view: without
+// a provider repo, everything resolves to a virtual-model lookup ("virtual/"
+// prefix stripped, unknown "key/model" names kept whole per the fallback
+// contract). Tests can override with the route field.
+func (m *mockVMService) RouteModel(ctx context.Context, name string) (*service.ModelRoute, error) {
+	if m.route != nil {
+		return m.route(name)
+	}
+	virtualName := name
+	if rest, ok := strings.CutPrefix(name, "virtual/"); ok {
+		if rest == "" {
+			return nil, errors.New("invalid virtual model name")
+		}
+		virtualName = rest
+	}
+	// Propagate lookup errors; a missing VM still yields a virtual route so
+	// the engine's GetByName/404 path stays exercised.
+	if _, err := m.GetByName(ctx, virtualName); err != nil {
+		return nil, err
+	}
+	return &service.ModelRoute{Kind: service.RouteKindVirtual, VirtualName: virtualName}, nil
 }
 
 func (m *mockVMService) Create(_ context.Context, _ models.CreateVirtualModelRequest) (*models.VirtualModel, error) {

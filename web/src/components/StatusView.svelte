@@ -169,6 +169,11 @@
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-3">
               <span class="text-white font-medium">{p.name}</span>
+              {#if p.provider_key && p.provider_key !== p.name}
+                <span class="rounded bg-gray-800 px-1.5 py-0.5 font-mono text-xs text-gray-400" title="Provider key — use as prefix for direct model access: {p.provider_key}/&lt;model&gt;">
+                  {p.provider_key}
+                </span>
+              {/if}
               {#if p.disabled}
                 <span class="inline-flex items-center gap-1.5 text-amber-400 text-sm">
                   <span class="w-2 h-2 rounded-full bg-amber-400"></span>

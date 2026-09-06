@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/chris/llm-router/internal/models"
@@ -44,12 +45,30 @@ func (s *providerService) Create(ctx context.Context, req models.CreateProviderR
 		return nil, fmt.Errorf("encrypt api key: %w", err)
 	}
 
+	// Provider key defaults to the provider name and must not collide with
+	// the "virtual/" VM namespace or contain "/" (model addressing separator).
+	providerKey := req.ProviderKey
+	if providerKey == "" {
+		providerKey = req.Name
+	}
+	if err := validateProviderKey(providerKey); err != nil {
+		return nil, err
+	}
+	existing, err := s.repo.GetByKey(ctx, providerKey)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return nil, fmt.Errorf("provider_key %q already in use", providerKey)
+	}
+
 	p := &models.Provider{
 		Name:            req.Name,
 		APIType:         req.APIType,
 		BaseURL:         req.BaseURL,
 		APIKeyEncrypted: encrypted,
 		AccountID:       req.AccountID,
+		ProviderKey:     providerKey,
 	}
 
 	if err := s.repo.Create(ctx, p); err != nil {
@@ -121,6 +140,24 @@ func (s *providerService) Update(ctx context.Context, id int64, req models.Updat
 	if req.Name != nil {
 		p.Name = *req.Name
 	}
+	if req.ProviderKey != nil {
+		// Empty string means "reset to the provider name".
+		newKey := *req.ProviderKey
+		if newKey == "" {
+			newKey = p.Name
+		}
+		if err := validateProviderKey(newKey); err != nil {
+			return nil, err
+		}
+		existing, err := s.repo.GetByKey(ctx, newKey)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil && existing.ID != id {
+			return nil, fmt.Errorf("provider_key %q already in use", newKey)
+		}
+		p.ProviderKey = newKey
+	}
 	if req.APIType != nil {
 		p.APIType = *req.APIType
 	}
@@ -171,6 +208,22 @@ func (s *providerService) Delete(ctx context.Context, id int64) error {
 		return fmt.Errorf("delete metadata: %w", err)
 	}
 	return s.repo.Delete(ctx, id)
+}
+
+// validateProviderKey enforces the model-addressing namespace rules: a key
+// must be non-empty, must not contain "/" (the provider/model separator), and
+// must not be "virtual" (reserved for the virtual-model namespace).
+func validateProviderKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("provider_key must not be empty")
+	}
+	if strings.Contains(key, "/") {
+		return fmt.Errorf("provider_key %q must not contain '/'", key)
+	}
+	if key == "virtual" {
+		return fmt.Errorf("provider_key %q is reserved", key)
+	}
+	return nil
 }
 
 func (s *providerService) DecryptAPIKey(encrypted string) (string, error) {

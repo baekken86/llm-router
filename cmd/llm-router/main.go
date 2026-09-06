@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -433,7 +434,7 @@ func runProxy(args []string) {
 		r.Post("/chat/completions", engine.HandleChatCompletionRoute)
 		r.Post("/messages", engine.HandleAnthropicMessages)
 		r.Post("/messages/stream", engine.HandleAnthropicMessagesStream)
-		r.Get("/models", handleListModels(vmService))
+		r.Get("/models", handleListModels(vmService, providerRepo, modelRepo))
 	})
 
 	addr := fmt.Sprintf(":%d", *port)
@@ -585,7 +586,11 @@ func middlewareAuthOrOAuth(ks service.KeyService, oauth *handlers.OAuthHandler) 
 	}
 }
 
-func handleListModels(vmService service.VirtualModelService) http.HandlerFunc {
+// handleListModels serves GET /v1/models. Virtual models are listed as
+// "virtual/<name>" and each enabled provider's models as
+// "<provider-key>/<model>" — mirroring the two model-addressing namespaces
+// the proxy accepts. Output is sorted by id for stable ordering.
+func handleListModels(vmService service.VirtualModelService, providerRepo repository.ProviderRepository, modelRepo repository.ModelRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vms, err := vmService.List(r.Context())
 		if err != nil {
@@ -602,11 +607,39 @@ func handleListModels(vmService service.VirtualModelService) http.HandlerFunc {
 		var models []modelEntry
 		for _, vm := range vms {
 			models = append(models, modelEntry{
-				ID:      vm.Name,
+				ID:      "virtual/" + vm.Name,
 				Object:  "model",
 				Created: vm.CreatedAt.Unix(),
 			})
 		}
+
+		providers, err := providerRepo.List(r.Context())
+		if err != nil {
+			http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+			return
+		}
+		for _, p := range providers {
+			if p.Disabled {
+				continue
+			}
+			pModels, err := modelRepo.ListByProvider(r.Context(), p.ID)
+			if err != nil {
+				http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+				return
+			}
+			for _, m := range pModels {
+				if m.Disabled {
+					continue
+				}
+				models = append(models, modelEntry{
+					ID:      p.ProviderKey + "/" + m.Name,
+					Object:  "model",
+					Created: m.CreatedAt.Unix(),
+				})
+			}
+		}
+
+		sort.Slice(models, func(i, j int) bool { return models[i].ID < models[j].ID })
 
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"object":"list","data":`)

@@ -253,6 +253,50 @@ func (e *Engine) HandleChatCompletionRoute(w http.ResponseWriter, r *http.Reques
 	e.HandleChatCompletion(w, r)
 }
 
+// resolveRequestRoute resolves the incoming model name to either a virtual
+// model or a single directly-addressed provider model. For provider models it
+// synthesizes a single-entry resolution (built by RouteModel) so the
+// downstream retry/failover loop is unchanged. A nil vm with nil resolved
+// models (and nil error) means "model not found" — callers keep their
+// existing 404 path. Note: for provider routes the returned vm is nil but the
+// request is still valid; handlers treat non-nil resolvedModels as success.
+func (e *Engine) resolveRequestRoute(ctx context.Context, name string) (*models.VirtualModel, []service.ResolvedModel, error) {
+	route, err := e.vmService.RouteModel(ctx, name)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if route.Kind == service.RouteKindProvider {
+		if route.NotFound {
+			return nil, nil, nil // caller 404s
+		}
+		// No virtual model object backs a direct provider model, but the
+		// retry/failover loop reads vm.MaxRetries/vm.RetryOnStatus —
+		// synthesize a minimal VM with the same defaults a created VM gets
+		// (see virtual_model_repo.Create).
+		vm := &models.VirtualModel{
+			Name:          name,
+			MaxRetries:    1,
+			RetryOnStatus: []byte(`[429,500,502,503,504]`),
+		}
+		return vm, route.Resolved, nil
+	}
+
+	// Virtual route: resolve like before.
+	vm, err := e.vmService.GetByName(ctx, route.VirtualName)
+	if err != nil {
+		return nil, nil, err
+	}
+	if vm == nil {
+		return nil, nil, nil // caller 404s
+	}
+	resolved, err := e.vmService.ResolveModels(ctx, vm)
+	if err != nil {
+		return nil, nil, err
+	}
+	return vm, resolved, nil
+}
+
 func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	requestID := r.Header.Get("X-Request-ID")
@@ -276,21 +320,16 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		rtkSavedTokens = interceptResult.RTKSavedTokens
 	}
 
-	vm, err := e.vmService.GetByName(r.Context(), req.Model)
+	// RequestLog carries the client-sent model name; for direct provider
+	// addressing that's "<provider-key>/<model>" (e.g. "openai/gpt-4o").
+	vm, resolvedModels, err := e.resolveRequestRoute(r.Context(), req.Model)
 	if err != nil {
-		e.logger.Error("get virtual model", "error", err, "model", req.Model)
+		e.logger.Error("resolve model route", "error", err, "model", req.Model)
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 		return
 	}
-	if vm == nil {
+	if vm == nil && resolvedModels == nil {
 		http.Error(w, fmt.Sprintf(`{"error":"model not found: %s"}`, req.Model), http.StatusNotFound)
-		return
-	}
-
-	resolvedModels, err := e.vmService.ResolveModels(r.Context(), vm)
-	if err != nil {
-		e.logger.Error("resolve models", "error", err, "model", req.Model)
-		http.Error(w, `{"error":"failed to resolve models"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -393,6 +432,8 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 				RetryCount:         prs.retries,
 			})
 
+			e.recordModelSuccess(rm)
+
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Request-ID", requestID)
 			w.Header().Set("X-Provider", rm.Provider.Name)
@@ -473,21 +514,14 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 		rtkSavedTokens = interceptResult.RTKSavedTokens
 	}
 
-	vm, err := e.vmService.GetByName(r.Context(), req.Model)
+	vm, resolvedModels, err := e.resolveRequestRoute(r.Context(), req.Model)
 	if err != nil {
-		e.logger.Error("get virtual model", "error", err, "model", req.Model)
+		e.logger.Error("resolve model route", "error", err, "model", req.Model)
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 		return
 	}
-	if vm == nil {
+	if vm == nil && resolvedModels == nil {
 		http.Error(w, fmt.Sprintf(`{"error":"model not found: %s"}`, req.Model), http.StatusNotFound)
-		return
-	}
-
-	resolvedModels, err := e.vmService.ResolveModels(r.Context(), vm)
-	if err != nil {
-		e.logger.Error("resolve models", "error", err, "model", req.Model)
-		http.Error(w, `{"error":"failed to resolve models"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -553,6 +587,8 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 
 			streamResp, httpResp, err := e.sendStreamRequest(r, rm, apiKey, req)
 			if err == nil {
+				e.recordModelSuccess(rm)
+
 				e.logRequest(RequestLog{
 					Type:          "proxy",
 					Status:        "streaming",
@@ -1041,11 +1077,42 @@ func (e *Engine) logRequest(log RequestLog) {
 	}
 }
 
+// unavailableModelPatterns matches provider-side model-existence/availability
+// complaints. Deliberately conservative: these errors mean OUR catalog entry is
+// stale (model names sent upstream always come from the DB, never raw client
+// input), not that the client sent a bad request.
+var unavailableModelPatterns = []string{
+	"model is unavailable",
+	"model unavailable",
+	"model not found",
+	"model_not_found",
+	"no such model",
+	"unknown model",
+	"model does not exist",
+}
+
+// isModelUnavailableError reports whether a provider error is an upstream
+// complaint that the model itself is unavailable/gone (not a generic client
+// error). Only 400/404 qualify.
+func isModelUnavailableError(pe *ProviderError) bool {
+	if pe.StatusCode != http.StatusBadRequest && pe.StatusCode != http.StatusNotFound {
+		return false
+	}
+	haystack := strings.ToLower(pe.Message + " " + string(pe.RawBody))
+	for _, p := range unavailableModelPatterns {
+		if strings.Contains(haystack, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // processProviderError normalizes err to *ProviderError (via errors.As,
 // unknown errors → 500) and applies all side effects:
 //   - 402 (SubscriptionRequiredError) → circuitBreaker.DisableModelPermanent
 //   - 429 → rateLimits.MarkLimited (RetryAfter, then classifyRateLimit fallback)
 //   - >=500 → circuitBreaker.Record5xx
+//   - 400/404 "model unavailable" → circuitBreaker.RecordUnavailable
 //
 // Returns the normalized error for the caller's logging/retry logic.
 func (e *Engine) processProviderError(ctx context.Context, err error, rm service.ResolvedModel) *ProviderError {
@@ -1074,7 +1141,19 @@ func (e *Engine) processProviderError(ctx context.Context, err error, rm service
 		e.circuitBreaker.Record5xx(ctx, rm.Provider.ID, rm.Model.Name)
 	}
 
+	if e.circuitBreaker != nil && isModelUnavailableError(providerErr) {
+		e.circuitBreaker.RecordUnavailable(ctx, rm.Provider.ID, rm.Model.Name)
+	}
+
 	return providerErr
+}
+
+// recordModelSuccess notifies the circuit breaker that an upstream model
+// responded successfully, clearing any escalation strikes for it.
+func (e *Engine) recordModelSuccess(rm service.ResolvedModel) {
+	if cb := e.circuitBreaker; cb != nil {
+		cb.RecordSuccess(rm.Provider.ID, rm.Model.Name)
+	}
 }
 
 func shouldRetry(statusCode int, retryOnStatus []int) bool {
@@ -1175,21 +1254,14 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	vm, err := e.vmService.GetByName(r.Context(), anthReq.Model)
+	vm, resolvedModels, err := e.resolveRequestRoute(r.Context(), anthReq.Model)
 	if err != nil {
-		e.logger.Error("get virtual model", "error", err, "model", anthReq.Model)
+		e.logger.Error("resolve model route", "error", err, "model", anthReq.Model)
 		http.Error(w, `{"type":"error","error":{"type":"api_error","message":"internal error"}}`, http.StatusInternalServerError)
 		return
 	}
-	if vm == nil {
+	if vm == nil && resolvedModels == nil {
 		http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"not_found_error","message":"model not found: %s"}}`, anthReq.Model), http.StatusNotFound)
-		return
-	}
-
-	resolvedModels, err := e.vmService.ResolveModels(r.Context(), vm)
-	if err != nil {
-		e.logger.Error("resolve models", "error", err, "model", anthReq.Model)
-		http.Error(w, `{"type":"error","error":{"type":"api_error","message":"failed to resolve models"}}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -1260,6 +1332,8 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 				reqResult = &SendRequestResult{}
 			}
 			if err == nil {
+				e.recordModelSuccess(rm)
+
 				anthResp := OpenAIResponseToAnthropic(*openResp, rm.Model.Name)
 
 				e.logRequest(RequestLog{
@@ -1346,23 +1420,17 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	vm, err := e.vmService.GetByName(r.Context(), anthReq.Model)
+	vm, resolvedModels, err := e.resolveRequestRoute(r.Context(), anthReq.Model)
 	if err != nil {
-		e.logger.Error("get virtual model", "error", err, "model", anthReq.Model)
-		http.Error(w, `{"type":"error","error":{"type":"not_found_error","message":"model not found"}}`, http.StatusNotFound)
+		e.logger.Error("resolve model route", "error", err, "model", anthReq.Model)
+		http.Error(w, `{"type":"error","error":{"type":"api_error","message":"internal error"}}`, http.StatusInternalServerError)
 		return
 	}
-	if vm == nil {
+	if vm == nil && resolvedModels == nil {
 		http.Error(w, `{"type":"error","error":{"type":"not_found_error","message":"model not found"}}`, http.StatusNotFound)
 		return
 	}
 
-	resolvedModels, err := e.vmService.ResolveModels(r.Context(), vm)
-	if err != nil {
-		e.logger.Error("resolve models", "error", err, "model", anthReq.Model)
-		http.Error(w, `{"type":"error","error":{"type":"not_found_error","message":"no matching models found"}}`, http.StatusNotFound)
-		return
-	}
 	if len(resolvedModels) == 0 {
 		http.Error(w, `{"type":"error","error":{"type":"not_found_error","message":"no matching models found"}}`, http.StatusNotFound)
 		return
@@ -1431,6 +1499,8 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 				applyReasoningEffortToAnthropic(&anthReq, rm.ReasoningEffort)
 				streamBody, _, err := e.anthropicClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, anthReq)
 				if err == nil {
+					e.recordModelSuccess(rm)
+
 					e.logRequest(RequestLog{
 						Type:          "proxy",
 						Status:        "streaming",
@@ -1504,6 +1574,8 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 				openReq.Model = rm.Model.Name
 				streamBody, _, err := e.openaiClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, requestID, openReq)
 				if err == nil {
+					e.recordModelSuccess(rm)
+
 					e.logRequest(RequestLog{
 						Type:          "proxy",
 						Status:        "streaming",

@@ -9,8 +9,8 @@ import (
 )
 
 // TestMigration018_CloudflareAPIType tests migration 018 in isolation.
-// NOTE: db.Open() has a pre-existing bug (migration 007 adds duplicate column).
-// This test creates a minimal schema and applies only migration 018.
+// (The former db.Open() duplicate-column bug on fresh databases was fixed in
+// migration 007; TestOpenFreshDatabase in internal/db covers the full chain.)
 func TestMigration018_CloudflareAPIType(t *testing.T) {
 	database, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -516,6 +516,204 @@ func TestMigration029_OAuthTokenRefreshTracking(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("expected 2 oauth tokens, got %d", count)
+	}
+}
+
+// TestMigration030_AddCBStrikes tests migration 030 in isolation.
+// Creates the models table as it exists before migration 030, applies the
+// ADD COLUMN, then verifies the column, its default, and the down migration.
+func TestMigration030_AddCBStrikes(t *testing.T) {
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer database.Close()
+
+	// Create models table as it exists BEFORE migration 030
+	_, err = database.Exec(`
+		CREATE TABLE models (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			disabled INTEGER NOT NULL DEFAULT 0,
+			disabled_until TIMESTAMP NULL,
+			UNIQUE(provider_id, name)
+		);
+	`)
+	if err != nil {
+		t.Fatalf("failed to create base table: %v", err)
+	}
+
+	// Insert pre-existing model
+	_, err = database.Exec(`INSERT INTO models (provider_id, name) VALUES (1, 'existing-model')`)
+	if err != nil {
+		t.Fatalf("failed to insert existing model: %v", err)
+	}
+
+	// Verify cb_strikes column does NOT exist yet
+	if columnExists(t, database, "models", "cb_strikes") {
+		t.Error("cb_strikes column should not exist before migration 030")
+	}
+
+	// Apply migration 030 UP
+	_, err = database.Exec(`ALTER TABLE models ADD COLUMN cb_strikes INTEGER NOT NULL DEFAULT 0;`)
+	if err != nil {
+		t.Fatalf("failed to add cb_strikes column: %v", err)
+	}
+
+	// Verify cb_strikes column exists now
+	if !columnExists(t, database, "models", "cb_strikes") {
+		t.Error("cb_strikes column should exist after migration 030")
+	}
+
+	// Verify pre-existing rows get the default of 0
+	var strikes int
+	err = database.QueryRow("SELECT cb_strikes FROM models WHERE name = 'existing-model'").Scan(&strikes)
+	if err != nil {
+		t.Fatalf("failed to query cb_strikes: %v", err)
+	}
+	if strikes != 0 {
+		t.Errorf("expected default cb_strikes 0, got %d", strikes)
+	}
+
+	// Verify a new row without cb_strikes also defaults to 0
+	_, err = database.Exec(`INSERT INTO models (provider_id, name) VALUES (1, 'new-model')`)
+	if err != nil {
+		t.Fatalf("failed to insert model without cb_strikes: %v", err)
+	}
+	err = database.QueryRow("SELECT cb_strikes FROM models WHERE name = 'new-model'").Scan(&strikes)
+	if err != nil {
+		t.Fatalf("failed to query new model cb_strikes: %v", err)
+	}
+	if strikes != 0 {
+		t.Errorf("expected default cb_strikes 0 for new row, got %d", strikes)
+	}
+
+	// Verify updating cb_strikes works
+	_, err = database.Exec(`UPDATE models SET cb_strikes = 3 WHERE name = 'existing-model'`)
+	if err != nil {
+		t.Fatalf("failed to update cb_strikes: %v", err)
+	}
+	err = database.QueryRow("SELECT cb_strikes FROM models WHERE name = 'existing-model'").Scan(&strikes)
+	if err != nil {
+		t.Fatalf("failed to query updated cb_strikes: %v", err)
+	}
+	if strikes != 3 {
+		t.Errorf("expected cb_strikes 3 after update, got %d", strikes)
+	}
+
+	// Apply migration 030 DOWN
+	_, err = database.Exec(`ALTER TABLE models DROP COLUMN cb_strikes;`)
+	if err != nil {
+		t.Fatalf("failed to drop cb_strikes column: %v", err)
+	}
+
+	// Verify the column is gone and remaining data survived
+	if columnExists(t, database, "models", "cb_strikes") {
+		t.Error("cb_strikes column should not exist after migration 030 down")
+	}
+
+	var count int
+	err = database.QueryRow("SELECT COUNT(*) FROM models").Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count models: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 models, got %d", count)
+	}
+}
+
+// TestMigration030_AddProviderKey tests the provider_key migration in
+// isolation: ADD COLUMN with '' default, backfill to name, unique index,
+// then the down migration.
+func TestMigration030_AddProviderKey(t *testing.T) {
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer database.Close()
+
+	// Create providers table as it exists BEFORE migration 030
+	_, err = database.Exec(`
+		CREATE TABLE providers (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			api_type TEXT NOT NULL CHECK(api_type IN ('openai', 'anthropic', 'cloudflare', 'ollama', 'ollama-cloud', 'codex')),
+			base_url TEXT NOT NULL,
+			api_key_encrypted TEXT NOT NULL,
+			account_id TEXT NOT NULL DEFAULT '',
+			disabled INTEGER NOT NULL DEFAULT 0,
+			disabled_until TIMESTAMP NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_name ON providers(name);
+	`)
+	if err != nil {
+		t.Fatalf("failed to create base table: %v", err)
+	}
+
+	// Insert pre-existing providers
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted) VALUES ('p-one', 'openai', 'https://x', 'k1')`)
+	if err != nil {
+		t.Fatalf("failed to insert existing provider: %v", err)
+	}
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted) VALUES ('p-two', 'anthropic', 'https://y', 'k2')`)
+	if err != nil {
+		t.Fatalf("failed to insert existing provider: %v", err)
+	}
+
+	// Apply migration 030 UP (mirrors 030_add_provider_key.sql statements)
+	_, err = database.Exec(`ALTER TABLE providers ADD COLUMN provider_key TEXT NOT NULL DEFAULT '';`)
+	if err != nil {
+		t.Fatalf("failed to add provider_key column: %v", err)
+	}
+	_, err = database.Exec(`UPDATE providers SET provider_key = name WHERE provider_key = '';`)
+	if err != nil {
+		t.Fatalf("failed to backfill provider_key: %v", err)
+	}
+	_, err = database.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_provider_key ON providers(provider_key);`)
+	if err != nil {
+		t.Fatalf("failed to create unique index: %v", err)
+	}
+
+	// Backfill: existing rows carry their name as key
+	var key string
+	err = database.QueryRow(`SELECT provider_key FROM providers WHERE name = 'p-one'`).Scan(&key)
+	if err != nil {
+		t.Fatalf("failed to query provider_key: %v", err)
+	}
+	if key != "p-one" {
+		t.Errorf("expected backfilled provider_key 'p-one', got %q", key)
+	}
+
+	// Uniqueness: a duplicate key is rejected
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted, provider_key) VALUES ('p-three', 'openai', 'https://z', 'k3', 'p-one')`)
+	if err == nil {
+		t.Error("expected duplicate provider_key insert to fail")
+	}
+
+	// Apply migration 030 DOWN
+	_, err = database.Exec(`DROP INDEX IF EXISTS idx_providers_provider_key;`)
+	if err != nil {
+		t.Fatalf("failed to drop index: %v", err)
+	}
+	_, err = database.Exec(`ALTER TABLE providers DROP COLUMN provider_key;`)
+	if err != nil {
+		t.Fatalf("failed to drop provider_key column: %v", err)
+	}
+	if columnExists(t, database, "providers", "provider_key") {
+		t.Error("provider_key column should not exist after migration down")
+	}
+
+	var count int
+	err = database.QueryRow(`SELECT COUNT(*) FROM providers`).Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count providers: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 providers, got %d", count)
 	}
 }
 

@@ -69,7 +69,8 @@ func (m *mockVMRepo) Delete(_ context.Context, id int64) error {
 // --- Mock ModelRepository ---
 
 type mockModelRepo struct {
-	models []models.Model
+	models    []models.Model
+	cbStrikes map[int64]int
 }
 
 func newMockModelRepo() *mockModelRepo {
@@ -175,6 +176,21 @@ func (m *mockModelRepo) ListExpiredDisabled(_ context.Context, _ time.Time) ([]i
 	return nil, nil
 }
 
+func (m *mockModelRepo) GetCBStrikes(_ context.Context, modelID int64) (int, error) {
+	if m.cbStrikes == nil {
+		return 0, nil
+	}
+	return m.cbStrikes[modelID], nil
+}
+
+func (m *mockModelRepo) SetCBStrikes(_ context.Context, modelID int64, strikes int) error {
+	if m.cbStrikes == nil {
+		m.cbStrikes = map[int64]int{}
+	}
+	m.cbStrikes[modelID] = strikes
+	return nil
+}
+
 // --- Mock TagRepository ---
 
 type mockTagRepo struct {
@@ -231,21 +247,37 @@ func (m *mockTagRepo) DeleteByModel(_ context.Context, modelID int64) error {
 type mockProviderRepo struct {
 	providers map[int64]*models.Provider
 	byName    map[string]*models.Provider
+	byKey     map[string]*models.Provider
+	nextID    int64
 }
 
 func newMockProviderRepo() *mockProviderRepo {
 	return &mockProviderRepo{
 		providers: make(map[int64]*models.Provider),
 		byName:    make(map[string]*models.Provider),
+		byKey:     make(map[string]*models.Provider),
+		nextID:    1,
 	}
 }
 
 func (m *mockProviderRepo) add(p *models.Provider) {
 	m.providers[p.ID] = p
 	m.byName[p.Name] = p
+	key := p.ProviderKey
+	if key == "" {
+		key = p.Name
+	}
+	if m.byKey == nil {
+		m.byKey = make(map[string]*models.Provider)
+	}
+	m.byKey[key] = p
 }
 
 func (m *mockProviderRepo) Create(_ context.Context, p *models.Provider) error {
+	if p.ID == 0 {
+		p.ID = m.nextID
+		m.nextID++
+	}
 	m.add(p)
 	return nil
 }
@@ -256,6 +288,13 @@ func (m *mockProviderRepo) GetByID(_ context.Context, id int64) (*models.Provide
 
 func (m *mockProviderRepo) GetByName(_ context.Context, name string) (*models.Provider, error) {
 	return m.byName[name], nil
+}
+
+func (m *mockProviderRepo) GetByKey(_ context.Context, key string) (*models.Provider, error) {
+	if m.byKey == nil {
+		return nil, nil
+	}
+	return m.byKey[key], nil
 }
 
 func (m *mockProviderRepo) List(_ context.Context) ([]models.Provider, error) {

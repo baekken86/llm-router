@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -22,7 +23,26 @@ type VirtualModelService interface {
 	ResolveModels(ctx context.Context, vm *models.VirtualModel) ([]ResolvedModel, error)
 	PreviewResolve(ctx context.Context, filterExpr json.RawMessage, sortExpr json.RawMessage, includeModels json.RawMessage, composition *models.CompositionNode) ([]ResolvedModel, error)
 	GetDependencies(ctx context.Context) (map[string][]string, error)
+	RouteModel(ctx context.Context, name string) (*ModelRoute, error)
 }
+
+// ModelRoute is the result of parsing an incoming request model name. A name
+// either addresses a virtual model (Kind "virtual") or a single provider model
+// directly via "<provider-key>/<model>" (Kind "provider").
+type ModelRoute struct {
+	Kind        string           // "virtual" or "provider"
+	VirtualName string           // set when Kind == "virtual" (virtual/ prefix stripped)
+	Provider    *models.Provider // set when Kind == "provider"
+	Model       *models.Model    // set when Kind == "provider"
+	Resolved    []ResolvedModel  // set when Kind == "provider": single-element, enriched slice
+	NotFound    bool             // Kind == "provider" but the model does not exist on that provider
+}
+
+// Model route kinds.
+const (
+	RouteKindVirtual  = "virtual"
+	RouteKindProvider = "provider"
+)
 
 type ResolvedModel struct {
 	Model            models.Model
@@ -767,6 +787,82 @@ func (s *virtualModelService) GetDependencies(ctx context.Context) (map[string][
 		}
 	}
 	return deps, nil
+}
+
+// RouteModel resolves an incoming request model name to a virtual model or a
+// directly-addressed provider model. Routing contract:
+//   - "virtual/<name>"          → virtual model <name> (canonical form)
+//   - "<name>" (no "/")         → virtual model <name> (legacy bare form)
+//   - "<key>/<model>"           → provider with provider_key <key>, model <model>
+//     (unknown key falls back to a virtual-model lookup of the FULL name so a
+//     VM literally named "foo/bar" still works)
+//
+// "virtual/x" always routes as a virtual model: "virtual" can never be a
+// provider key (enforced by validateProviderKey). Override merging and
+// metadata filters do not apply to direct provider addressing.
+func (s *virtualModelService) RouteModel(ctx context.Context, name string) (*ModelRoute, error) {
+	if strings.HasPrefix(name, "virtual/") {
+		virtualName := strings.TrimPrefix(name, "virtual/")
+		if virtualName == "" {
+			return nil, errors.New("invalid virtual model name")
+		}
+		return &ModelRoute{Kind: RouteKindVirtual, VirtualName: virtualName}, nil
+	}
+
+	if idx := strings.Index(name, "/"); idx >= 0 {
+		key := name[:idx]
+		modelName := name[idx+1:]
+
+		// Empty key (name starts with "/") can never be a provider key.
+		if key != "" {
+			provider, err := s.providerRepo.GetByKey(ctx, key)
+			if err != nil {
+				return nil, err
+			}
+			if provider != nil {
+				m, err := s.modelRepo.GetByProviderAndName(ctx, provider.ID, modelName)
+				if err != nil {
+					return nil, err
+				}
+				if m == nil {
+					return &ModelRoute{Kind: RouteKindProvider, Provider: provider, NotFound: true}, nil
+				}
+
+				// Build a single enriched ResolvedModel so the engine's downstream
+				// retry/failover loop works unchanged.
+				tags, _ := s.tagRepo.GetByModelEffort(ctx, m.ID, "")
+				m.Tags = tags
+
+				globalMeta, _ := s.globalMetaRepo.GetByModelEffort(ctx, m.Name, "")
+
+				providerMeta, _ := s.providerMetaRepo.GetByProvider(ctx, provider.ID)
+				pMetaMap := make(map[string]string)
+				pMetaMap["p.name"] = provider.Name
+				for _, pm := range providerMeta {
+					pMetaMap["p."+pm.Key] = pm.Value
+				}
+
+				return &ModelRoute{
+					Kind:     RouteKindProvider,
+					Provider: provider,
+					Model:    m,
+					Resolved: []ResolvedModel{{
+						Model:            *m,
+						Provider:         *provider,
+						ReasoningEffort:  "",
+						GlobalMetadata:   globalMeta,
+						ProviderMetadata: pMetaMap,
+					}},
+				}, nil
+			}
+		}
+
+		// Unknown provider key: treat the full name as a virtual model name
+		// (engine's GetByName 404s if it doesn't exist).
+		return &ModelRoute{Kind: RouteKindVirtual, VirtualName: name}, nil
+	}
+
+	return &ModelRoute{Kind: RouteKindVirtual, VirtualName: name}, nil
 }
 
 func matchesFilter(tags []models.Tag, modelName string, filter models.FilterNode, providerName string, providerMeta []models.ProviderMetadata, globalMeta map[string]string) bool {

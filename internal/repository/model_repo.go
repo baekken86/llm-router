@@ -21,6 +21,8 @@ type ModelRepository interface {
 	DisableByProviderExcept(ctx context.Context, providerID int64, names []string) (int64, error)
 	ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration) error
 	ListExpiredDisabled(ctx context.Context, now time.Time) ([]int64, error)
+	GetCBStrikes(ctx context.Context, modelID int64) (int, error)
+	SetCBStrikes(ctx context.Context, modelID int64, strikes int) error
 }
 
 type sqliteModelRepo struct {
@@ -190,6 +192,26 @@ func (r *sqliteModelRepo) ListExpiredDisabled(ctx context.Context, now time.Time
 		ids = append(ids, id)
 	}
 	return ids, nil
+}
+
+func (r *sqliteModelRepo) GetCBStrikes(ctx context.Context, modelID int64) (int, error) {
+	var strikes int
+	err := r.db.QueryRowContext(ctx, `SELECT cb_strikes FROM models WHERE id = ?`, modelID).Scan(&strikes)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("get model cb_strikes: %w", err)
+	}
+	return strikes, nil
+}
+
+func (r *sqliteModelRepo) SetCBStrikes(ctx context.Context, modelID int64, strikes int) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE models SET cb_strikes = ? WHERE id = ?`, strikes, modelID)
+	if err != nil {
+		return fmt.Errorf("set model cb_strikes: %w", err)
+	}
+	return nil
 }
 
 func (r *sqliteModelRepo) DisableByProviderExcept(ctx context.Context, providerID int64, names []string) (int64, error) {

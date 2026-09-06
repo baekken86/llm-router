@@ -234,7 +234,7 @@ func TestEnsureChatgptProvider_Idempotent(t *testing.T) {
 		metadata := repository.NewProviderMetadataRepository(database)
 		svc := service.NewProviderService(providers, metadata, testEncryptionKey)
 
-		alias := &models.Provider{Name: "codex", APIType: models.APITypeCodex, BaseURL: "https://chatgpt.com/backend-api/codex"}
+		alias := &models.Provider{Name: "codex", APIType: models.APITypeCodex, BaseURL: "https://chatgpt.com/backend-api/codex", ProviderKey: "codex"}
 		if err := providers.Create(ctx, alias); err != nil {
 			t.Fatalf("seed alias row: %v", err)
 		}

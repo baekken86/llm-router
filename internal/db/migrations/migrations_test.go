@@ -2,6 +2,7 @@ package migrations_test
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -256,6 +257,265 @@ func TestMigration019_OllamaAPIType(t *testing.T) {
 		VALUES ('test-ollama2', 'ollama', 'http://localhost:11434/v1', '', '')`)
 	if err == nil {
 		t.Error("ollama api_type should be rejected after migration 019 down")
+	}
+}
+
+// TestMigration028_CodexAPIType tests migration 028 in isolation.
+// Creates the post-027 providers schema (5-type CHECK + disabled + disabled_until),
+// inserts data, then applies migration 028 to add codex to the CHECK constraint.
+func TestMigration028_CodexAPIType(t *testing.T) {
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer database.Close()
+
+	// Create providers table as it exists AFTER migration 027
+	// (5-type CHECK, disabled, disabled_until)
+	_, err = database.Exec(`
+		CREATE TABLE providers (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			api_type TEXT NOT NULL CHECK(api_type IN ('openai', 'anthropic', 'cloudflare', 'ollama', 'ollama-cloud')),
+			base_url TEXT NOT NULL,
+			api_key_encrypted TEXT NOT NULL,
+			account_id TEXT NOT NULL DEFAULT '',
+			disabled INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			disabled_until TIMESTAMP NULL
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_name ON providers(name);
+	`)
+	if err != nil {
+		t.Fatalf("failed to create base table: %v", err)
+	}
+
+	// Insert pre-existing providers
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted, account_id, disabled)
+		VALUES ('existing-openai', 'openai', 'https://api.openai.com/v1', 'key1', '', 0)`)
+	if err != nil {
+		t.Fatalf("failed to insert openai provider: %v", err)
+	}
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted, account_id, disabled)
+		VALUES ('existing-ollama-cloud', 'ollama-cloud', 'https://ollama.com/v1', 'key2', '', 1)`)
+	if err != nil {
+		t.Fatalf("failed to insert ollama-cloud provider: %v", err)
+	}
+
+	// Verify codex is NOT accepted before migration 028
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted)
+		VALUES ('test-codex', 'codex', 'https://chatgpt.com/backend-api/codex', '')`)
+	if err == nil {
+		t.Error("codex api_type should be rejected before migration 028")
+	}
+
+	// Apply migration 028 UP (recreate table with codex CHECK)
+	_, err = database.Exec(`
+		CREATE TABLE providers_new (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			api_type TEXT NOT NULL CHECK(api_type IN ('openai', 'anthropic', 'cloudflare', 'ollama', 'ollama-cloud', 'codex')),
+			base_url TEXT NOT NULL,
+			api_key_encrypted TEXT NOT NULL,
+			account_id TEXT NOT NULL DEFAULT '',
+			disabled INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			disabled_until TIMESTAMP NULL
+		);
+		INSERT INTO providers_new (id, name, api_type, base_url, api_key_encrypted, account_id, disabled, created_at, updated_at, disabled_until)
+			SELECT id, name, api_type, base_url, api_key_encrypted, account_id, disabled, created_at, updated_at, disabled_until FROM providers;
+		DROP TABLE providers;
+		ALTER TABLE providers_new RENAME TO providers;
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_name ON providers(name);
+	`)
+	if err != nil {
+		t.Fatalf("failed to apply migration 028 up: %v", err)
+	}
+
+	// Verify codex is NOW accepted (empty api_key, like claude-code)
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted)
+		VALUES ('test-codex', 'codex', 'https://chatgpt.com/backend-api/codex', '')`)
+	if err != nil {
+		t.Fatalf("codex api_type should be accepted after migration 028: %v", err)
+	}
+
+	// Verify pre-existing data survived
+	var count int
+	err = database.QueryRow("SELECT COUNT(*) FROM providers").Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count providers: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("expected 3 providers, got %d", count)
+	}
+
+	// Verify disabled flag survived
+	var disabled int
+	err = database.QueryRow("SELECT disabled FROM providers WHERE name = 'existing-ollama-cloud'").Scan(&disabled)
+	if err != nil {
+		t.Fatalf("failed to query ollama-cloud provider: %v", err)
+	}
+	if disabled != 1 {
+		t.Errorf("expected disabled flag 1 for existing-ollama-cloud, got %d", disabled)
+	}
+
+	// Verify ollama-cloud is still accepted after migration
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted, account_id)
+		VALUES ('test-ollama-cloud', 'ollama-cloud', 'https://ollama.com/v1', 'key3', '')`)
+	if err != nil {
+		t.Fatalf("ollama-cloud api_type should still be accepted after migration 028: %v", err)
+	}
+
+	// Apply migration 028 DOWN (revert to 5-type CHECK)
+	// Must delete codex rows first (down migration drops codex from CHECK constraint;
+	// copying codex rows into old table would violate CHECK)
+	_, err = database.Exec(`DELETE FROM providers WHERE api_type = 'codex'`)
+	if err != nil {
+		t.Fatalf("failed to delete codex providers before down migration: %v", err)
+	}
+
+	_, err = database.Exec(`
+		CREATE TABLE providers_old (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			api_type TEXT NOT NULL CHECK(api_type IN ('openai', 'anthropic', 'cloudflare', 'ollama', 'ollama-cloud')),
+			base_url TEXT NOT NULL,
+			api_key_encrypted TEXT NOT NULL,
+			account_id TEXT NOT NULL DEFAULT '',
+			disabled INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			disabled_until TIMESTAMP NULL
+		);
+		INSERT INTO providers_old (id, name, api_type, base_url, api_key_encrypted, account_id, disabled, created_at, updated_at, disabled_until)
+			SELECT id, name, api_type, base_url, api_key_encrypted, account_id, disabled, created_at, updated_at, disabled_until FROM providers;
+		DROP TABLE providers;
+		ALTER TABLE providers_old RENAME TO providers;
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_name ON providers(name);
+	`)
+	if err != nil {
+		t.Fatalf("failed to apply migration 028 down: %v", err)
+	}
+
+	// Verify codex is rejected after down migration
+	_, err = database.Exec(`INSERT INTO providers (name, api_type, base_url, api_key_encrypted)
+		VALUES ('test-codex2', 'codex', 'https://chatgpt.com/backend-api/codex', '')`)
+	if err == nil {
+		t.Error("codex api_type should be rejected after migration 028 down")
+	}
+}
+
+// TestMigration029_OAuthTokenRefreshTracking tests migration 029 in isolation.
+// Creates the oauth_tokens table as defined by migration 006, applies the
+// ADD COLUMN statements, then verifies the new columns and the down migration.
+func TestMigration029_OAuthTokenRefreshTracking(t *testing.T) {
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer database.Close()
+
+	// Create oauth_tokens table as it exists BEFORE migration 029
+	_, err = database.Exec(`
+		CREATE TABLE oauth_tokens (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+			access_token TEXT NOT NULL,
+			refresh_token TEXT NOT NULL,
+			expires_at TIMESTAMP NOT NULL,
+			account_id TEXT,
+			email TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_tokens_provider ON oauth_tokens(provider_id);
+	`)
+	if err != nil {
+		t.Fatalf("failed to create base table: %v", err)
+	}
+
+	// Verify the new columns do NOT exist yet
+	if columnExists(t, database, "oauth_tokens", "last_refresh_at") {
+		t.Error("last_refresh_at column should not exist before migration 029")
+	}
+	if columnExists(t, database, "oauth_tokens", "id_token") {
+		t.Error("id_token column should not exist before migration 029")
+	}
+
+	// Apply migration 029 UP
+	_, err = database.Exec(`ALTER TABLE oauth_tokens ADD COLUMN last_refresh_at DATETIME;`)
+	if err != nil {
+		t.Fatalf("failed to add last_refresh_at column: %v", err)
+	}
+	_, err = database.Exec(`ALTER TABLE oauth_tokens ADD COLUMN id_token TEXT;`)
+	if err != nil {
+		t.Fatalf("failed to add id_token column: %v", err)
+	}
+
+	// Verify the new columns exist now
+	if !columnExists(t, database, "oauth_tokens", "last_refresh_at") {
+		t.Error("last_refresh_at column should exist after migration 029")
+	}
+	if !columnExists(t, database, "oauth_tokens", "id_token") {
+		t.Error("id_token column should exist after migration 029")
+	}
+
+	// Verify insert with the new columns works
+	_, err = database.Exec(`INSERT INTO oauth_tokens (provider_id, access_token, refresh_token, expires_at, account_id, email, last_refresh_at, id_token)
+		VALUES (1, 'at', 'rt', '2026-09-05 00:00:00', 'acct-123', 'user@example.com', '2026-09-05 00:00:00', 'header.payload.signature')`)
+	if err != nil {
+		t.Fatalf("failed to insert oauth token with new columns: %v", err)
+	}
+
+	// Verify values are stored correctly. NOTE: the sqlite driver normalizes
+	// DATETIME reads to RFC3339 ('2026-09-05T00:00:00Z'), so compare on the
+	// date portion rather than the raw stored string.
+	var lastRefreshAt, idToken string
+	err = database.QueryRow("SELECT last_refresh_at, id_token FROM oauth_tokens WHERE provider_id = 1").Scan(&lastRefreshAt, &idToken)
+	if err != nil {
+		t.Fatalf("failed to query oauth token: %v", err)
+	}
+	if !strings.Contains(lastRefreshAt, "2026-09-05") {
+		t.Errorf("expected last_refresh_at to contain '2026-09-05', got '%s'", lastRefreshAt)
+	}
+	if idToken != "header.payload.signature" {
+		t.Errorf("expected id_token 'header.payload.signature', got '%s'", idToken)
+	}
+
+	// Verify the new columns are nullable (insert without them)
+	_, err = database.Exec(`INSERT INTO oauth_tokens (provider_id, access_token, refresh_token, expires_at)
+		VALUES (2, 'at2', 'rt2', '2026-09-05 00:00:00')`)
+	if err != nil {
+		t.Fatalf("failed to insert oauth token without new columns: %v", err)
+	}
+
+	// Apply migration 029 DOWN
+	_, err = database.Exec(`ALTER TABLE oauth_tokens DROP COLUMN last_refresh_at;`)
+	if err != nil {
+		t.Fatalf("failed to drop last_refresh_at column: %v", err)
+	}
+	_, err = database.Exec(`ALTER TABLE oauth_tokens DROP COLUMN id_token;`)
+	if err != nil {
+		t.Fatalf("failed to drop id_token column: %v", err)
+	}
+
+	// Verify the columns are gone and remaining data survived
+	if columnExists(t, database, "oauth_tokens", "last_refresh_at") {
+		t.Error("last_refresh_at column should not exist after migration 029 down")
+	}
+	if columnExists(t, database, "oauth_tokens", "id_token") {
+		t.Error("id_token column should not exist after migration 029 down")
+	}
+
+	var count int
+	err = database.QueryRow("SELECT COUNT(*) FROM oauth_tokens").Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count oauth tokens: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 oauth tokens, got %d", count)
 	}
 }
 

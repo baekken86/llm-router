@@ -21,8 +21,8 @@ import (
 )
 
 type RequestLog struct {
-	Type               string        // "incoming" or "proxy"
-	Status             string        // "streaming", "completed", "failed", or "" for non-streaming
+	Type               string // "incoming" or "proxy"
+	Status             string // "streaming", "completed", "failed", or "" for non-streaming
 	Timestamp          time.Time
 	RequestID          string
 	VirtualModel       string
@@ -52,33 +52,34 @@ type StreamProgress struct {
 }
 
 type SendRequestResult struct {
-	Response             *ChatCompletionResponse
-	CavemanIntercepted   bool
-	CavemanSavedTokens   int
+	Response           *ChatCompletionResponse
+	CavemanIntercepted bool
+	CavemanSavedTokens int
 }
 
 type InterceptResult struct {
-	Messages         []Message
-	RTKIntercepted   bool
-	RTKSavedTokens   int
+	Messages       []Message
+	RTKIntercepted bool
+	RTKSavedTokens int
 }
 
 type Engine struct {
-	vmService          service.VirtualModelService
-	providerService    service.ProviderService
-	oauthService       service.OAuthService
-	openaiClient       *OpenAIClient
-	anthropicClient    *AnthropicClient
-	ollamaCloudClient  *OllamaCloudClient
-	logger             *slog.Logger
-	logChan            chan<- RequestLog
-	rtk                *RTKInterceptor
-	caveman            *CavemanInterceptor
-	rateLimits         *RateLimitTracker
-	circuitBreaker     *CircuitBreaker
-	maxRetries         int
-	timeoutSeconds     int
-	maxTokens          int
+	vmService         service.VirtualModelService
+	providerService   service.ProviderService
+	oauthService      service.OAuthService
+	openaiClient      *OpenAIClient
+	anthropicClient   *AnthropicClient
+	ollamaCloudClient *OllamaCloudClient
+	codexClient       *CodexClient
+	logger            *slog.Logger
+	logChan           chan<- RequestLog
+	rtk               *RTKInterceptor
+	caveman           *CavemanInterceptor
+	rateLimits        *RateLimitTracker
+	circuitBreaker    *CircuitBreaker
+	maxRetries        int
+	timeoutSeconds    int
+	maxTokens         int
 }
 
 func NewEngine(
@@ -95,6 +96,7 @@ func NewEngine(
 		openaiClient:      NewOpenAIClient(),
 		anthropicClient:   NewAnthropicClient(),
 		ollamaCloudClient: NewOllamaCloudClient(),
+		codexClient:       NewCodexClient(),
 		logger:            logger,
 		logChan:           logChan,
 		rtk:               NewRTKInterceptor(logger),
@@ -151,6 +153,49 @@ func (e *Engine) getAPIKey(ctx context.Context, provider models.Provider) (strin
 		return "", fmt.Errorf("no credentials available for provider %s (re-run 'llm-router setup --provider %s')", provider.Name, provider.Name)
 	}
 	return e.providerService.DecryptAPIKey(provider.APIKeyEncrypted)
+}
+
+// getCodexCredentials resolves the ChatGPT OAuth access token and account id
+// for a codex provider. It mirrors getAPIKey's OAuth-first flow but returns
+// the full token row because the codex wire needs BOTH the access token
+// (Authorization: Bearer) and the account id (ChatGPT-Account-ID header).
+// getAPIKey's signature is intentionally left untouched — only the codex
+// branch needs the row.
+func (e *Engine) getCodexCredentials(ctx context.Context, provider models.Provider) (*models.OAuthToken, error) {
+	token, err := e.oauthService.GetValidToken(ctx, provider.ID)
+	if err != nil {
+		return nil, fmt.Errorf("oauth token unavailable (re-run 'llm-router connect --provider %s' to re-authenticate): %w", provider.Name, err)
+	}
+	if token == "" {
+		// Codex providers are OAuth-only (no API key fallback is created for
+		// them), so this mirrors getAPIKey's no-credentials case.
+		return nil, fmt.Errorf("no credentials available for provider %s (re-run 'llm-router connect --provider %s')", provider.Name, provider.Name)
+	}
+
+	row, err := e.oauthService.GetTokenRow(ctx, provider.ID)
+	if err != nil {
+		return nil, fmt.Errorf("oauth token unavailable (re-run 'llm-router connect --provider %s' to re-authenticate): %w", provider.Name, err)
+	}
+	if row == nil {
+		// GetValidToken succeeded but the row vanished (e.g. concurrent
+		// invalidation) — treat as re-auth required.
+		return nil, fmt.Errorf("oauth token unavailable (re-run 'llm-router connect --provider %s' to re-authenticate)", provider.Name)
+	}
+	return row, nil
+}
+
+// codexAuthError builds the actionable provider error surfaced when the Codex
+// backend rejects the OAuth token and a refresh could not recover it. Auth
+// failure is NOT quota: no cooldown is registered and the model is not
+// disabled — the user just needs to re-run the connect flow.
+func codexAuthError(providerName string, cause error) *ProviderError {
+	return &ProviderError{
+		StatusCode: http.StatusUnauthorized,
+		Message: fmt.Sprintf(
+			"chatgpt session invalid — re-run 'llm-router connect --provider %s' to reconnect: %v",
+			providerName, cause,
+		),
+	}
 }
 
 func (e *Engine) ApplySettings(maxRetries, timeoutSeconds, maxTokens int) {
@@ -323,23 +368,23 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		}
 		if resp != nil {
 			e.logRequest(RequestLog{
-				Type:          "proxy",
-				Timestamp:     start,
-				RequestID:     requestID,
-				VirtualModel:  req.Model,
-				ProviderName:  rm.Provider.Name,
-				ModelName:     rm.Model.Name,
-				StatusCode:    http.StatusOK,
-				Latency:       time.Since(start),
-				InputTokens:   resp.Usage.PromptTokens,
-				OutputTokens:  resp.Usage.CompletionTokens,
+				Type:         "proxy",
+				Timestamp:    start,
+				RequestID:    requestID,
+				VirtualModel: req.Model,
+				ProviderName: rm.Provider.Name,
+				ModelName:    rm.Model.Name,
+				StatusCode:   http.StatusOK,
+				Latency:      time.Since(start),
+				InputTokens:  resp.Usage.PromptTokens,
+				OutputTokens: resp.Usage.CompletionTokens,
 				CachedTokens: func() int {
 					if resp.Usage.PromptTokensDetails != nil {
 						return resp.Usage.PromptTokensDetails.CachedTokens
 					}
 					return 0
 				}(),
-				ReasoningTokens: extractReasoningTokens(&resp.Usage),
+				ReasoningTokens:    extractReasoningTokens(&resp.Usage),
 				RTKIntercepted:     rtkIntercepted,
 				RTKSavedTokens:     rtkSavedTokens,
 				CavemanIntercepted: reqResult.CavemanIntercepted,
@@ -359,18 +404,18 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		providerErr := e.processProviderError(r.Context(), err, rm)
 
 		e.logRequest(RequestLog{
-				Type:          "proxy",
-				Timestamp:     start,
-				RequestID:     requestID,
-				VirtualModel:  req.Model,
-				ProviderName:  rm.Provider.Name,
-				ModelName:     rm.Model.Name,
-				StatusCode:    providerErr.StatusCode,
-				Latency:       time.Since(start),
-				ErrorMessage:  providerErr.Message,
-				FallbackCount: i,
-				RetryCount:    prs.retries,
-			})
+			Type:          "proxy",
+			Timestamp:     start,
+			RequestID:     requestID,
+			VirtualModel:  req.Model,
+			ProviderName:  rm.Provider.Name,
+			ModelName:     rm.Model.Name,
+			StatusCode:    providerErr.StatusCode,
+			Latency:       time.Since(start),
+			ErrorMessage:  providerErr.Message,
+			FallbackCount: i,
+			RetryCount:    prs.retries,
+		})
 
 		if shouldRetry(providerErr.StatusCode, retryOnStatus) && prs.retries < vm.MaxRetries {
 			prs.retries++
@@ -388,13 +433,13 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	e.logRequest(RequestLog{
-		Type:          "proxy",
-		Timestamp:     start,
-		RequestID:     requestID,
-		VirtualModel:  req.Model,
-		StatusCode:    502,
-		Latency:       time.Since(start),
-		ErrorMessage:  "all models failed",
+		Type:         "proxy",
+		Timestamp:    start,
+		RequestID:    requestID,
+		VirtualModel: req.Model,
+		StatusCode:   502,
+		Latency:      time.Since(start),
+		ErrorMessage: "all models failed",
 	})
 
 	w.Header().Set("Content-Type", "application/json")
@@ -536,20 +581,20 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 
 				onProgress := func(p StreamProgress) {
 					e.logRequest(RequestLog{
-						Type:           "proxy",
-						Status:         "streaming",
-						Timestamp:      start,
-						RequestID:      requestID,
-						VirtualModel:   req.Model,
-						ProviderName:   rm.Provider.Name,
-						ModelName:      rm.Model.Name,
-						StatusCode:     0,
-						InputTokens:    p.InputTokens,
-						OutputTokens:   p.OutputTokens,
-						CachedTokens:   p.CachedTokens,
+						Type:            "proxy",
+						Status:          "streaming",
+						Timestamp:       start,
+						RequestID:       requestID,
+						VirtualModel:    req.Model,
+						ProviderName:    rm.Provider.Name,
+						ModelName:       rm.Model.Name,
+						StatusCode:      0,
+						InputTokens:     p.InputTokens,
+						OutputTokens:    p.OutputTokens,
+						CachedTokens:    p.CachedTokens,
 						ReasoningTokens: p.ReasoningTokens,
-						FallbackCount:  i,
-						RetryCount:     retry,
+						FallbackCount:   i,
+						RetryCount:      retry,
 					})
 				}
 
@@ -561,19 +606,19 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 				}
 
 				log := RequestLog{
-					Type:          "proxy",
-					Status:        "completed",
-					Timestamp:     start,
-					RequestID:     requestID,
-					VirtualModel:  req.Model,
-					ProviderName:  rm.Provider.Name,
-					ModelName:     rm.Model.Name,
-					StatusCode:    http.StatusOK,
-					Latency:       time.Since(start),
+					Type:           "proxy",
+					Status:         "completed",
+					Timestamp:      start,
+					RequestID:      requestID,
+					VirtualModel:   req.Model,
+					ProviderName:   rm.Provider.Name,
+					ModelName:      rm.Model.Name,
+					StatusCode:     http.StatusOK,
+					Latency:        time.Since(start),
 					RTKIntercepted: rtkIntercepted,
 					RTKSavedTokens: rtkSavedTokens,
-					FallbackCount: i,
-					RetryCount:    retry,
+					FallbackCount:  i,
+					RetryCount:     retry,
 				}
 				if usage != nil {
 					log.InputTokens = usage.PromptTokens
@@ -589,42 +634,42 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 
 			providerErr := e.processProviderError(r.Context(), err, rm)
 
-		e.logRequest(RequestLog{
-			Type:          "proxy",
-			Timestamp:     start,
-			RequestID:     requestID,
-			VirtualModel:  req.Model,
-			ProviderName:  rm.Provider.Name,
-			ModelName:     rm.Model.Name,
-			StatusCode:    providerErr.StatusCode,
-			ErrorMessage:  providerErr.Message,
-			FallbackCount: i,
-			RetryCount:    retry,
-		})
+			e.logRequest(RequestLog{
+				Type:          "proxy",
+				Timestamp:     start,
+				RequestID:     requestID,
+				VirtualModel:  req.Model,
+				ProviderName:  rm.Provider.Name,
+				ModelName:     rm.Model.Name,
+				StatusCode:    providerErr.StatusCode,
+				ErrorMessage:  providerErr.Message,
+				FallbackCount: i,
+				RetryCount:    retry,
+			})
 
-		if !shouldRetry(providerErr.StatusCode, retryOnStatus) {
-			break
+			if !shouldRetry(providerErr.StatusCode, retryOnStatus) {
+				break
+			}
 		}
+
+		failures = append(failures, map[string]interface{}{
+			"model":    rm.Model.Name,
+			"provider": rm.Provider.Name,
+			"status":   502,
+			"message":  "request failed",
+		})
 	}
 
-	failures = append(failures, map[string]interface{}{
-		"model":    rm.Model.Name,
-		"provider": rm.Provider.Name,
-		"status":   502,
-		"message":  "request failed",
+	e.logRequest(RequestLog{
+		Type:         "proxy",
+		Status:       "failed",
+		Timestamp:    start,
+		RequestID:    requestID,
+		VirtualModel: req.Model,
+		StatusCode:   http.StatusBadGateway,
+		Latency:      time.Since(start),
+		ErrorMessage: "all models failed",
 	})
-}
-
-e.logRequest(RequestLog{
-	Type:          "proxy",
-	Status:        "failed",
-	Timestamp:     start,
-	RequestID:     requestID,
-	VirtualModel:  req.Model,
-	StatusCode:    http.StatusBadGateway,
-	Latency:       time.Since(start),
-	ErrorMessage:  "all models failed",
-})
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadGateway)
@@ -690,6 +735,43 @@ func (e *Engine) sendRequest(r *http.Request, rm service.ResolvedModel, apiKey s
 		if err != nil {
 			return nil, nil, err
 		}
+	} else if rm.Provider.APIType == models.APITypeCodex {
+		// ChatGPT subscription backend (codex): Responses API over OAuth.
+		// Explicit branch (not generic else) to allow per-provider hooks
+		// without re-plumbing the engine: OAuth bearer + ChatGPT-Account-ID
+		// headers, 401 → RefreshNow → single retry (auth failure is not
+		// quota: no cooldown, no model disable), effort-suffix models.
+		// apiKey is ignored here; the OAuth access token is the credential.
+		ctx := context.Background()
+		if r != nil {
+			ctx = r.Context()
+		}
+		row, credErr := e.getCodexCredentials(ctx, rm.Provider)
+		if credErr != nil {
+			return nil, nil, &ProviderError{StatusCode: http.StatusUnauthorized, Message: credErr.Error()}
+		}
+		req.Model = rm.Model.Name
+		req.ReasoningEffort = nil // translator resolves effort itself (suffix or explicit field)
+		if rm.ReasoningEffort != "" {
+			req.ReasoningEffort = &rm.ReasoningEffort
+		}
+		sessionID := sessionIDForRequest(r)
+		resp, err = e.codexClient.ChatCompletion(ctx, rm.Provider.BaseURL, row.AccessToken, row.AccountID, sessionID, req)
+		if isCodexUnauthorized(err) {
+			// One unconditional token refresh → single retry (§4.5). The
+			// access token can die server-side before its policy expiry.
+			fresh, refreshErr := e.oauthService.RefreshNow(ctx, &rm.Provider)
+			if refreshErr != nil {
+				return nil, nil, codexAuthError(rm.Provider.Name, refreshErr)
+			}
+			if fresh == nil || fresh.AccessToken == "" {
+				return nil, nil, codexAuthError(rm.Provider.Name, errors.New("token refresh returned no access token"))
+			}
+			resp, err = e.codexClient.ChatCompletion(ctx, rm.Provider.BaseURL, fresh.AccessToken, fresh.AccountID, sessionID, req)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
 	} else {
 		req.Model = rm.Model.Name
 		if rm.ReasoningEffort != "" {
@@ -752,6 +834,42 @@ func (e *Engine) sendStreamRequest(r *http.Request, rm service.ResolvedModel, ap
 			req.ReasoningEffort = &rm.ReasoningEffort
 		}
 		return e.ollamaCloudClient.ChatCompletionStream(rm.Provider.BaseURL, apiKey, req)
+	} else if rm.Provider.APIType == models.APITypeCodex {
+		// ChatGPT subscription backend (codex): Responses API over OAuth.
+		// Explicit branch (not generic else) to allow per-provider hooks
+		// without re-plumbing the engine (§4.6). ChatCompletionStream returns
+		// an io.Pipe already translated to OpenAI chat-completions SSE, so
+		// the engine's streamPassthrough parser handles the body unchanged —
+		// the branch only differs in request dispatch. 401 → RefreshNow →
+		// single retry; no cooldown / model disable for auth failures.
+		// apiKey is ignored here; the OAuth access token is the credential.
+		ctx := context.Background()
+		if r != nil {
+			ctx = r.Context()
+		}
+		row, credErr := e.getCodexCredentials(ctx, rm.Provider)
+		if credErr != nil {
+			return nil, nil, &ProviderError{StatusCode: http.StatusUnauthorized, Message: credErr.Error()}
+		}
+		req.Model = rm.Model.Name
+		req.ReasoningEffort = nil // translator resolves effort itself (suffix or explicit field)
+		if rm.ReasoningEffort != "" {
+			req.ReasoningEffort = &rm.ReasoningEffort
+		}
+		sessionID := sessionIDForRequest(r) // same per-conversation id as the opencode header; feeds prompt_cache_key
+		body, httpResp, err := e.codexClient.ChatCompletionStream(ctx, rm.Provider.BaseURL, row.AccessToken, row.AccountID, sessionID, req)
+		if isCodexUnauthorized(err) {
+			// One unconditional token refresh → single retry (§4.5).
+			fresh, refreshErr := e.oauthService.RefreshNow(ctx, &rm.Provider)
+			if refreshErr != nil {
+				return nil, nil, codexAuthError(rm.Provider.Name, refreshErr)
+			}
+			if fresh == nil || fresh.AccessToken == "" {
+				return nil, nil, codexAuthError(rm.Provider.Name, errors.New("token refresh returned no access token"))
+			}
+			body, httpResp, err = e.codexClient.ChatCompletionStream(ctx, rm.Provider.BaseURL, fresh.AccessToken, fresh.AccountID, sessionID, req)
+		}
+		return body, httpResp, err
 	}
 
 	req.Model = rm.Model.Name
@@ -819,10 +937,10 @@ func (e *Engine) streamPassthrough(w http.ResponseWriter, flusher http.Flusher, 
 
 func (e *Engine) streamAnthropicToOpenAI(w http.ResponseWriter, flusher http.Flusher, body io.ReadCloser, model string, requestID string, onProgress func(StreamProgress)) *Usage {
 	state := &ClaudeStreamState{
-		Model:             model,
-		RequestID:         requestID,
-		ServerToolIndex:   -1,
-		ToolCalls:         make(map[int]*ToolCallState),
+		Model:           model,
+		RequestID:       requestID,
+		ServerToolIndex: -1,
+		ToolCalls:       make(map[int]*ToolCallState),
 	}
 	events := ParseAnthropicSSEStream(body)
 
@@ -959,7 +1077,8 @@ func (e *Engine) processProviderError(ctx context.Context, err error, rm service
 	return providerErr
 }
 
-func shouldRetry(statusCode int, retryOnStatus []int) bool {	if len(retryOnStatus) == 0 {
+func shouldRetry(statusCode int, retryOnStatus []int) bool {
+	if len(retryOnStatus) == 0 {
 		retryOnStatus = []int{429, 500, 502, 503, 504}
 	}
 	for _, s := range retryOnStatus {
@@ -1144,23 +1263,23 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 				anthResp := OpenAIResponseToAnthropic(*openResp, rm.Model.Name)
 
 				e.logRequest(RequestLog{
-					Type:          "proxy",
-					Timestamp:     start,
-					RequestID:     requestID,
-					VirtualModel:  anthReq.Model,
-					ProviderName:  rm.Provider.Name,
-					ModelName:     rm.Model.Name,
-					StatusCode:    http.StatusOK,
-					Latency:       time.Since(start),
-					InputTokens:   openResp.Usage.PromptTokens,
-					OutputTokens:  openResp.Usage.CompletionTokens,
+					Type:         "proxy",
+					Timestamp:    start,
+					RequestID:    requestID,
+					VirtualModel: anthReq.Model,
+					ProviderName: rm.Provider.Name,
+					ModelName:    rm.Model.Name,
+					StatusCode:   http.StatusOK,
+					Latency:      time.Since(start),
+					InputTokens:  openResp.Usage.PromptTokens,
+					OutputTokens: openResp.Usage.CompletionTokens,
 					CachedTokens: func() int {
 						if openResp.Usage.PromptTokensDetails != nil {
 							return openResp.Usage.PromptTokensDetails.CachedTokens
 						}
 						return 0
 					}(),
-					ReasoningTokens: extractReasoningTokens(&openResp.Usage),
+					ReasoningTokens:    extractReasoningTokens(&openResp.Usage),
 					CavemanIntercepted: reqResult.CavemanIntercepted,
 					CavemanSavedTokens: reqResult.CavemanSavedTokens,
 					FallbackCount:      i,
@@ -1337,20 +1456,20 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 
 					onProgress := func(p StreamProgress) {
 						e.logRequest(RequestLog{
-							Type:           "proxy",
-							Status:         "streaming",
-							Timestamp:      start,
-							RequestID:      requestID,
-							VirtualModel:   anthReq.Model,
-							ProviderName:   rm.Provider.Name,
-							ModelName:      rm.Model.Name,
-							StatusCode:     0,
-							InputTokens:    p.InputTokens,
-							OutputTokens:   p.OutputTokens,
-							CachedTokens:   p.CachedTokens,
+							Type:            "proxy",
+							Status:          "streaming",
+							Timestamp:       start,
+							RequestID:       requestID,
+							VirtualModel:    anthReq.Model,
+							ProviderName:    rm.Provider.Name,
+							ModelName:       rm.Model.Name,
+							StatusCode:      0,
+							InputTokens:     p.InputTokens,
+							OutputTokens:    p.OutputTokens,
+							CachedTokens:    p.CachedTokens,
 							ReasoningTokens: p.ReasoningTokens,
-							FallbackCount:  i,
-							RetryCount:     retry,
+							FallbackCount:   i,
+							RetryCount:      retry,
 						})
 					}
 
@@ -1410,20 +1529,20 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 
 					onProgress := func(p StreamProgress) {
 						e.logRequest(RequestLog{
-							Type:           "proxy",
-							Status:         "streaming",
-							Timestamp:      start,
-							RequestID:      requestID,
-							VirtualModel:   anthReq.Model,
-							ProviderName:   rm.Provider.Name,
-							ModelName:      rm.Model.Name,
-							StatusCode:     0,
-							InputTokens:    p.InputTokens,
-							OutputTokens:   p.OutputTokens,
-							CachedTokens:   p.CachedTokens,
+							Type:            "proxy",
+							Status:          "streaming",
+							Timestamp:       start,
+							RequestID:       requestID,
+							VirtualModel:    anthReq.Model,
+							ProviderName:    rm.Provider.Name,
+							ModelName:       rm.Model.Name,
+							StatusCode:      0,
+							InputTokens:     p.InputTokens,
+							OutputTokens:    p.OutputTokens,
+							CachedTokens:    p.CachedTokens,
 							ReasoningTokens: p.ReasoningTokens,
-							FallbackCount:  i,
-							RetryCount:     retry,
+							FallbackCount:   i,
+							RetryCount:      retry,
 						})
 					}
 
@@ -1485,14 +1604,14 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 	}
 
 	e.logRequest(RequestLog{
-		Type:          "proxy",
-		Status:        "failed",
-		Timestamp:     start,
-		RequestID:     requestID,
-		VirtualModel:  virtualModel,
-		StatusCode:    http.StatusBadGateway,
-		Latency:       time.Since(start),
-		ErrorMessage:  "all models failed",
+		Type:         "proxy",
+		Status:       "failed",
+		Timestamp:    start,
+		RequestID:    requestID,
+		VirtualModel: virtualModel,
+		StatusCode:   http.StatusBadGateway,
+		Latency:      time.Since(start),
+		ErrorMessage: "all models failed",
 	})
 
 	w.Header().Set("Content-Type", "application/json")

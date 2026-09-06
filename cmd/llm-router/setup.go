@@ -10,6 +10,7 @@ import (
 
 	"github.com/chris/llm-router/internal/db"
 	"github.com/chris/llm-router/internal/models"
+	"github.com/chris/llm-router/internal/proxy"
 	"github.com/chris/llm-router/internal/repository"
 	"github.com/chris/llm-router/internal/service"
 )
@@ -63,6 +64,12 @@ var supportedProviders = map[string]providerConfig{
 		baseURL: "http://{host}/v1",
 		auth:    "none",
 	},
+	"chatgpt": {
+		name:    "chatgpt",
+		apiType: "codex",
+		baseURL: "https://chatgpt.com/backend-api/codex",
+		auth:    "oauth",
+	},
 }
 
 type providerConfig struct {
@@ -75,7 +82,8 @@ type providerConfig struct {
 func runSetup(args []string) {
 	fs := flag.NewFlagSet("setup", flag.ExitOnError)
 	dbPath := fs.String("db", defaultDBPath(), "SQLite database path")
-	providerName := fs.String("provider", "", "Provider name (required). Supported: claude-code, opencode-go, opencode-zen, openai, anthropic, openrouter, cloudflare")
+	providerName := fs.String("provider", "", "Provider name (required). Supported: claude-code, chatgpt (alias: codex), opencode-go, opencode-zen, openai, anthropic, openrouter, cloudflare")
+	manual := fs.Bool("manual", false, "OAuth only: paste the callback URL manually instead of the local callback server")
 	apiKey := fs.String("key", "", "API key (required for API key providers)")
 	baseURL := fs.String("url", "", "Custom base URL (optional, overrides default)")
 	accountID := fs.String("account-id", "", "Account ID (required for cloudflare)")
@@ -105,7 +113,9 @@ func runSetup(args []string) {
 
 	ctx := context.Background()
 
-	providerCfg, isKnown := supportedProviders[*providerName]
+	// "codex" is an accepted alias of the canonical "chatgpt" setup entry.
+	providerKey := normalizeChatgptProviderName(*providerName)
+	providerCfg, isKnown := supportedProviders[providerKey]
 	if !isKnown {
 		if *apiKey == "" || *baseURL == "" {
 			logger.Error("unknown provider, use --url and --key for custom providers")
@@ -146,10 +156,27 @@ func runSetup(args []string) {
 
 	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, loadEncryptionKey())
 	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalRepo, nil)
+	oauthService := service.NewOAuthService(oauthRepo, providerRepo, providerService, logger)
 
-	existing, _ := providerRepo.GetByName(ctx, *providerName)
+	// Codex model discovery (design §4.7): wire the live-catalog collaborators
+	// so `setup --provider chatgpt` (and the discovery step below) can fetch
+	// the real codex catalog instead of only the static seed list. Same
+	// wiring as main.go's proxy path.
+	service.SetCodexDiscovery(modelService, oauthService, oauthRepo, codexProxyModelLister{client: proxy.NewCodexClient()})
+
+	existing, _ := providerRepo.GetByName(ctx, providerCfg.name)
+	if existing == nil && providerCfg.apiType == "codex" {
+		// Codex alias: reuse an existing ChatGPT provider row stored under
+		// the other name (chatgpt/codex) instead of creating a duplicate
+		// (same convergence rule as connect's ensureChatgptProvider).
+		aliasName := "codex"
+		if providerCfg.name == "codex" {
+			aliasName = "chatgpt"
+		}
+		existing, _ = providerRepo.GetByName(ctx, aliasName)
+	}
 	if existing != nil {
-		logger.Info("provider already exists", "name", *providerName)
+		logger.Info("provider already exists", "name", providerCfg.name)
 
 		if providerCfg.apiType == "cloudflare" {
 			if *apiKey != "" {
@@ -157,7 +184,16 @@ func runSetup(args []string) {
 			}
 			createPredefinedModels(ctx, modelRepo, tagRepo, globalRepo, existing, "cloudflare", logger)
 		} else if providerCfg.auth == "oauth" {
-			handleOAuthSetup(ctx, existing, oauthRepo, providerRepo, providerService, logger)
+			if providerCfg.apiType == "codex" {
+				// ChatGPT (codex): same shared flow as connect --provider chatgpt.
+				// A failed OAuth exchange must not skip predefined-model creation
+				// (mirrors handleOAuthSetup's log-and-continue behavior).
+				if err := runChatgptConnect(ctx, existing, oauthService, logger, *manual); err != nil {
+					logger.Warn("ChatGPT OAuth failed (models still created)", "error", err)
+				}
+			} else {
+				handleOAuthSetup(ctx, existing, oauthRepo, providerRepo, providerService, logger)
+			}
 			createPredefinedModels(ctx, modelRepo, tagRepo, globalRepo, existing, providerCfg.name, logger)
 		} else {
 			if *apiKey != "" {
@@ -192,7 +228,16 @@ func runSetup(args []string) {
 	if providerCfg.apiType == "cloudflare" {
 		createPredefinedModels(ctx, modelRepo, tagRepo, globalRepo, provider, "cloudflare", logger)
 	} else if providerCfg.auth == "oauth" {
-		handleOAuthSetup(ctx, provider, oauthRepo, providerRepo, providerService, logger)
+		if providerCfg.apiType == "codex" {
+			// ChatGPT (codex): same shared flow as connect --provider chatgpt.
+			// A failed OAuth exchange must not skip predefined-model creation
+			// (mirrors handleOAuthSetup's log-and-continue behavior).
+			if err := runChatgptConnect(ctx, provider, oauthService, logger, *manual); err != nil {
+				logger.Warn("ChatGPT OAuth failed (models still created)", "error", err)
+			}
+		} else {
+			handleOAuthSetup(ctx, provider, oauthRepo, providerRepo, providerService, logger)
+		}
 		createPredefinedModels(ctx, modelRepo, tagRepo, globalRepo, provider, providerCfg.name, logger)
 	} else {
 		discoverModels(ctx, modelService, provider, logger)
@@ -291,6 +336,10 @@ func createPredefinedModels(ctx context.Context, modelRepo repository.ModelRepos
 			"@cf/zai-org/glm-4.7-flash",
 			"@cf/zai-org/glm-5.2",
 		},
+		// chatgpt shares the static codex seed (design §3.3) kept in the
+		// service layer; discovery (`llm-router discover --provider chatgpt`)
+		// replaces it with the live catalog when reachable.
+		"chatgpt": service.CodexFallbackModels,
 	}
 
 	modelNames, exists := predefined[providerName]
@@ -361,6 +410,7 @@ func printSupportedProviders() {
 	fmt.Println()
 	fmt.Println("  OAuth (no API key needed):")
 	fmt.Println("    claude-code     Anthropic Claude (subscription)")
+	fmt.Println("    chatgpt         ChatGPT Plus/Pro subscription (OAuth; alias: codex)")
 	fmt.Println()
 	fmt.Println("  API Key (--key required):")
 	fmt.Println("    opencode-go     OpenCode Go ($10/mo)")
@@ -376,6 +426,7 @@ func printSupportedProviders() {
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  llm-router setup --provider claude-code")
+	fmt.Println("  llm-router setup --provider chatgpt")
 	fmt.Println("  llm-router setup --provider opencode-go --key sk-...")
 	fmt.Println("  llm-router setup --provider opencode-zen --key sk-...")
 	fmt.Println("  llm-router setup --provider openai --key sk-...")

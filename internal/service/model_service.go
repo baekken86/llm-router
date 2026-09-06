@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -49,6 +51,14 @@ type modelService struct {
 	provService    ProviderService
 	globalMetaRepo repository.GlobalMetadataRepository
 	mappingRepo    repository.ModelMappingRepository
+
+	// Codex discovery collaborators (§4.7), wired post-construction via
+	// SetCodexDiscovery because the OAuth service is created after this one.
+	// All optional: any missing collaborator downgrades codex discovery to the
+	// static seed list (CodexFallbackModels).
+	codexTokens oauthTokenSource
+	codexRows   oauthRowSource
+	codexLister CodexModelLister
 }
 
 func NewModelService(
@@ -75,6 +85,14 @@ type openAIModelsResponse struct {
 	} `json:"data"`
 }
 
+// discoveredModel is one model returned by discovery: its name plus optional
+// metadata tags to import alongside it (codex catalog extras; empty for the
+// plain OpenAI-compatible/ollama flows).
+type discoveredModel struct {
+	name string
+	tags map[string]string
+}
+
 func (s *modelService) Discover(ctx context.Context, providerID int64) (*DiscoverResult, error) {
 	provider, err := s.providerRepo.GetByID(ctx, providerID)
 	if err != nil {
@@ -85,7 +103,11 @@ func (s *modelService) Discover(ctx context.Context, providerID int64) (*Discove
 	}
 
 	var apiKey string
-	if provider.APIKeyEncrypted == "oauth" {
+	if provider.APIType == models.APITypeCodex {
+		// Codex authenticates via ChatGPT OAuth (resolved inside the codex
+		// discovery branch); no API key is needed or used.
+		apiKey = ""
+	} else if provider.APIKeyEncrypted == "oauth" {
 		apiKey = "oauth"
 	} else {
 		apiKey, err = s.provService.DecryptAPIKey(provider.APIKeyEncrypted)
@@ -103,15 +125,16 @@ func (s *modelService) Discover(ctx context.Context, providerID int64) (*Discove
 		existingNames[m.Name] = true
 	}
 
-	modelNames, err := fetchModels(provider.BaseURL, apiKey, provider.APIType)
+	discovered, err := s.fetchDiscoveredModels(ctx, provider, apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("fetch models: %w", err)
 	}
 
 	result := &DiscoverResult{}
-	fetchedNames := make(map[string]bool, len(modelNames))
+	fetchedNames := make(map[string]bool, len(discovered))
 
-	for _, name := range modelNames {
+	for _, dm := range discovered {
+		name := dm.name
 		fetchedNames[name] = true
 		m, err := s.modelRepo.Upsert(ctx, providerID, name)
 		if err != nil {
@@ -120,6 +143,14 @@ func (s *modelService) Discover(ctx context.Context, providerID int64) (*Discove
 
 		if !existingNames[name] {
 			result.Added = append(result.Added, name)
+		}
+
+		// Import discovery metadata (codex catalog) as model-level tags. A tag
+		// failure is logged and skipped — the model list is still authoritative.
+		if len(dm.tags) > 0 && s.tagRepo != nil {
+			if err := s.tagRepo.Set(ctx, m.ID, "", dm.tags); err != nil {
+				slog.Warn("failed to import discovery metadata", "provider", provider.Name, "model", name, "error", err)
+			}
 		}
 
 		if s.globalMetaRepo != nil {
@@ -138,12 +169,36 @@ func (s *modelService) Discover(ctx context.Context, providerID int64) (*Discove
 		}
 	}
 
+	modelNames := make([]string, 0, len(discovered))
+	for _, dm := range discovered {
+		modelNames = append(modelNames, dm.name)
+	}
+
 	_, err = s.modelRepo.DisableByProviderExcept(ctx, providerID, modelNames)
 	if err != nil {
 		return nil, fmt.Errorf("disable stale models: %w", err)
 	}
 
 	return result, nil
+}
+
+// fetchDiscoveredModels dispatches per API type. Codex never fails here: its
+// branch falls back to the static seed list internally (§4.7).
+func (s *modelService) fetchDiscoveredModels(ctx context.Context, provider *models.Provider, apiKey string) ([]discoveredModel, error) {
+	if provider.APIType == models.APITypeCodex {
+		return s.fetchCodexModels(ctx, provider), nil
+	}
+
+	names, err := fetchModels(provider.BaseURL, apiKey, provider.APIType)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]discoveredModel, len(names))
+	for i, name := range names {
+		out[i] = discoveredModel{name: name}
+	}
+	return out, nil
 }
 
 func (s *modelService) ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration) error {
@@ -292,6 +347,9 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelEffortEntry, error) 
 			for effort := range targetMeta {
 				efforts = append(efforts, effort)
 			}
+			// Deterministic order: map iteration is randomized, and callers
+			// (and tests) expect "" (base) before named efforts.
+			sort.Strings(efforts)
 			if len(efforts) == 0 {
 				efforts = []string{""}
 			}
@@ -305,19 +363,19 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelEffortEntry, error) 
 						}
 					}
 				}
-			result = append(result, ModelEffortEntry{
-				ModelID:           m.ID,
-				ModelName:         m.Name,
-				ProviderID:        m.ProviderID,
-				ProviderName:      providerName,
-				ReasoningEffort:   effort,
-				Disabled:          m.Disabled,
-				DisabledUntil:     m.DisabledUntil,
-				Tags:              targetModelTags,
-				GlobalMetadata:    gm,
-				MappingTargetName: mappingTarget,
-				CreatedAt:         m.CreatedAt,
-			})
+				result = append(result, ModelEffortEntry{
+					ModelID:           m.ID,
+					ModelName:         m.Name,
+					ProviderID:        m.ProviderID,
+					ProviderName:      providerName,
+					ReasoningEffort:   effort,
+					Disabled:          m.Disabled,
+					DisabledUntil:     m.DisabledUntil,
+					Tags:              targetModelTags,
+					GlobalMetadata:    gm,
+					MappingTargetName: mappingTarget,
+					CreatedAt:         m.CreatedAt,
+				})
 			}
 		} else {
 			// Not-mapped path: get per-effort tags + global metadata
@@ -349,18 +407,18 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelEffortEntry, error) 
 					}
 				}
 
-			result = append(result, ModelEffortEntry{
-				ModelID:         m.ID,
-				ModelName:       m.Name,
-				ProviderID:      m.ProviderID,
-				ProviderName:    providerName,
-				ReasoningEffort: effort,
-				Disabled:        m.Disabled,
-				DisabledUntil:   m.DisabledUntil,
-				Tags:            tagMap,
-				GlobalMetadata:  gm,
-				CreatedAt:       m.CreatedAt,
-			})
+				result = append(result, ModelEffortEntry{
+					ModelID:         m.ID,
+					ModelName:       m.Name,
+					ProviderID:      m.ProviderID,
+					ProviderName:    providerName,
+					ReasoningEffort: effort,
+					Disabled:        m.Disabled,
+					DisabledUntil:   m.DisabledUntil,
+					Tags:            tagMap,
+					GlobalMetadata:  gm,
+					CreatedAt:       m.CreatedAt,
+				})
 			}
 		}
 	}

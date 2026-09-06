@@ -1,0 +1,117 @@
+{
+  "spec": "007",
+  "tasks": [
+    {
+      "id": "S007T001",
+      "title": "Codex OAuth client + constants (internal/auth/codex_oauth.go)",
+      "description": "",
+      "status": "done",
+      "priority": 1,
+      "depends_on": [],
+      "owns": [
+        "internal/auth/codex_oauth.go"
+      ]
+    },
+    {
+      "id": "S007T002",
+      "title": "DB migrations: 028 codex api_type, 029 oauth_tokens last_refresh_at/id_token",
+      "description": "",
+      "status": "done",
+      "priority": 1,
+      "depends_on": [],
+      "owns": [
+        "internal/db/migrations/028_add_codex_api_type.sql",
+        "internal/db/migrations/029_add_oauth_token_refresh_tracking.sql"
+      ]
+    },
+    {
+      "id": "S007T003",
+      "title": "Parameterize OAuthService (anthropic|codex strategy) + codex refresh policy",
+      "description": "",
+      "status": "done",
+      "priority": 1,
+      "depends_on": [
+        "S007T001",
+        "S007T002"
+      ],
+      "owns": [
+        "internal/service/oauth_service.go"
+      ]
+    },
+    {
+      "id": "S007T004",
+      "title": "Responses <-> chat/completions translator (codex_translator.go)",
+      "description": "",
+      "status": "done",
+      "priority": 1,
+      "depends_on": [
+        "S007T002"
+      ],
+      "owns": [
+        "internal/proxy/codex_translator.go",
+        "internal/proxy/codex_translator_test.go"
+      ]
+    },
+    {
+      "id": "S007T005",
+      "title": "CodexClient (stream+nonstream, headers, 401-refresh-retry, error mapping)",
+      "description": "",
+      "status": "done",
+      "priority": 1,
+      "depends_on": [
+        "S007T004",
+        "S007T001"
+      ],
+      "owns": [
+        "internal/proxy/codex_client.go",
+        "internal/proxy/codex_client_test.go"
+      ]
+    },
+    {
+      "id": "S007T006",
+      "title": "APIType registration: model/provider.go, engine dispatch+stream branch, handler/CLI validation lists, model discovery branch",
+      "description": "APIType registration: model/provider.go, engine dispatch+stream branch, handler/CLI validation lists. Discovery: fetchModels codex branch calling GET {base}/models?client_version=... with 401-refresh-retry, visibility/supported_in_api filter, context_window tag import, fallback to static seed list on any failure (never worse than claude-code status quo)",
+      "status": "done",
+      "priority": 1,
+      "depends_on": [
+        "S007T002",
+        "S007T005"
+      ],
+      "owns": [
+        "internal/models/provider.go",
+        "internal/proxy/engine.go",
+        "internal/api/handlers/provider_handler.go",
+        "internal/service/model_service.go",
+        "cmd/llm-router/addprovider.go",
+        "cmd/llm-router/main.go"
+      ]
+    },
+    {
+      "id": "S007T007",
+      "title": "CLI: connect --provider chatgpt + setup routing + predefined models",
+      "description": "CLI: connect --provider chatgpt + setup routing. Predefined models = shared static fallback seed (codexModelFallback), same as claude-code predefined list pattern; discovery enriches/replaces them via POST /api/v1/providers/:id/discover",
+      "status": "done",
+      "priority": 1,
+      "depends_on": [
+        "S007T003",
+        "S007T006"
+      ],
+      "owns": [
+        "cmd/llm-router/connect.go",
+        "cmd/llm-router/setup.go"
+      ]
+    },
+    {
+      "id": "S007T008",
+      "title": "Migration/engine/handler test updates + full test run (go build, go test ./...)",
+      "description": "",
+      "status": "done",
+      "priority": 2,
+      "depends_on": [
+        "S007T006",
+        "S007T007"
+      ],
+      "owns": []
+    }
+  ]
+}

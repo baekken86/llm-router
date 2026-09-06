@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -17,7 +18,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	llmrouter "github.com/chris/llm-router"
 	"github.com/chris/llm-router/internal/api"
 	"github.com/chris/llm-router/internal/api/handlers"
@@ -27,6 +27,7 @@ import (
 	"github.com/chris/llm-router/internal/repository"
 	"github.com/chris/llm-router/internal/service"
 	"github.com/chris/llm-router/internal/tui"
+	"github.com/go-chi/chi/v5"
 )
 
 func main() {
@@ -44,6 +45,9 @@ func main() {
 		case "setup":
 			runSetup(os.Args[2:])
 			return
+		case "connect":
+			runConnect(os.Args[2:])
+			return
 		case "add-provider":
 			runAddProvider(os.Args[2:])
 			return
@@ -56,12 +60,12 @@ func main() {
 		case "import":
 			runImportCmd(os.Args[2:])
 			return
-	case "toggle-provider":
-		runToggleProvider(os.Args[2:])
-		return
-	case "toggle-model":
-		runToggleModel(os.Args[2:])
-		return
+		case "toggle-provider":
+			runToggleProvider(os.Args[2:])
+			return
+		case "toggle-model":
+			runToggleModel(os.Args[2:])
+			return
 		case "create-key":
 			runCreateKey(os.Args[2:])
 			return
@@ -81,6 +85,7 @@ Usage:
   llm-router [flags]              Start proxy (default)
   llm-router proxy [flags]        Start proxy server
   llm-router setup                Setup a provider (OAuth or API key)
+  llm-router connect              Connect a provider (OAuth; claude-code, chatgpt)
   llm-router add-provider         Add a custom provider
   llm-router discover             Discover models from a provider
   llm-router tag                  Set metadata tags on models
@@ -94,6 +99,12 @@ Usage:
 Examples:
   # Setup Claude Code (OAuth)
   llm-router setup --provider claude-code
+
+  # Connect Claude Code (OAuth)
+  llm-router connect --provider claude-code
+
+  # Connect ChatGPT (Codex OAuth)
+  llm-router connect --provider chatgpt
 
   # Setup OpenCode Go (API key)
   llm-router setup --provider opencode-go --key sk-...
@@ -115,15 +126,19 @@ Setup flags:
   --key string                    API key (required for API key providers)
   --url string                    Custom base URL (optional)
 
+Connect flags:
+  --provider string               Provider name (default claude-code; chatgpt or codex for ChatGPT OAuth)
+  --manual                        Skip the local callback server and paste the callback URL manually
+
 Admin flags:
   --connect string                Proxy URL (default http://localhost:8080)
   --key string                    Proxy API key (required)
 
 Add-provider flags:
   --name string                   Provider name (required)
-  --type string                   API type: openai, anthropic, cloudflare, or ollama (default openai)
+  --type string                   API type: openai, anthropic, cloudflare, ollama, ollama-cloud, or codex (default openai)
   --url string                    Base URL (required for non-ollama)
-  --key string                    API key (required; not needed for local ollama)
+  --key string                    API key (required; not needed for local ollama or codex)
   --host string                   Ollama host (default localhost:11434)
 
 Tag flags:
@@ -354,6 +369,13 @@ func runProxy(args []string) {
 
 	oauthService := service.NewOAuthService(oauthRepo, providerRepo, providerService, logger)
 
+	// Codex model discovery (§4.7): wire the live-catalog lister (proxy
+	// CodexClient) plus the OAuth token/account sources into the model
+	// service. internal/proxy imports internal/service, so the adapter lives
+	// here in cmd. Without this wiring codex discovery falls back to the
+	// static seed list.
+	service.SetCodexDiscovery(modelService, oauthService, oauthRepo, codexProxyModelLister{client: proxy.NewCodexClient()})
+
 	engine := proxy.NewEngine(vmService, providerService, oauthService, logger, logChan)
 	engine.GetRTK().SetEnabled(settings.RTKEnabled)
 	engine.GetCaveman().SetEnabled(settings.CavemanEnabled)
@@ -494,6 +516,46 @@ func generateAdminPassword() string {
 func defaultDBPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".local", "share", "llm-router", "llm-router.db")
+}
+
+// codexProxyModelLister adapts the proxy's CodexClient to the model service's
+// CodexModelLister seam. internal/proxy imports internal/service, so the
+// service cannot reference proxy.CodexModelInfo directly — this adapter
+// converts the catalog entries and maps a proxy ProviderError 401 onto
+// service.ErrCodexUnauthorized (the seam's retry trigger).
+type codexProxyModelLister struct {
+	client *proxy.CodexClient
+}
+
+func (a codexProxyModelLister) ListModels(ctx context.Context, baseURL, accessToken, accountID string) ([]service.CodexModelInfo, error) {
+	infos, err := a.client.ListModels(ctx, baseURL, accessToken, accountID)
+	if err != nil {
+		var pe *proxy.ProviderError
+		if errors.As(err, &pe) && pe.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w: %v", service.ErrCodexUnauthorized, pe)
+		}
+		return nil, err
+	}
+
+	out := make([]service.CodexModelInfo, 0, len(infos))
+	for _, in := range infos {
+		levels := make([]service.CodexReasoningLevel, 0, len(in.SupportedReasoningLevels))
+		for _, l := range in.SupportedReasoningLevels {
+			levels = append(levels, service.CodexReasoningLevel{Effort: l.Effort, Description: l.Description})
+		}
+		out = append(out, service.CodexModelInfo{
+			Slug:                     in.Slug,
+			DisplayName:              in.DisplayName,
+			Description:              in.Description,
+			DefaultReasoningLevel:    in.DefaultReasoningLevel,
+			SupportedReasoningLevels: levels,
+			Visibility:               in.Visibility,
+			SupportedInAPI:           in.SupportedInAPI,
+			ContextWindow:            in.ContextWindow,
+			Priority:                 in.Priority,
+		})
+	}
+	return out, nil
 }
 
 func middlewareAuthOrOAuth(ks service.KeyService, oauth *handlers.OAuthHandler) func(http.Handler) http.Handler {

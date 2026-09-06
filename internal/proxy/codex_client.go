@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -29,9 +30,40 @@ func NewCodexClient() *CodexClient {
 	}
 }
 
-// codexClientVersion mirrors the codex_cli_rs version sent to discovery and
-// used as the stream session/user-agent identity.
-const codexClientVersion = "0.136.0"
+// codexClientVersionDefault mirrors the latest official codex_cli_rs release
+// at implementation time. ChatGPT's backend gates the /models catalog
+// SERVER-SIDE by the `client_version` query param (and the User-Agent), so a
+// stale version silently hides newer models: e.g. 0.136.0 hid gpt-5.6-*
+// (min 0.144.0) and gpt-6-astra (min 0.153.0). When new codex models stop
+// appearing in discovery, bump this default to the current official CLI
+// version (design §3.4; migrations note on model minimums; check
+// github.com/openai/codex releases).
+const codexClientVersionDefault = "0.153.4"
+
+// codexClientVersion is resolved once at init: LLM_ROUTER_CODEX_CLIENT_VERSION
+// (when it looks like a version) wins, otherwise the default above. It feeds
+// BOTH the User-Agent and the client_version query param — the two must stay
+// in sync because the server may cross-check them.
+var codexClientVersion = codexClientVersionFromEnv()
+
+// codexClientVersionFromEnv reads LLM_ROUTER_CODEX_CLIENT_VERSION and returns
+// it when it looks like a version (digits/dots only, e.g. "0.153.4" or "1.2");
+// anything else (empty, "v1.2.3", suffixed, padded) falls back to the default.
+// Strict, no trimming — we present the version, we never parse it for
+// comparisons: the server does the actual gating (per-model
+// minimum_version filtering).
+func codexClientVersionFromEnv() string {
+	v := os.Getenv("LLM_ROUTER_CODEX_CLIENT_VERSION")
+	if v == "" {
+		return codexClientVersionDefault
+	}
+	for _, r := range v {
+		if (r < '0' || r > '9') && r != '.' {
+			return codexClientVersionDefault
+		}
+	}
+	return v
+}
 
 // setCodexHeaders applies the shared header set for Codex backend requests
 // (§3.2/§3.4). ChatGPT-Account-ID is only sent when the account id is known.
@@ -357,7 +389,7 @@ type CodexReasoningLevel struct {
 }
 
 // ListModels fetches the live model catalog for ChatGPT-OAuth sessions
-// (GET {baseURL}/models?client_version=0.136.0). On 401 the caller refreshes
+// (GET {baseURL}/models?client_version=<resolved codexClientVersion>). On 401 the caller refreshes
 // the OAuth token and retries.
 func (c *CodexClient) ListModels(ctx context.Context, baseURL, accessToken, accountID string) ([]CodexModelInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)

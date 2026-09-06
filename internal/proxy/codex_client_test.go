@@ -68,7 +68,7 @@ func TestCodexClient_ChatCompletion_HeadersAndBody(t *testing.T) {
 		"Content-Type":       "application/json",
 		"Authorization":      "Bearer tok-1",
 		"Originator":         "codex_cli_rs",
-		"User-Agent":         "codex_cli_rs/0.136.0",
+		"User-Agent":         "codex_cli_rs/" + codexClientVersion,
 		"Accept":             "text/event-stream",
 		"session_id":         "sess-7",
 		"ChatGPT-Account-Id": "acct-9",
@@ -445,8 +445,8 @@ func TestCodexClient_ListModels_ParsesCatalog(t *testing.T) {
 	if gotPath != "/models" {
 		t.Errorf("path = %q, want /models", gotPath)
 	}
-	if gotQuery != "client_version=0.136.0" {
-		t.Errorf("query = %q, want client_version=0.136.0", gotQuery)
+	if gotQuery != "client_version="+codexClientVersion {
+		t.Errorf("query = %q, want client_version=%s", gotQuery, codexClientVersion)
 	}
 	if gotAccept != "application/json" {
 		t.Errorf("Accept = %q, want application/json", gotAccept)
@@ -526,6 +526,125 @@ func TestCodexClient_ListModels_Non200WrapsBody(t *testing.T) {
 	_, err := client.ListModels(context.Background(), srv.URL, "tok", "")
 	if err == nil || !strings.Contains(err.Error(), "denied") {
 		t.Errorf("error = %v, want body wrapped", err)
+	}
+}
+
+// --- Client version resolution ----------------------------------------------------
+
+// codexClientVersionFromEnv reads the env var at call time (validation stays
+// loose: digits/dots only, spaces position-sensitive). Uses t.Setenv, which
+// auto-restores and forbids parallel execution — these subtests don't call
+// t.Parallel.
+func TestCodexClientVersionFromEnv(t *testing.T) {
+	t.Run("empty falls back to default", func(t *testing.T) {
+		t.Setenv("LLM_ROUTER_CODEX_CLIENT_VERSION", "")
+		if got := codexClientVersionFromEnv(); got != codexClientVersionDefault {
+			t.Errorf("empty env = %q, want default %q", got, codexClientVersionDefault)
+		}
+	})
+	t.Run("valid version wins", func(t *testing.T) {
+		t.Setenv("LLM_ROUTER_CODEX_CLIENT_VERSION", "0.200.1")
+		if got := codexClientVersionFromEnv(); got != "0.200.1" {
+			t.Errorf("valid env = %q, want 0.200.1", got)
+		}
+	})
+	t.Run("two-component version accepted", func(t *testing.T) {
+		t.Setenv("LLM_ROUTER_CODEX_CLIENT_VERSION", "1.2")
+		if got := codexClientVersionFromEnv(); got != "1.2" {
+			t.Errorf("two-component env = %q, want 1.2", got)
+		}
+	})
+	t.Run("garbage ignored keeps default", func(t *testing.T) {
+		for _, bad := range []string{"abc", "0.15;rm -rf", "v1.2.3", "1.2.3-beta", " 0.99 "} {
+			t.Run(bad, func(t *testing.T) {
+				t.Setenv("LLM_ROUTER_CODEX_CLIENT_VERSION", bad)
+				if got := codexClientVersionFromEnv(); got != codexClientVersionDefault {
+					t.Errorf("garbage env %q = %q, want default %q", bad, got, codexClientVersionDefault)
+				}
+			})
+		}
+	})
+}
+
+// Version override must reach the wire on BOTH channels the server can see:
+// the client_version query param (models GET — the endpoint the server gates)
+// and the User-Agent suffix (present on every request). The package var is
+// resolved once at init, so this test overrides the var directly (same
+// package, restored via defer) — in the real binary the env is read before
+// init via codexClientVersionFromEnv.
+func TestCodexClient_ListModels_VersionOverridePropagates(t *testing.T) {
+	var gotQuery, gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		gotUA = r.Header.Get("User-Agent")
+		w.Write([]byte(`{"models":[]}`))
+	}))
+	defer srv.Close()
+
+	orig := codexClientVersion
+	codexClientVersion = "9.9.9"
+	defer func() { codexClientVersion = orig }()
+
+	client := NewCodexClient()
+	if _, err := client.ListModels(context.Background(), srv.URL, "tok", ""); err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if gotQuery != "client_version=9.9.9" {
+		t.Errorf("query = %q, want client_version=9.9.9", gotQuery)
+	}
+	if gotUA != "codex_cli_rs/9.9.9" {
+		t.Errorf("User-Agent = %q, want codex_cli_rs/9.9.9", gotUA)
+	}
+}
+
+// The same resolved version must appear on streaming chat requests'
+// User-Agent too (query param is models-GET only).
+func TestCodexClient_ChatCompletion_VersionOverridePropagates(t *testing.T) {
+	var gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		w.Write([]byte("data: " + codexEventJSON(t, map[string]any{"type": "response.completed", "response": map[string]any{}}) + "\n\n"))
+	}))
+	defer srv.Close()
+
+	orig := codexClientVersion
+	codexClientVersion = "9.9.9"
+	defer func() { codexClientVersion = orig }()
+
+	client := NewCodexClient()
+	_, err := client.ChatCompletion(context.Background(), srv.URL, "tok", "", "sess", codexSimpleReq())
+	if err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+	if gotUA != "codex_cli_rs/9.9.9" {
+		t.Errorf("User-Agent = %q, want codex_cli_rs/9.9.9", gotUA)
+	}
+}
+
+// The default must be presented to the server on the /models catalog request
+// (the endpoint the server actually gates on client_version).
+func TestCodexClient_ListModels_SendsResolvedVersion(t *testing.T) {
+	var gotQuery, gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		gotUA = r.Header.Get("User-Agent")
+		w.Write([]byte(`{"models":[]}`))
+	}))
+	defer srv.Close()
+
+	client := NewCodexClient()
+	if _, err := client.ListModels(context.Background(), srv.URL, "tok", ""); err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if gotQuery != "client_version="+codexClientVersion {
+		t.Errorf("query = %q, want client_version=%s", gotQuery, codexClientVersion)
+	}
+	if gotUA != "codex_cli_rs/"+codexClientVersion {
+		t.Errorf("User-Agent = %q, want codex_cli_rs/%s", gotUA, codexClientVersion)
+	}
+	// Both channels must present the SAME version (server may cross-check).
+	if !strings.HasSuffix(gotUA, "="+codexClientVersion) && !strings.Contains(gotUA, "/"+codexClientVersion) {
+		t.Errorf("User-Agent version suffix mismatch with query param %q", gotQuery)
 	}
 }
 

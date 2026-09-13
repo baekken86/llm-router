@@ -275,7 +275,7 @@ func (s *virtualModelService) ResolveModels(ctx context.Context, vm *models.Virt
 				json.Unmarshal(vm.SortExpr, &vmSort)
 			}
 			merged = append(merged, vmSort...)
-			sort.Slice(result, func(i, j int) bool {
+			sort.SliceStable(result, func(i, j int) bool {
 				return compareModels(result[i], result[j], merged)
 			})
 		}
@@ -624,7 +624,7 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 		resolved = append(includeResolved, resolved...)
 	}
 
-	sort.Slice(resolved, func(i, j int) bool {
+	sort.SliceStable(resolved, func(i, j int) bool {
 		return compareModels(resolved[i], resolved[j], sortExpr)
 	})
 
@@ -684,7 +684,7 @@ func (s *virtualModelService) resolveSource(ctx context.Context, node *models.Co
 
 	// Apply per-node sort
 	if len(node.SortExpr) > 0 {
-		sort.Slice(result, func(i, j int) bool {
+		sort.SliceStable(result, func(i, j int) bool {
 			return compareModels(result[i], result[j], node.SortExpr)
 		})
 	}
@@ -716,7 +716,7 @@ func (s *virtualModelService) resolveOperation(ctx context.Context, node *models
 
 	// Apply per-node sort
 	if len(node.SortExpr) > 0 {
-		sort.Slice(combined, func(i, j int) bool {
+		sort.SliceStable(combined, func(i, j int) bool {
 			return compareModels(combined[i], combined[j], node.SortExpr)
 		})
 	}

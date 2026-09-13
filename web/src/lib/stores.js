@@ -2,6 +2,8 @@ import { writable } from 'svelte/store';
 
 export const adminToken = writable('');
 export const metadataFields = writable({});
+export const sortConditions = writable([]);
+export const filterConditions = writable([]);
 export const toasts = writable([]);
 
 let toastId = 0;

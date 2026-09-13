@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 
 	"github.com/chris/llm-router/internal/repository"
@@ -82,12 +83,19 @@ func (h *MetadataHandler) GetFields(w http.ResponseWriter, r *http.Request) {
 		if allKeys, err := h.providerMetaRepo.ListAllKeys(r.Context()); err == nil {
 			for key, values := range allKeys {
 				pKey := "p." + key
-				if _, exists := fields[pKey]; !exists {
-					fields[pKey] = map[string]interface{}{
-						"description": "Provider metadata: " + key,
-						"type":        inferProviderFieldType(values),
-					}
+			if _, exists := fields[pKey]; !exists {
+				def := map[string]interface{}{
+					"description": "Provider metadata: " + key,
+					"type":        inferProviderFieldType(values),
 				}
+				if len(values) > 0 {
+					// sorted copy for stable output
+					vals := append([]string(nil), values...)
+					sort.Strings(vals)
+					def["values"] = vals
+				}
+				fields[pKey] = def
+			}
 			}
 		}
 	}

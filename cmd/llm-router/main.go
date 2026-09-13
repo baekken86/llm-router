@@ -255,10 +255,12 @@ func runProxy(args []string) {
 	globalMetaRepo := repository.NewGlobalMetadataRepository(database)
 	oauthRepo := repository.NewOAuthRepository(database)
 	modelMappingRepo := repository.NewModelMappingRepository(database)
+	globalSortRepo := repository.NewGlobalSortConditionRepository(database)
+	globalFilterRepo := repository.NewGlobalFilterConditionRepository(database)
 
 	providerService := service.NewProviderService(providerRepo, providerMetadataRepo, keyBytes)
 	modelService := service.NewModelService(modelRepo, tagRepo, providerRepo, providerService, globalMetaRepo, modelMappingRepo)
-	vmService := service.NewVirtualModelService(vmRepo, modelRepo, tagRepo, providerRepo, providerMetadataRepo, globalMetaRepo, modelMappingRepo, overrideRepo)
+	vmService := service.NewVirtualModelService(vmRepo, modelRepo, tagRepo, providerRepo, providerMetadataRepo, globalMetaRepo, modelMappingRepo, overrideRepo, globalSortRepo, globalFilterRepo)
 	keyService := service.NewKeyService(keyRepo)
 	adminService := service.NewAdminService(pass)
 
@@ -410,6 +412,8 @@ func runProxy(args []string) {
 	settingsHandler := handlers.NewSettingsHandler(cfg, engine)
 	mappingHandler := handlers.NewModelMappingHandler(modelMappingRepo, modelRepo, logger)
 	modelOverrideHandler := handlers.NewModelOverrideHandler(overrideRepo)
+	globalSortHandler := handlers.NewGlobalSortConditionHandler(globalSortRepo)
+	globalFilterHandler := handlers.NewGlobalFilterConditionHandler(globalFilterRepo)
 
 	oauthHandler := handlers.NewOAuthHandler(func(key string) int64 {
 		pk, _ := keyService.ValidateKey(context.Background(), key)
@@ -427,7 +431,7 @@ func runProxy(args []string) {
 		logger.Warn("web UI not embedded", "error", err)
 	}
 
-	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, metadataHandler, statusHandler, syslogHandler, settingsHandler, mappingHandler, modelOverrideHandler, keyService, adminService, adminHandler, webFS)
+	r := api.NewRouter(logger, providerHandler, modelHandler, vmHandler, keyHandler, importHandler, statsHandler, oauthHandler, metadataHandler, statusHandler, syslogHandler, settingsHandler, mappingHandler, modelOverrideHandler, 	globalSortHandler, globalFilterHandler, keyService, adminService, adminHandler, webFS)
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middlewareAuthOrOAuth(keyService, oauthHandler))

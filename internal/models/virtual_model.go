@@ -18,6 +18,12 @@ type VirtualModel struct {
 	RetryOnStatus json.RawMessage  `json:"retry_on_status"`
 	CreatedAt     time.Time        `json:"created_at"`
 	UpdatedAt     time.Time        `json:"updated_at"`
+
+	// DisabledSortConditions lists global sort condition ids disabled for this VM.
+	DisabledSortConditions []int64 `json:"disabled_global_sort_conditions,omitempty"`
+
+	// DisabledFilterConditions lists global filter condition ids disabled for this VM.
+	DisabledFilterConditions []int64 `json:"disabled_global_filter_conditions,omitempty"`
 }
 
 type CreateVirtualModelRequest struct {
@@ -32,14 +38,14 @@ type CreateVirtualModelRequest struct {
 }
 
 type UpdateVirtualModelRequest struct {
-	Name          *string           `json:"name,omitempty"`
-	Description   *string           `json:"description,omitempty"`
-	FilterExpr    *json.RawMessage  `json:"filter_expr,omitempty"`
-	SortExpr      *json.RawMessage  `json:"sort_expr,omitempty"`
-	IncludeModels *json.RawMessage  `json:"include_models,omitempty"`
-	Composition   *CompositionNode  `json:"composition,omitempty"`
-	MaxRetries    *int              `json:"max_retries,omitempty"`
-	RetryOnStatus *json.RawMessage  `json:"retry_on_status,omitempty"`
+	Name          *string          `json:"name,omitempty"`
+	Description   *string          `json:"description,omitempty"`
+	FilterExpr    *json.RawMessage `json:"filter_expr,omitempty"`
+	SortExpr      *json.RawMessage `json:"sort_expr,omitempty"`
+	IncludeModels *json.RawMessage `json:"include_models,omitempty"`
+	Composition   *CompositionNode `json:"composition,omitempty"`
+	MaxRetries    *int             `json:"max_retries,omitempty"`
+	RetryOnStatus *json.RawMessage `json:"retry_on_status,omitempty"`
 }
 
 type PreviewVirtualModelRequest struct {

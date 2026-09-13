@@ -7,6 +7,8 @@
   import RawModelList from './components/RawModelList.svelte';
   import ModelsView from './components/ModelsView.svelte';
   import MappingsTab from './components/MappingsTab.svelte';
+  import GlobalSortConditionsTab from './components/GlobalSortConditionsTab.svelte';
+  import GlobalFilterConditionsTab from './components/GlobalFilterConditionsTab.svelte';
   import StatusView from './components/StatusView.svelte';
   import StatsView from './components/StatsView.svelte';
   import LogsView from './components/LogsView.svelte';
@@ -25,6 +27,8 @@
     if (pathname === '/providers') return { tab: 'providers', view: 'list', id: null };
     if (pathname === '/models') return { tab: 'models', view: 'list', id: null };
     if (pathname === '/mappings') return { tab: 'mappings', view: 'list', id: null };
+    if (pathname === '/sort-conditions') return { tab: 'sort-conditions', view: 'list', id: null };
+    if (pathname === '/filter-conditions') return { tab: 'filter-conditions', view: 'list', id: null };
     if (pathname === '/status') return { tab: 'status', view: 'list', id: null };
     if (pathname === '/stats') return { tab: 'stats', view: 'list', id: null };
     if (pathname === '/logs') return { tab: 'logs', view: 'list', id: null };
@@ -42,6 +46,8 @@
     if (tab === 'providers') return '/providers';
     if (tab === 'models') return '/models';
     if (tab === 'mappings') return '/mappings';
+    if (tab === 'sort-conditions') return '/sort-conditions';
+    if (tab === 'filter-conditions') return '/filter-conditions';
     if (tab === 'status') return '/status';
     if (tab === 'stats') return '/stats';
     if (tab === 'logs') return '/logs';
@@ -146,6 +152,20 @@
         Mappings
       </a>
       <a
+        href="/sort-conditions"
+        class="text-sm no-underline {mainTab === 'sort-conditions' ? 'text-white border-b-2 border-emerald-400 pb-1' : 'text-gray-400 hover:text-white pb-1'}"
+        onclick={(e) => handleTabClick(e, 'sort-conditions')}
+      >
+        Sort Conditions
+      </a>
+      <a
+        href="/filter-conditions"
+        class="text-sm no-underline {mainTab === 'filter-conditions' ? 'text-white border-b-2 border-emerald-400 pb-1' : 'text-gray-400 hover:text-white pb-1'}"
+        onclick={(e) => handleTabClick(e, 'filter-conditions')}
+      >
+        Filter Conditions
+      </a>
+      <a
         href="/virtual"
         class="text-sm no-underline {mainTab === 'virtual' ? 'text-white border-b-2 border-emerald-400 pb-1' : 'text-gray-400 hover:text-white pb-1'}"
         onclick={(e) => handleTabClick(e, 'virtual')}
@@ -196,6 +216,10 @@
         <ModelsView />
       {:else if mainTab === 'mappings'}
         <MappingsTab />
+      {:else if mainTab === 'sort-conditions'}
+        <GlobalSortConditionsTab />
+      {:else if mainTab === 'filter-conditions'}
+        <GlobalFilterConditionsTab />
       {:else if mainTab === 'status'}
         <StatusView />
       {:else if mainTab === 'stats'}

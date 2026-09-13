@@ -151,6 +151,7 @@
                   <option value="desc">false first</option>
                 </select>
                 <button
+                  type="button"
                   class="text-gray-500 hover:text-red-400 px-1"
                   onclick={() => removeEntry(idx)}
                 >x</button>
@@ -184,6 +185,7 @@
               {/if}
 
               <button
+                type="button"
                 class="text-xs text-gray-500 hover:text-gray-300 px-1"
                 onclick={() => toggleSortMode(idx)}
                 title="Toggle direction/custom order"
@@ -191,6 +193,7 @@
                 {entry.direction !== undefined ? '[]' : '↕'}
               </button>
               <button
+                type="button"
                 class="text-gray-500 hover:text-red-400 px-1"
                 onclick={() => removeEntry(idx)}
               >x</button>
@@ -202,12 +205,14 @@
 
     <div class="flex gap-2">
       <button
+        type="button"
         class="text-sm text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
         onclick={addSort}
       >
         + Sort
       </button>
       <button
+        type="button"
         class="text-sm text-amber-400 hover:text-amber-300 flex items-center gap-1"
         onclick={addCondition}
       >

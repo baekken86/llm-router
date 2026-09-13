@@ -1,11 +1,18 @@
 <script>
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/api.js';
-  import { addToast } from '../lib/stores.js';
-  import ConfirmDialog from './ConfirmDialog.svelte';
-  import ResolvedPreview from './ResolvedPreview.svelte';
+import { addToast, sortConditions, filterConditions } from '../lib/stores.js';
+import ConfirmDialog from './ConfirmDialog.svelte';
+import ResolvedPreview from './ResolvedPreview.svelte';
 
-  let { onCreate, onEdit, onDuplicate = () => {} } = $props();
+let { onCreate, onEdit, onDuplicate = () => {} } = $props();
+
+const enabledGlobalConditions = $derived(
+  ($sortConditions || []).filter(c => c.enabled !== false)
+);
+const enabledGlobalFilterConditions = $derived(
+  ($filterConditions || []).filter(c => c.enabled !== false)
+);
 
   function handleLink(e, href) {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
@@ -20,7 +27,14 @@
   async function load() {
     loading = true;
     try {
-      vms = await apiFetch('/api/v1/virtual-models');
+      const [list, gsc, gfc] = await Promise.all([
+        apiFetch('/api/v1/virtual-models'),
+        apiFetch('/api/v1/global-sort-conditions').catch(() => []),
+        apiFetch('/api/v1/global-filter-conditions').catch(() => []),
+      ]);
+      vms = list;
+      sortConditions.set(Array.isArray(gsc) ? gsc : []);
+      filterConditions.set(Array.isArray(gfc) ? gfc : []);
     } catch (e) {
       addToast(e.message, 'error');
     } finally {
@@ -196,6 +210,18 @@
                 <div class="mb-2 text-xs text-gray-500">
                   <span class="text-gray-400">Sort:</span> {formatSort(vm.sort_expr)}
                 </div>
+                {#if enabledGlobalFilterConditions.length > 0}
+                  <div class="mb-2 text-xs text-gray-600">
+                    <span class="text-gray-500">Global filter:</span>
+                    {enabledGlobalFilterConditions.map(c => c.name).join(', ')}
+                  </div>
+                {/if}
+                {#if enabledGlobalConditions.length > 0}
+                  <div class="mb-2 text-xs text-gray-600">
+                    <span class="text-gray-500">Global sort:</span>
+                    {enabledGlobalConditions.map(c => c.name).join(', ')}
+                  </div>
+                {/if}
                 <div class="mb-2 text-xs text-gray-500">
                   <span class="text-gray-400">Filter:</span> {formatFilter(vm.filter_expr)}
                 </div>

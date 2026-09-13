@@ -56,6 +56,30 @@ func codexMapServiceTier(tier string) string {
 	return ""
 }
 
+// codexToolChoiceMap is the OpenAI chat request payload form used for named
+// function tool_choice. The Responses API requires the flat form
+// {type:"function", name:<fn-name>} — passing the chat form through verbatim
+// makes the codex backend reject the request with "Missing required
+// parameter: 'tool_choice.name'".
+func translateCodexToolChoice(v any) any {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return v
+	}
+	if t, _ := m["type"].(string); t != "function" {
+		return v
+	}
+	fn, ok := m["function"].(map[string]any)
+	if !ok {
+		return v
+	}
+	name, _ := fn["name"].(string)
+	if name == "" {
+		return v
+	}
+	return map[string]any{"type": "function", "name": name}
+}
+
 // codexBody is the Responses API wire format (§3.2 of the spec). Kept as a
 // typed struct so the allowed key set is closed: anything not represented
 // here is dropped from the translated request.
@@ -196,7 +220,7 @@ func ChatToCodexResponses(req ChatCompletionRequest, sessionID string) (map[stri
 		body.Tools = tools
 	}
 	if req.ToolChoice != nil {
-		body.ToolChoice = req.ToolChoice
+		body.ToolChoice = translateCodexToolChoice(req.ToolChoice)
 	}
 
 	data, err := json.Marshal(body)

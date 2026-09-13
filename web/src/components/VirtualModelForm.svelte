@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/api.js';
-  import { addToast } from '../lib/stores.js';
+  import { addToast, sortConditions, filterConditions } from '../lib/stores.js';
   import CompositionCanvas from './CompositionCanvas.svelte';
   import ResolvedPreview from './ResolvedPreview.svelte';
 
@@ -13,6 +13,10 @@
   let includeModels = $state([]);
   let maxRetries = $state(0);
   let retryOnStatus = $state([429, 500, 502, 503]);
+  let disabledGlobalConditions = $state([]);
+  let globalConditions = $state([]);
+  let disabledGlobalFilterConditions = $state([]);
+  let globalFilterConditions = $state([]);
   let saving = $state(false);
   let loading = $state(vmId !== null);
   let canvasRef = $state();
@@ -22,7 +26,21 @@
   async function loadVM() {
     if (!vmId) return;
     try {
-      const vm = await apiFetch(`/api/v1/virtual-models/${vmId}`);
+      const [vm, gsc, gfc] = await Promise.all([
+        apiFetch(`/api/v1/virtual-models/${vmId}`),
+        apiFetch('/api/v1/global-sort-conditions').catch(() => []),
+        apiFetch('/api/v1/global-filter-conditions').catch(() => []),
+      ]);
+      globalConditions = Array.isArray(gsc) ? gsc : [];
+      sortConditions.set(globalConditions);
+      globalFilterConditions = Array.isArray(gfc) ? gfc : [];
+      filterConditions.set(globalFilterConditions);
+      disabledGlobalConditions = Array.isArray(vm.disabled_global_sort_conditions)
+        ? vm.disabled_global_sort_conditions
+        : [];
+      disabledGlobalFilterConditions = Array.isArray(vm.disabled_global_filter_conditions)
+        ? vm.disabled_global_filter_conditions
+        : [];
       name = vm.name;
       description = vm.description || '';
       maxRetries = vm.max_retries || 0;
@@ -74,6 +92,8 @@
         max_retries: maxRetries,
         retry_on_status: retryOnStatus,
         include_models: includeModels,
+        disabled_global_sort_conditions: disabledGlobalConditions,
+        disabled_global_filter_conditions: disabledGlobalFilterConditions,
         composition
       };
 
@@ -99,6 +119,18 @@
     } finally {
       saving = false;
     }
+  }
+
+  function toggleGlobalFilterCondition(id) {
+    disabledGlobalFilterConditions = disabledGlobalFilterConditions.includes(id)
+      ? disabledGlobalFilterConditions.filter(x => x !== id)
+      : [...disabledGlobalFilterConditions, id];
+  }
+
+  function toggleGlobalCondition(id) {
+    disabledGlobalConditions = disabledGlobalConditions.includes(id)
+      ? disabledGlobalConditions.filter(x => x !== id)
+      : [...disabledGlobalConditions, id];
   }
 
   function toggleStatus(code) {
@@ -143,13 +175,6 @@
         ></textarea>
       </div>
 
-      <div>
-        <label class="block text-sm text-gray-400 mb-2">Composition</label>
-        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-          <CompositionCanvas bind:node={compositionNode} bind:this={canvasRef} />
-        </div>
-      </div>
-
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm text-gray-400 mb-1">Max Retries</label>
@@ -174,6 +199,77 @@
               </button>
             {/each}
           </div>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-2">Global Filter Conditions</label>
+        <p class="text-xs text-gray-500 mb-2">
+          Applied first, before model-specific filters. Uncheck to disable for this model.
+        </p>
+        {#if globalFilterConditions.length === 0}
+          <p class="text-xs text-gray-500">No global filter conditions defined.</p>
+        {:else}
+          <div class="space-y-2">
+            {#each globalFilterConditions.filter(c => c.enabled !== false) as c (c.id)}
+              <label class="flex items-center gap-3 bg-gray-900 border border-gray-800 rounded px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={!disabledGlobalFilterConditions.includes(c.id)}
+                  onchange={() => toggleGlobalFilterCondition(c.id)}
+                  class="accent-emerald-600"
+                />
+                <span class="text-sm text-gray-200 font-mono">{c.name}</span>
+                <span class="text-xs text-gray-500 truncate flex-1">{c.description || ''}</span>
+              </label>
+            {/each}
+            {#each globalFilterConditions.filter(c => c.enabled === false) as c (c.id)}
+              <div class="flex items-center gap-3 bg-gray-900 border border-gray-800 rounded px-3 py-2 opacity-50">
+                <span class="text-sm text-gray-500 font-mono line-through">{c.name}</span>
+                <span class="text-xs text-gray-600">(globally disabled)</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-2">Global Sort Conditions</label>
+        <p class="text-xs text-gray-500 mb-2">
+          Applied before model-specific sorts. Uncheck to disable for this model.
+        </p>
+        {#if globalConditions.length === 0}
+          <p class="text-xs text-gray-500">No global sort conditions defined.</p>
+        {:else}
+          <div class="space-y-2">
+            {#each globalConditions.filter(c => c.enabled !== false) as c (c.id)}
+              <label
+                class="flex items-center gap-3 bg-gray-900 border border-gray-800 rounded px-3 py-2"
+              >
+                <input
+                  type="checkbox"
+                  checked={!disabledGlobalConditions.includes(c.id)}
+                  onchange={() => toggleGlobalCondition(c.id)}
+                  class="accent-emerald-600"
+                />
+                <span class="text-sm text-gray-200 font-mono">{c.name}</span>
+                <span class="text-xs text-gray-500 truncate flex-1">{c.description || ''}</span>
+              </label>
+            {/each}
+            {#each globalConditions.filter(c => c.enabled === false) as c (c.id)}
+              <div class="flex items-center gap-3 bg-gray-900 border border-gray-800 rounded px-3 py-2 opacity-50">
+                <span class="text-sm text-gray-500 font-mono line-through">{c.name}</span>
+                <span class="text-xs text-gray-600">(globally disabled)</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-2">Composition</label>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+          <CompositionCanvas bind:node={compositionNode} bind:this={canvasRef} />
         </div>
       </div>
 

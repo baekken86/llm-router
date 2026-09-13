@@ -29,6 +29,8 @@ func NewRouter(
 	settingsHandler *handlers.SettingsHandler,
 	mappingHandler *handlers.ModelMappingHandler,
 	modelOverrideHandler *handlers.ModelOverrideHandler,
+	globalSortHandler *handlers.GlobalSortConditionHandler,
+	globalFilterHandler *handlers.GlobalFilterConditionHandler,
 	keyService service.KeyService,
 	adminService service.AdminService,
 	adminHandler *handlers.AdminHandler,
@@ -105,6 +107,14 @@ func NewRouter(
 
 		r.Route("/models/{id}/overrides", func(r chi.Router) {
 			r.Mount("/", modelOverrideHandler.Routes())
+		})
+
+		r.Route("/global-sort-conditions", func(r chi.Router) {
+			r.Mount("/", globalSortHandler.Routes())
+		})
+
+		r.Route("/global-filter-conditions", func(r chi.Router) {
+			r.Mount("/", globalFilterHandler.Routes())
 		})
 	})
 

@@ -432,3 +432,131 @@ var _ repository.TagRepository = (*mockTagRepo)(nil)
 var _ repository.ProviderRepository = (*mockProviderRepo)(nil)
 var _ repository.ProviderMetadataRepository = (*mockProviderMetaRepo)(nil)
 var _ repository.GlobalMetadataRepository = (*mockGlobalMetaRepo)(nil)
+
+// --- Mock GlobalSortConditionRepository ---
+
+type mockGlobalSortRepo struct {
+	conditions []models.GlobalSortCondition
+}
+
+func (m *mockGlobalSortRepo) List(_ context.Context) ([]models.GlobalSortCondition, error) {
+	// Stable ordering: by position then id (mirrors the SQL ORDER BY).
+	result := make([]models.GlobalSortCondition, len(m.conditions))
+	copy(result, m.conditions)
+	for i := 1; i < len(result); i++ {
+		for j := len(result) - 1; j > 0; j-- {
+			if result[j].Position < result[j-1].Position || (result[j].Position == result[j-1].Position && result[j].ID < result[j-1].ID) {
+				result[j], result[j-1] = result[j-1], result[j]
+			}
+		}
+	}
+	return result, nil
+}
+
+func (m *mockGlobalSortRepo) Get(_ context.Context, id int64) (*models.GlobalSortCondition, error) {
+	for i := range m.conditions {
+		if m.conditions[i].ID == id {
+			return &m.conditions[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func (m *mockGlobalSortRepo) Create(_ context.Context, cond *models.GlobalSortCondition) error {
+	m.conditions = append(m.conditions, *cond)
+	return nil
+}
+
+func (m *mockGlobalSortRepo) Update(_ context.Context, cond *models.GlobalSortCondition) error {
+	for i := range m.conditions {
+		if m.conditions[i].ID == cond.ID {
+			m.conditions[i] = *cond
+			return nil
+		}
+	}
+	return nil
+}
+
+func (m *mockGlobalSortRepo) Delete(_ context.Context, id int64) error {
+	return nil
+}
+
+func (m *mockGlobalSortRepo) ListDisabledIDs(_ context.Context, virtualModelID int64) ([]int64, error) {
+	return nil, nil
+}
+
+func (m *mockGlobalSortRepo) SetDisabled(_ context.Context, virtualModelID int64, disabledIDs []int64) error {
+	return nil
+}
+
+func (m *mockGlobalSortRepo) ListDisabledIDsByModel(_ context.Context, virtualModelIDs []int64) (map[int64][]int64, error) {
+	return nil, nil
+}
+
+var _ repository.GlobalSortConditionRepository = (*mockGlobalSortRepo)(nil)
+
+// --- Mock GlobalFilterConditionRepository ---
+
+type mockGlobalFilterRepo struct {
+	conditions []models.GlobalFilterCondition
+}
+
+func (m *mockGlobalFilterRepo) List(_ context.Context) ([]models.GlobalFilterCondition, error) {
+	// Stable ordering: by position then id (mirrors the SQL ORDER BY).
+	result := make([]models.GlobalFilterCondition, len(m.conditions))
+	copy(result, m.conditions)
+	for i := 1; i < len(result); i++ {
+		for j := len(result) - 1; j > 0; j-- {
+			if result[j].Position < result[j-1].Position || (result[j].Position == result[j-1].Position && result[j].ID < result[j-1].ID) {
+				result[j], result[j-1] = result[j-1], result[j]
+			}
+		}
+	}
+	return result, nil
+}
+
+func (m *mockGlobalFilterRepo) Get(_ context.Context, id int64) (*models.GlobalFilterCondition, error) {
+	for i := range m.conditions {
+		if m.conditions[i].ID == id {
+			return &m.conditions[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func (m *mockGlobalFilterRepo) Create(_ context.Context, cond *models.GlobalFilterCondition) error {
+	m.conditions = append(m.conditions, *cond)
+	return nil
+}
+
+func (m *mockGlobalFilterRepo) Update(_ context.Context, cond *models.GlobalFilterCondition) error {
+	for i := range m.conditions {
+		if m.conditions[i].ID == cond.ID {
+			m.conditions[i] = *cond
+			return nil
+		}
+	}
+	return nil
+}
+
+func (m *mockGlobalFilterRepo) Delete(_ context.Context, id int64) error {
+	return nil
+}
+
+func (m *mockGlobalFilterRepo) ListDisabledIDs(_ context.Context, virtualModelID int64) ([]int64, error) {
+	return nil, nil
+}
+
+func (m *mockGlobalFilterRepo) SetDisabled(_ context.Context, virtualModelID int64, disabledIDs []int64) error {
+	return nil
+}
+
+func (m *mockGlobalFilterRepo) ListDisabledIDsByModel(_ context.Context, virtualModelIDs []int64) (map[int64][]int64, error) {
+	return nil, nil
+}
+
+var _ repository.GlobalFilterConditionRepository = (*mockGlobalFilterRepo)(nil)
+
+func (m *mockGlobalSortRepo) Reorder(_ context.Context, _ []int64) error { return nil }
+
+func (m *mockGlobalFilterRepo) Reorder(_ context.Context, _ []int64) error { return nil }

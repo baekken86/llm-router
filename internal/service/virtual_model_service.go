@@ -61,6 +61,8 @@ type virtualModelService struct {
 	globalMetaRepo   repository.GlobalMetadataRepository
 	mappingRepo      repository.ModelMappingRepository
 	overrideRepo     repository.ModelOverrideRepository
+	globalSortRepo   repository.GlobalSortConditionRepository
+	globalFilterRepo repository.GlobalFilterConditionRepository
 }
 
 func NewVirtualModelService(
@@ -72,6 +74,8 @@ func NewVirtualModelService(
 	globalMetaRepo repository.GlobalMetadataRepository,
 	mappingRepo repository.ModelMappingRepository,
 	overrideRepo repository.ModelOverrideRepository,
+	globalSortRepo repository.GlobalSortConditionRepository,
+	globalFilterRepo repository.GlobalFilterConditionRepository,
 ) VirtualModelService {
 	return &virtualModelService{
 		vmRepo:           vmRepo,
@@ -82,6 +86,8 @@ func NewVirtualModelService(
 		globalMetaRepo:   globalMetaRepo,
 		mappingRepo:      mappingRepo,
 		overrideRepo:     overrideRepo,
+		globalSortRepo:   globalSortRepo,
+		globalFilterRepo: globalFilterRepo,
 	}
 }
 
@@ -241,6 +247,14 @@ func (s *virtualModelService) PreviewResolve(ctx context.Context, filterExpr jso
 }
 
 func (s *virtualModelService) ResolveModels(ctx context.Context, vm *models.VirtualModel) ([]ResolvedModel, error) {
+	// Load enabled global conditions once per Resolve pass; every VM
+	// resolved in this pass (including nested composition sources) reuses them.
+	enabledConditions := s.loadEnabledGlobalSortConditions(ctx)
+	enabledFilterConds := s.loadEnabledGlobalFilterConditions(ctx)
+	// Set of global condition ids disabled for THIS virtual model.
+	disabledSet := toIDSet(vm.DisabledSortConditions)
+	disabledFilterSet := toIDSet(vm.DisabledFilterConditions)
+
 	// Composite VM — evaluate the composition tree
 	if vm.Composition != nil {
 		stack := make(map[string]bool)
@@ -248,29 +262,164 @@ func (s *virtualModelService) ResolveModels(ctx context.Context, vm *models.Virt
 		if err != nil {
 			return nil, err
 		}
+		// Apply global filter conditions (minus per-VM disabled ones) ANDed
+		// with the composite VM's own top-level filter_expr.
+		if mergedFilter, ok := s.mergeGlobalFilter(enabledFilterConds, disabledFilterSet, vm.FilterExpr); ok {
+			result = s.filterResolvedModels(result, mergedFilter)
+		}
+		// Apply global conditions (minus per-VM disabled ones) on top of the
+		// composite result; they take precedence over the tree's own sorts.
+		if merged := mergeGlobalSort(enabledConditions, disabledSet); len(merged) > 0 || len(vm.SortExpr) > 0 {
+			var vmSort models.SortExpr
+			if len(vm.SortExpr) > 0 {
+				json.Unmarshal(vm.SortExpr, &vmSort)
+			}
+			merged = append(merged, vmSort...)
+			sort.Slice(result, func(i, j int) bool {
+				return compareModels(result[i], result[j], merged)
+			})
+		}
 		// Apply top-level include_models
 		result = s.applyIncludeModels(ctx, result, vm.IncludeModels)
 		return result, nil
 	}
 
 	// Leaf VM — existing logic
-	return s.resolveLeafModels(ctx, vm)
+	return s.resolveLeafModels(ctx, vm, enabledConditions, disabledSet, enabledFilterConds, disabledFilterSet)
 }
 
-// resolveLeafModels contains the original leaf VM resolution logic.
-func (s *virtualModelService) resolveLeafModels(ctx context.Context, vm *models.VirtualModel) ([]ResolvedModel, error) {
-	var filter models.FilterNode
-	if len(vm.FilterExpr) > 0 {
-		if err := json.Unmarshal(vm.FilterExpr, &filter); err != nil {
-			return nil, fmt.Errorf("parse filter: %w", err)
+// loadEnabledGlobalSortConditions fetches enabled global sort conditions whose
+// sort_expr parses cleanly. Broken JSON entries are skipped, not fatal.
+func (s *virtualModelService) loadEnabledGlobalSortConditions(ctx context.Context) []models.GlobalSortCondition {
+	if s.globalSortRepo == nil {
+		return nil
+	}
+	all, err := s.globalSortRepo.List(ctx)
+	if err != nil {
+		return nil
+	}
+	var enabled []models.GlobalSortCondition
+	for _, cond := range all {
+		if !cond.Enabled {
+			continue
+		}
+		enabled = append(enabled, cond)
+	}
+	return enabled
+}
+
+// loadEnabledGlobalFilterConditions fetches enabled global filter conditions.
+// Entries whose filter_expr is empty are skipped, not fatal.
+func (s *virtualModelService) loadEnabledGlobalFilterConditions(ctx context.Context) []models.GlobalFilterCondition {
+	if s.globalFilterRepo == nil {
+		return nil
+	}
+	all, err := s.globalFilterRepo.List(ctx)
+	if err != nil {
+		return nil
+	}
+	var enabled []models.GlobalFilterCondition
+	for _, cond := range all {
+		if !cond.Enabled {
+			continue
+		}
+		if !filterNodeMeaningful(cond.FilterExpr) {
+			continue
+		}
+		enabled = append(enabled, cond)
+	}
+	return enabled
+}
+
+// filterNodeMeaningful reports whether a FilterNode has any conditions
+// (leaf, and, or, not). An empty node matches everything.
+func filterNodeMeaningful(node models.FilterNode) bool {
+	return node.IsLeaf() || len(node.And) > 0 || len(node.Or) > 0 || node.Not != nil
+}
+
+// mergeGlobalFilter combines surviving global filter conditions with the VM's
+// own filter_expr into a single AND tree. Returns the merged node and whether
+// any filtering is actually present (false when nothing to apply).
+func (s *virtualModelService) mergeGlobalFilter(conditions []models.GlobalFilterCondition, disabled map[int64]bool, vmFilterExpr json.RawMessage) (models.FilterNode, bool) {
+	var nodes []models.FilterNode
+	for _, cond := range conditions {
+		if disabled[cond.ID] {
+			continue
+		}
+		if filterNodeMeaningful(cond.FilterExpr) {
+			nodes = append(nodes, cond.FilterExpr)
 		}
 	}
 
-	var sortExpr models.SortExpr
+	var vmFilter models.FilterNode
+	vmMeaningful := false
+	if len(vmFilterExpr) > 0 && string(vmFilterExpr) != "{}" && string(vmFilterExpr) != "null" {
+		if err := json.Unmarshal(vmFilterExpr, &vmFilter); err == nil && filterNodeMeaningful(vmFilter) {
+			vmMeaningful = true
+		}
+	}
+
+	switch len(nodes) {
+	case 0:
+		if vmMeaningful {
+			return vmFilter, true
+		}
+		return models.FilterNode{}, false
+	case 1:
+		if !vmMeaningful {
+			return nodes[0], true
+		}
+		return models.FilterNode{And: []models.FilterNode{nodes[0], vmFilter}}, true
+	default:
+		if vmMeaningful {
+			nodes = append(nodes, vmFilter)
+		}
+		return models.FilterNode{And: nodes}, true
+	}
+}
+
+// toIDSet builds a lookup set from a list of ids.
+func toIDSet(ids []int64) map[int64]bool {
+	set := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set
+}
+
+// mergeGlobalSort converts enabled global conditions into a SortExpr, skipping
+// ones whose id is in the disabled set and entries whose JSON doesn't parse.
+func mergeGlobalSort(conditions []models.GlobalSortCondition, disabled map[int64]bool) models.SortExpr {
+	var merged models.SortExpr
+	for _, cond := range conditions {
+		if disabled[cond.ID] {
+			continue
+		}
+		if len(cond.SortExpr) == 0 {
+			continue
+		}
+		merged = append(merged, cond.SortExpr...)
+	}
+	return merged
+}
+
+// resolveLeafModels contains the original leaf VM resolution logic.
+func (s *virtualModelService) resolveLeafModels(ctx context.Context, vm *models.VirtualModel, enabledConditions []models.GlobalSortCondition, disabledSet map[int64]bool, enabledFilterConds []models.GlobalFilterCondition, disabledFilterSet map[int64]bool) ([]ResolvedModel, error) {
+	// Global filter conditions (minus per-VM disabled ones) are ANDed with the
+	// VM's own filter_expr, which stays last in the AND chain.
+	filter, hasFilter := s.mergeGlobalFilter(enabledFilterConds, disabledFilterSet, vm.FilterExpr)
+	if !hasFilter {
+		filter = models.FilterNode{}
+	}
+
+	// Global conditions (minus per-VM disabled ones) are PREPENDED to the VM's own sort.
+	sortExpr := mergeGlobalSort(enabledConditions, disabledSet)
 	if len(vm.SortExpr) > 0 {
-		if err := json.Unmarshal(vm.SortExpr, &sortExpr); err != nil {
+		var vmSort models.SortExpr
+		if err := json.Unmarshal(vm.SortExpr, &vmSort); err != nil {
 			return nil, fmt.Errorf("parse sort: %w", err)
 		}
+		sortExpr = append(sortExpr, vmSort...)
 	}
 
 	return s.resolveModelsFiltered(ctx, filter, sortExpr, vm.IncludeModels)

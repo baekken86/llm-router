@@ -17,10 +17,20 @@
   let allOverrides = $state({});
   let showRefreshModal = $state(false);
   let refreshResults = $state([]);
+  let filterText = $state('');
+
+  const filteredModels = $derived.by(() => {
+    const needle = filterText.trim().toLowerCase();
+    if (!needle) return models;
+    return models.filter(m =>
+      m.model_name.toLowerCase().includes(needle) ||
+      (m.mapping_target_name || '').toLowerCase().includes(needle)
+    );
+  });
 
   const grouped = $derived.by(() => {
     const groups = {};
-    for (const m of models) {
+    for (const m of filteredModels) {
       const provider = m.provider_name || 'unknown';
       if (!groups[provider]) groups[provider] = [];
       groups[provider].push(m);
@@ -35,7 +45,7 @@
 
   const modelCount = $derived.by(() => {
     const seen = new Set();
-    for (const m of models) {
+    for (const m of filteredModels) {
       seen.add(m.model_id);
     }
     return seen.size;
@@ -43,7 +53,7 @@
 
   const enabledModelCount = $derived.by(() => {
     const seen = new Set();
-    for (const m of models) {
+    for (const m of filteredModels) {
       if (!m.disabled) seen.add(m.model_id);
     }
     return seen.size;
@@ -387,13 +397,25 @@
         {refreshing ? 'Refreshing...' : 'Refresh All'}
       </button>
     </div>
-    <span class="text-sm text-gray-500">{models.length} rows across {providers.length} providers ({enabledModelCount} / {modelCount} models active)</span>
+    <div class="flex items-center gap-4">
+      <input
+        type="text"
+        class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-emerald-500 w-48"
+        placeholder="Filter models..."
+        bind:value={filterText}
+      />
+      <span class="text-sm text-gray-500">
+        {filteredModels.length}{filterText.trim() ? ` / ${models.length}` : ''} rows across {providers.length} providers ({enabledModelCount} / {modelCount} models active)
+      </span>
+    </div>
   </div>
 
   {#if loading}
     <p class="text-gray-500">Loading...</p>
   {:else if models.length === 0}
     <p class="text-gray-500">No models found. Discover models from providers first.</p>
+  {:else if filteredModels.length === 0}
+    <p class="text-gray-500">No models match "{filterText.trim()}"</p>
   {:else}
     <div class="space-y-4">
       {#each providers as provider}

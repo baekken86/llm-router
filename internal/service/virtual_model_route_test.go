@@ -37,6 +37,8 @@ func setupRouteModelService(t *testing.T) VirtualModelService {
 		newMockGlobalMetaRepo(),
 		newMockMappingRepo(),
 		nil,
+		nil,
+		nil,
 	)
 }
 

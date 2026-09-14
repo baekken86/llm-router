@@ -262,7 +262,7 @@ func ToggleModelDisabledCmd(apiClient *APIClient, modelID int64, disabled bool, 
 
 func ToggleModelDisabledLocalCmd(modelRepo repository.ModelRepository, modelID int64, disabled bool, duration *time.Duration) tea.Cmd {
 	return func() tea.Msg {
-		err := modelRepo.ToggleDisabled(context.Background(), modelID, disabled, duration)
+		err := modelRepo.ToggleDisabled(context.Background(), modelID, disabled, duration, "manual")
 		return ModelToggleMsg{ModelID: modelID, Disabled: disabled, Err: err}
 	}
 }

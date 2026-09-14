@@ -380,8 +380,12 @@ func (m *fullMockModelService) GetTags(_ context.Context, _ int64) ([]models.Tag
 
 func (m *fullMockModelService) Delete(_ context.Context, _ int64) error { return nil }
 
-func (m *fullMockModelService) ToggleDisabled(_ context.Context, _ int64, _ bool, _ *time.Duration) error {
+func (m *fullMockModelService) ToggleDisabled(_ context.Context, _ int64, _ bool, _ *time.Duration, _ string) error {
 	return nil
+}
+
+func (m *fullMockModelService) DeleteStaleDisabled(_ context.Context) (int64, error) {
+	return 0, nil
 }
 
 // postProvider marshals req and posts it to the real ProviderHandler.

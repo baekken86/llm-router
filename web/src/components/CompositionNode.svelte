@@ -12,6 +12,11 @@
     dragSourceId = null,
     dropTargetId = null,
     dropIsOperation = false,
+    // Global sort conditions merged into the root source's SortBuilder
+    // (read-only rows, per-VM toggle). Only passed at the root.
+    globalSorts = [],
+    disabledGlobalSorts = [],
+    onToggleGlobalSort = null,
     onDragStart,
     onDragOver,
     onDragLeave,
@@ -112,6 +117,9 @@
           <SortBuilder
             criteria={node.sort_expr || []}
             onChange={(v) => onSetSort(node.__id, v)}
+            globals={globalSorts}
+            disabledGlobals={disabledGlobalSorts}
+            onToggleGlobal={depth === 0 ? onToggleGlobalSort : null}
           />
         </div>
       </div>

@@ -19,7 +19,8 @@ type ModelRepository interface {
 	Delete(ctx context.Context, id int64) error
 	Upsert(ctx context.Context, providerID int64, name string) (*models.Model, error)
 	DisableByProviderExcept(ctx context.Context, providerID int64, names []string) (int64, error)
-	ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration) error
+	ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration, reason string) error
+	DeleteStaleDisabled(ctx context.Context) (int64, error)
 	ListExpiredDisabled(ctx context.Context, now time.Time) ([]int64, error)
 	GetCBStrikes(ctx context.Context, modelID int64) (int, error)
 	SetCBStrikes(ctx context.Context, modelID int64, strikes int) error
@@ -159,19 +160,39 @@ func (r *sqliteModelRepo) Upsert(ctx context.Context, providerID int64, name str
 	return m, nil
 }
 
-func (r *sqliteModelRepo) ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration) error {
+func (r *sqliteModelRepo) ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration, reason string) error {
 	var disabledUntil *time.Time
-	if disabled && duration != nil {
-		t := time.Now().Add(*duration)
-		disabledUntil = &t
+	var disabledReason interface{}
+	if disabled {
+		if duration != nil {
+			t := time.Now().Add(*duration)
+			disabledUntil = &t
+		}
+		if reason != "" {
+			disabledReason = reason
+		}
 	}
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE models SET disabled = ?, disabled_until = ? WHERE id = ?`, disabled, disabledUntil, id,
+		`UPDATE models SET disabled = ?, disabled_until = ?, disabled_reason = ? WHERE id = ?`, disabled, disabledUntil, disabledReason, id,
 	)
 	if err != nil {
 		return fmt.Errorf("toggle model disabled: %w", err)
 	}
 	return nil
+}
+
+func (r *sqliteModelRepo) DeleteStaleDisabled(ctx context.Context) (int64, error) {
+	result, err := r.db.ExecContext(ctx,
+		`DELETE FROM models WHERE disabled = 1 AND disabled_reason = 'stale'`,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("delete stale disabled models: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("delete stale disabled models: %w", err)
+	}
+	return count, nil
 }
 
 func (r *sqliteModelRepo) ListExpiredDisabled(ctx context.Context, now time.Time) ([]int64, error) {
@@ -217,7 +238,7 @@ func (r *sqliteModelRepo) SetCBStrikes(ctx context.Context, modelID int64, strik
 func (r *sqliteModelRepo) DisableByProviderExcept(ctx context.Context, providerID int64, names []string) (int64, error) {
 	if len(names) == 0 {
 		result, err := r.db.ExecContext(ctx,
-			`UPDATE models SET disabled = 1 WHERE provider_id = ? AND disabled = 0`, providerID,
+			`UPDATE models SET disabled = 1, disabled_reason = 'stale' WHERE provider_id = ? AND disabled = 0`, providerID,
 		)
 		if err != nil {
 			return 0, fmt.Errorf("disable all models: %w", err)
@@ -226,7 +247,7 @@ func (r *sqliteModelRepo) DisableByProviderExcept(ctx context.Context, providerI
 		return count, err
 	}
 
-	query := `UPDATE models SET disabled = 1 WHERE provider_id = ? AND disabled = 0 AND name NOT IN (` + placeholders(len(names)) + `)`
+	query := `UPDATE models SET disabled = 1, disabled_reason = 'stale' WHERE provider_id = ? AND disabled = 0 AND name NOT IN (` + placeholders(len(names)) + `)`
 	args := []interface{}{providerID}
 	for _, name := range names {
 		args = append(args, name)

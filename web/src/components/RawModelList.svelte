@@ -18,6 +18,8 @@
   let showRefreshModal = $state(false);
   let refreshResults = $state([]);
   let filterText = $state('');
+  let showStaleModal = $state(false);
+  let cleaningStale = $state(false);
 
   const filteredModels = $derived.by(() => {
     const needle = filterText.trim().toLowerCase();
@@ -58,6 +60,22 @@
     }
     return seen.size;
   });
+
+  const staleModels = $derived.by(() => {
+    const seen = new Set();
+    const stale = [];
+    for (const m of filteredModels) {
+      if (m.disabled && m.disabled_reason === 'stale' && !seen.has(m.model_id)) {
+        seen.add(m.model_id);
+        stale.push(m);
+      }
+    }
+    return stale;
+  });
+
+  const staleModelCount = $derived(staleModels.length);
+
+  const staleHasMappings = $derived(staleModels.some(m => m.mapping_target_name));
 
   const columns = $derived.by(() => {
     const seen = new Set();
@@ -245,6 +263,20 @@
     }
   }
 
+  async function cleanStale() {
+    cleaningStale = true;
+    try {
+      const result = await apiFetch('/api/v1/models/stale', { method: 'DELETE' });
+      addToast(`Deleted ${result.deleted} stale models`, 'success');
+      showStaleModal = false;
+      await load();
+    } catch (e) {
+      addToast(e.message, 'error');
+    } finally {
+      cleaningStale = false;
+    }
+  }
+
   async function loadAllOverrides() {
     const effortKeys = new Map();
     for (const m of models) {
@@ -377,6 +409,43 @@
   </div>
 {/if}
 
+{#if showStaleModal}
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onclick={() => { if (!cleaningStale) showStaleModal = false; }}>
+    <div class="bg-gray-900 rounded-lg border border-gray-700 p-6 w-full max-w-lg max-h-[80vh] flex flex-col" onclick={(e) => e.stopPropagation()}>
+      <h3 class="text-white font-medium mb-4">Clean up stale models</h3>
+
+      <p class="text-sm text-gray-400 mb-4">
+        This permanently deletes {staleModelCount} disabled model{staleModelCount === 1 ? '' : 's'} that are no longer offered by their providers.
+      </p>
+
+      {#if staleHasMappings}
+        <p class="text-sm text-amber-400 mb-4">
+          Mappings on these models are removed too.
+        </p>
+      {/if}
+
+      <div class="overflow-y-auto flex-1 space-y-2 text-sm mb-4">
+        {#each staleModels as m}
+          <div class="flex items-center justify-between bg-gray-800/50 border border-gray-700/50 rounded px-3 py-2">
+            <span class="text-gray-300 font-mono text-xs">{m.model_name}</span>
+            <span class="text-xs text-gray-500">{m.provider_name || 'unknown'}</span>
+          </div>
+        {/each}
+      </div>
+
+      <div class="flex justify-end gap-2">
+        <button class="px-3 py-1.5 text-sm text-gray-400 hover:text-white"
+                onclick={() => showStaleModal = false}>Cancel</button>
+        <button class="px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                onclick={cleanStale}
+                disabled={cleaningStale}>
+          {cleaningStale ? 'Deleting...' : 'Delete'}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if pickerModelId !== null}
   <ModelPicker
     excludeModelName={models.find(m => m.model_id === pickerModelId)?.model_name || ''}
@@ -396,6 +465,15 @@
       >
         {refreshing ? 'Refreshing...' : 'Refresh All'}
       </button>
+      {#if staleModelCount > 0}
+        <button
+          class="px-3 py-1.5 text-sm bg-red-900/50 text-red-400 border border-red-800/50 rounded hover:bg-red-900 hover:text-red-300 transition disabled:opacity-50 disabled:cursor-not-allowed"
+          onclick={() => showStaleModal = true}
+          title="Delete disabled models no longer offered by their providers"
+        >
+          Clean up stale ({staleModelCount})
+        </button>
+      {/if}
     </div>
     <div class="flex items-center gap-4">
       <input

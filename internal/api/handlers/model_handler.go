@@ -26,6 +26,7 @@ func (h *ModelHandler) Routes() chi.Router {
 	r.Put("/{id}/tags", h.SetTags)
 	r.Get("/{id}/tags", h.GetTags)
 	r.Put("/{id}/disabled", h.ToggleDisabled)
+	r.Delete("/stale", h.DeleteStale)
 	r.Delete("/{id}", h.Delete)
 	return r
 }
@@ -117,6 +118,16 @@ func (h *ModelHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *ModelHandler) DeleteStale(w http.ResponseWriter, r *http.Request) {
+	deleted, err := h.modelService.DeleteStaleDisabled(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]int64{"deleted": deleted})
+}
+
 func (h *ModelHandler) ToggleDisabled(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
@@ -153,7 +164,7 @@ func (h *ModelHandler) ToggleDisabled(w http.ResponseWriter, r *http.Request) {
 		duration = &d
 	}
 
-	if err := h.modelService.ToggleDisabled(r.Context(), id, req.Disabled, duration); err != nil {
+	if err := h.modelService.ToggleDisabled(r.Context(), id, req.Disabled, duration, "manual"); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

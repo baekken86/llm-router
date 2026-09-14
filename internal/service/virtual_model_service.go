@@ -263,18 +263,23 @@ func (s *virtualModelService) ResolveModels(ctx context.Context, vm *models.Virt
 			return nil, err
 		}
 		// Apply global filter conditions (minus per-VM disabled ones) ANDed
-		// with the composite VM's own top-level filter_expr.
-		if mergedFilter, ok := s.mergeGlobalFilter(enabledFilterConds, disabledFilterSet, vm.FilterExpr); ok {
+		// with the composite VM's own top-level filter_expr, ordered by priority.
+		if mergedFilter, ok := s.mergeGlobalFilter(enabledFilterConds, disabledFilterSet, vm); ok {
 			result = s.filterResolvedModels(result, mergedFilter)
 		}
-		// Apply global conditions (minus per-VM disabled ones) on top of the
-		// composite result; they take precedence over the tree's own sorts.
-		if merged := mergeGlobalSort(enabledConditions, disabledSet); len(merged) > 0 || len(vm.SortExpr) > 0 {
-			var vmSort models.SortExpr
-			if len(vm.SortExpr) > 0 {
-				json.Unmarshal(vm.SortExpr, &vmSort)
+		// Apply merged global + local sort criteria ordered by priority.
+		// For composite VMs the "local" sort lives on the composition root
+		// (vm.SortExpr is empty) — include it so the final sort is ONE
+		// hierarchical chain: earlier criteria partition, later criteria
+		// only order within each partition. Re-sorting with globals alone
+		// would flatten the tree's own cost/effort partitioning.
+		sortSource := vm.SortExpr
+		if len(sortSource) == 0 && vm.Composition != nil && len(vm.Composition.SortExpr) > 0 {
+			if data, err := json.Marshal(vm.Composition.SortExpr); err == nil {
+				sortSource = data
 			}
-			merged = append(merged, vmSort...)
+		}
+		if merged, ok := mergeSortByPriority(enabledConditions, disabledSet, sortSource); ok {
 			sort.SliceStable(result, func(i, j int) bool {
 				return compareModels(result[i], result[j], merged)
 			})
@@ -337,45 +342,119 @@ func filterNodeMeaningful(node models.FilterNode) bool {
 	return node.IsLeaf() || len(node.And) > 0 || len(node.Or) > 0 || node.Not != nil
 }
 
+// mergedFilterItem is one criterion in the priority-ordered merge: a global
+// condition's expression or the VM's own local expression.
+type mergedFilterItem struct {
+	priority int
+	global   bool
+	node     models.FilterNode
+}
+
 // mergeGlobalFilter combines surviving global filter conditions with the VM's
-// own filter_expr into a single AND tree. Returns the merged node and whether
-// any filtering is actually present (false when nothing to apply).
-func (s *virtualModelService) mergeGlobalFilter(conditions []models.GlobalFilterCondition, disabled map[int64]bool, vmFilterExpr json.RawMessage) (models.FilterNode, bool) {
-	var nodes []models.FilterNode
+// own filter_expr into a single AND tree. Items are ordered ascending by
+// priority (lower applied earlier); the local expression is fixed at
+// models.DefaultLocalPriority, and ties put globals before the local
+// expression. Returns the merged node and whether any filtering is actually
+// present (false when nothing to apply).
+func (s *virtualModelService) mergeGlobalFilter(conditions []models.GlobalFilterCondition, disabled map[int64]bool, vm *models.VirtualModel) (models.FilterNode, bool) {
+	var items []mergedFilterItem
 	for _, cond := range conditions {
 		if disabled[cond.ID] {
 			continue
 		}
 		if filterNodeMeaningful(cond.FilterExpr) {
-			nodes = append(nodes, cond.FilterExpr)
+			items = append(items, mergedFilterItem{priority: cond.Priority, global: true, node: cond.FilterExpr})
 		}
 	}
 
-	var vmFilter models.FilterNode
-	vmMeaningful := false
-	if len(vmFilterExpr) > 0 && string(vmFilterExpr) != "{}" && string(vmFilterExpr) != "null" {
-		if err := json.Unmarshal(vmFilterExpr, &vmFilter); err == nil && filterNodeMeaningful(vmFilter) {
-			vmMeaningful = true
+	if len(vm.FilterExpr) > 0 && string(vm.FilterExpr) != "{}" && string(vm.FilterExpr) != "null" {
+		var vmFilter models.FilterNode
+		if err := json.Unmarshal(vm.FilterExpr, &vmFilter); err == nil && filterNodeMeaningful(vmFilter) {
+			items = append(items, mergedFilterItem{priority: models.DefaultLocalPriority, global: false, node: vmFilter})
 		}
 	}
 
-	switch len(nodes) {
-	case 0:
-		if vmMeaningful {
-			return vmFilter, true
-		}
+	if len(items) == 0 {
 		return models.FilterNode{}, false
-	case 1:
-		if !vmMeaningful {
-			return nodes[0], true
-		}
-		return models.FilterNode{And: []models.FilterNode{nodes[0], vmFilter}}, true
-	default:
-		if vmMeaningful {
-			nodes = append(nodes, vmFilter)
-		}
-		return models.FilterNode{And: nodes}, true
 	}
+
+	sortFilterItems(items)
+
+	if len(items) == 1 {
+		return items[0].node, true
+	}
+	nodes := make([]models.FilterNode, len(items))
+	for i, item := range items {
+		nodes[i] = item.node
+	}
+	return models.FilterNode{And: nodes}, true
+}
+
+// sortFilterItems stable-sorts merge items ascending by priority; ties put
+// globals before locals, otherwise input order is preserved.
+func sortFilterItems(items []mergedFilterItem) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].priority != items[j].priority {
+			return items[i].priority < items[j].priority
+		}
+		return items[i].global && !items[j].global
+	})
+}
+
+// mergedSortItem is one sort criterion group in the priority-ordered merge.
+type mergedSortItem struct {
+	priority int
+	global   bool
+	entries  models.SortExpr
+}
+
+// mergeSortByPriority merges enabled global sort conditions (minus the
+// disabled set, skipping empty/unparseable sort_expr) with the VM's own sort
+// entries. Each entry contributes its own priority when set; locals without
+// one use models.DefaultLocalPriority. Items are ordered ascending by
+// priority (lower applied earlier); ties put globals before locals. Returns
+// the flattened SortExpr and whether anything is present.
+func mergeSortByPriority(conditions []models.GlobalSortCondition, disabled map[int64]bool, vmSortExpr json.RawMessage) (models.SortExpr, bool) {
+	var items []mergedSortItem
+	for _, cond := range conditions {
+		if disabled[cond.ID] {
+			continue
+		}
+		if len(cond.SortExpr) == 0 {
+			continue
+		}
+		items = append(items, mergedSortItem{priority: cond.Priority, global: true, entries: cond.SortExpr})
+	}
+
+	if len(vmSortExpr) > 0 {
+		var vmSort models.SortExpr
+		if err := json.Unmarshal(vmSortExpr, &vmSort); err == nil {
+			for _, entry := range vmSort {
+				priority := models.DefaultLocalPriority
+				if entry.Priority != nil {
+					priority = *entry.Priority
+				}
+				items = append(items, mergedSortItem{priority: priority, global: false, entries: models.SortExpr{entry}})
+			}
+		}
+	}
+
+	if len(items) == 0 {
+		return nil, false
+	}
+
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].priority != items[j].priority {
+			return items[i].priority < items[j].priority
+		}
+		return items[i].global && !items[j].global
+	})
+
+	var merged models.SortExpr
+	for _, item := range items {
+		merged = append(merged, item.entries...)
+	}
+	return merged, true
 }
 
 // toIDSet builds a lookup set from a list of ids.
@@ -387,47 +466,25 @@ func toIDSet(ids []int64) map[int64]bool {
 	return set
 }
 
-// mergeGlobalSort converts enabled global conditions into a SortExpr, skipping
-// ones whose id is in the disabled set and entries whose JSON doesn't parse.
-func mergeGlobalSort(conditions []models.GlobalSortCondition, disabled map[int64]bool) models.SortExpr {
-	var merged models.SortExpr
-	for _, cond := range conditions {
-		if disabled[cond.ID] {
-			continue
-		}
-		if len(cond.SortExpr) == 0 {
-			continue
-		}
-		merged = append(merged, cond.SortExpr...)
-	}
-	return merged
-}
-
 // resolveLeafModels contains the original leaf VM resolution logic.
 func (s *virtualModelService) resolveLeafModels(ctx context.Context, vm *models.VirtualModel, enabledConditions []models.GlobalSortCondition, disabledSet map[int64]bool, enabledFilterConds []models.GlobalFilterCondition, disabledFilterSet map[int64]bool) ([]ResolvedModel, error) {
 	// Global filter conditions (minus per-VM disabled ones) are ANDed with the
-	// VM's own filter_expr, which stays last in the AND chain.
-	filter, hasFilter := s.mergeGlobalFilter(enabledFilterConds, disabledFilterSet, vm.FilterExpr)
+	// VM's own filter_expr, ordered by priority.
+	filter, hasFilter := s.mergeGlobalFilter(enabledFilterConds, disabledFilterSet, vm)
 	if !hasFilter {
 		filter = models.FilterNode{}
 	}
 
-	// Global conditions (minus per-VM disabled ones) are PREPENDED to the VM's own sort.
-	sortExpr := mergeGlobalSort(enabledConditions, disabledSet)
-	if len(vm.SortExpr) > 0 {
-		var vmSort models.SortExpr
-		if err := json.Unmarshal(vm.SortExpr, &vmSort); err != nil {
-			return nil, fmt.Errorf("parse sort: %w", err)
-		}
-		sortExpr = append(sortExpr, vmSort...)
-	}
+	// Global conditions (minus per-VM disabled ones) and the VM's own sort
+	// entries are merged and ordered by priority.
+	sortExpr, hasSort := mergeSortByPriority(enabledConditions, disabledSet, vm.SortExpr)
 
-	return s.resolveModelsFiltered(ctx, filter, sortExpr, vm.IncludeModels)
+	return s.resolveModelsFiltered(ctx, filter, sortExpr, hasSort, vm.IncludeModels)
 }
 
 // resolveModelsFiltered resolves all models matching filter, applies sort and include_models.
 // Shared by resolveLeafModels and resolveFilterSource.
-func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter models.FilterNode, sortExpr models.SortExpr, includeModels json.RawMessage) ([]ResolvedModel, error) {
+func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter models.FilterNode, sortExpr models.SortExpr, hasSort bool, includeModels json.RawMessage) ([]ResolvedModel, error) {
 	allModels, err := s.modelRepo.ListEnabled(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list models: %w", err)
@@ -566,7 +623,7 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 
 			providerMeta, _ := s.providerMetaRepo.GetByProvider(ctx, provider.ID)
 
-			if !matchesFilter(m.Tags, m.Name, filter, provider.Name, providerMeta, globalMeta) {
+			if !matchesFilter(m.Tags, m.Name, filter, provider.Name, providerMeta, globalMeta, effort) {
 				continue
 			}
 
@@ -624,9 +681,11 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 		resolved = append(includeResolved, resolved...)
 	}
 
-	sort.SliceStable(resolved, func(i, j int) bool {
-		return compareModels(resolved[i], resolved[j], sortExpr)
-	})
+	if hasSort {
+		sort.SliceStable(resolved, func(i, j int) bool {
+			return compareModels(resolved[i], resolved[j], sortExpr)
+		})
+	}
 
 	return resolved, nil
 }
@@ -671,7 +730,7 @@ func (s *virtualModelService) resolveSource(ctx context.Context, node *models.Co
 		}
 	} else {
 		// Source from all raw models
-		result, err = s.resolveModelsFiltered(ctx, models.FilterNode{}, nil, nil)
+		result, err = s.resolveModelsFiltered(ctx, models.FilterNode{}, nil, false, nil)
 		if err != nil {
 			return nil, fmt.Errorf("list models: %w", err)
 		}
@@ -725,10 +784,11 @@ func (s *virtualModelService) resolveOperation(ctx context.Context, node *models
 }
 
 // filterResolvedModels filters an already-resolved model list using a FilterNode.
-func (s *virtualModelService) filterResolvedModels(models []ResolvedModel, filter models.FilterNode) []ResolvedModel {
+func (s *virtualModelService) filterResolvedModels(resolvedModels []ResolvedModel, filter models.FilterNode) []ResolvedModel {
 	var result []ResolvedModel
-	for _, rm := range models {
+	for _, rm := range resolvedModels {
 		tagMap := make(map[string]string)
+		tagMap["mc.name"] = models.MCName(rm.Model.Name, rm.ReasoningEffort)
 		for _, t := range rm.Model.Tags {
 			tagMap["mc."+t.Key] = t.Value
 		}
@@ -1014,12 +1074,13 @@ func (s *virtualModelService) RouteModel(ctx context.Context, name string) (*Mod
 	return &ModelRoute{Kind: RouteKindVirtual, VirtualName: name}, nil
 }
 
-func matchesFilter(tags []models.Tag, modelName string, filter models.FilterNode, providerName string, providerMeta []models.ProviderMetadata, globalMeta map[string]string) bool {
+func matchesFilter(tags []models.Tag, modelName string, filter models.FilterNode, providerName string, providerMeta []models.ProviderMetadata, globalMeta map[string]string, reasoningEffort string) bool {
 	if !filter.IsLeaf() && len(filter.And) == 0 && len(filter.Or) == 0 && filter.Not == nil {
 		return true
 	}
 
 	tagMap := make(map[string]string)
+	tagMap["mc.name"] = models.MCName(modelName, reasoningEffort)
 	for _, t := range tags {
 		tagMap["mc."+t.Key] = t.Value
 	}
@@ -1142,10 +1203,12 @@ func toFloat(v interface{}) (float64, error) {
 
 func compareModels(a, b ResolvedModel, sortExpr models.SortExpr) bool {
 	aTagMap := make(map[string]string)
+	aTagMap["mc.name"] = models.MCName(a.Model.Name, a.ReasoningEffort)
 	for _, t := range a.Model.Tags {
 		aTagMap["mc."+t.Key] = t.Value
 	}
 	bTagMap := make(map[string]string)
+	bTagMap["mc.name"] = models.MCName(b.Model.Name, b.ReasoningEffort)
 	for _, t := range b.Model.Tags {
 		bTagMap["mc."+t.Key] = t.Value
 	}

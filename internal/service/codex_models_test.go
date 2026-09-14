@@ -418,8 +418,13 @@ func TestDiscoverCodex_RemovesStaleModels(t *testing.T) {
 		t.Errorf("Removed = %v, want [retired-model]", result.Removed)
 	}
 	for _, m := range modelRepo.models {
-		if m.Name == "retired-model" && !m.Disabled {
-			t.Error("stale model not disabled")
+		if m.Name == "retired-model" {
+			if !m.Disabled {
+				t.Error("stale model not disabled")
+			}
+			if m.DisabledReason != "stale" {
+				t.Errorf("stale model disabled_reason = %q, want %q", m.DisabledReason, "stale")
+			}
 		}
 	}
 }

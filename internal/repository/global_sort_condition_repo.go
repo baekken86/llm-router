@@ -35,13 +35,13 @@ func NewGlobalSortConditionRepository(db *sql.DB) GlobalSortConditionRepository 
 	return &sqliteGlobalSortConditionRepo{db: db}
 }
 
-const gscColumns = `id, name, description, sort_expr, enabled, position, created_at, updated_at`
+const gscColumns = `id, name, description, sort_expr, enabled, position, priority, created_at, updated_at`
 
 func scanGlobalSortCondition(row interface{ Scan(...interface{}) error }) (*models.GlobalSortCondition, error) {
 	cond := &models.GlobalSortCondition{}
 	var sortStr string
 	var enabled int
-	err := row.Scan(&cond.ID, &cond.Name, &cond.Description, &sortStr, &enabled, &cond.Position, &cond.CreatedAt, &cond.UpdatedAt)
+	err := row.Scan(&cond.ID, &cond.Name, &cond.Description, &sortStr, &enabled, &cond.Position, &cond.Priority, &cond.CreatedAt, &cond.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +58,7 @@ func scanGlobalSortCondition(row interface{ Scan(...interface{}) error }) (*mode
 
 func (r *sqliteGlobalSortConditionRepo) List(ctx context.Context) ([]models.GlobalSortCondition, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+gscColumns+` FROM global_sort_conditions ORDER BY position, id`,
+		`SELECT `+gscColumns+` FROM global_sort_conditions ORDER BY priority, position, id`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list global sort conditions: %w", err)
@@ -97,9 +97,9 @@ func (r *sqliteGlobalSortConditionRepo) Create(ctx context.Context, cond *models
 	}
 
 	result, err := r.db.ExecContext(ctx,
-		`INSERT INTO global_sort_conditions (name, description, sort_expr, enabled, position, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		cond.Name, cond.Description, string(data), boolToInt(cond.Enabled), cond.Position, now, now,
+		`INSERT INTO global_sort_conditions (name, description, sort_expr, enabled, position, priority, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		cond.Name, cond.Description, string(data), boolToInt(cond.Enabled), cond.Position, cond.Priority, now, now,
 	)
 	if err != nil {
 		return fmt.Errorf("insert global sort condition: %w", err)
@@ -122,9 +122,9 @@ func (r *sqliteGlobalSortConditionRepo) Update(ctx context.Context, cond *models
 	}
 
 	_, err = r.db.ExecContext(ctx,
-		`UPDATE global_sort_conditions SET name = ?, description = ?, sort_expr = ?, enabled = ?, position = ?, updated_at = ?
+		`UPDATE global_sort_conditions SET name = ?, description = ?, sort_expr = ?, enabled = ?, position = ?, priority = ?, updated_at = ?
 		 WHERE id = ?`,
-		cond.Name, cond.Description, string(data), boolToInt(cond.Enabled), cond.Position, now, cond.ID,
+		cond.Name, cond.Description, string(data), boolToInt(cond.Enabled), cond.Position, cond.Priority, now, cond.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("update global sort condition: %w", err)
@@ -213,7 +213,9 @@ func (r *sqliteGlobalSortConditionRepo) SetDisabled(ctx context.Context, virtual
 	return tx.Commit()
 }
 
-// Reorder assigns position = index for each id inside one transaction.
+// Reorder assigns priority = index * 10 for each id inside one transaction
+// (position is left untouched for legacy ordering). Ids not present keep
+// their existing priority.
 func (r *sqliteGlobalSortConditionRepo) Reorder(ctx context.Context, ids []int64) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -223,8 +225,8 @@ func (r *sqliteGlobalSortConditionRepo) Reorder(ctx context.Context, ids []int64
 
 	for i, id := range ids {
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE global_sort_conditions SET position = ?, updated_at = ? WHERE id = ?`,
-			i, time.Now(), id,
+			`UPDATE global_sort_conditions SET priority = ?, updated_at = ? WHERE id = ?`,
+			i*10, time.Now(), id,
 		); err != nil {
 			return fmt.Errorf("reorder global sort condition: %w", err)
 		}

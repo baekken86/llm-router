@@ -33,6 +33,7 @@ type toggleCall struct {
 	id       int64
 	disabled bool
 	duration *time.Duration
+	reason   string
 }
 
 type strikeCall struct {
@@ -94,19 +95,28 @@ func (m *mockModelRepo) DisableByProviderExcept(_ context.Context, _ int64, _ []
 	return 0, nil
 }
 
-func (m *mockModelRepo) ToggleDisabled(_ context.Context, id int64, disabled bool, duration *time.Duration) error {
+func (m *mockModelRepo) ToggleDisabled(_ context.Context, id int64, disabled bool, duration *time.Duration, reason string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.toggleCalls = append(m.toggleCalls, toggleCall{id: id, disabled: disabled, duration: duration})
+	m.toggleCalls = append(m.toggleCalls, toggleCall{id: id, disabled: disabled, duration: duration, reason: reason})
 	if m.failToggle {
 		return fmt.Errorf("injected repo failure")
 	}
 	for _, model := range m.models {
 		if model.ID == id {
 			model.Disabled = disabled
+			if disabled {
+				model.DisabledReason = reason
+			} else {
+				model.DisabledReason = ""
+			}
 		}
 	}
 	return nil
+}
+
+func (m *mockModelRepo) DeleteStaleDisabled(_ context.Context) (int64, error) {
+	return 0, nil
 }
 
 func (m *mockModelRepo) ListExpiredDisabled(_ context.Context, _ time.Time) ([]int64, error) {

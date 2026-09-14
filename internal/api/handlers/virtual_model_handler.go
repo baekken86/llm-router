@@ -79,6 +79,7 @@ func (h *VirtualModelHandler) Preview(w http.ResponseWriter, r *http.Request) {
 	var result []resolvedEntry
 	for i, rm := range resolved {
 		tags := make(map[string]string)
+		tags["mc.name"] = models.MCName(rm.Model.Name, rm.ReasoningEffort)
 		for _, t := range rm.Model.Tags {
 			tags["mc."+t.Key] = t.Value
 		}
@@ -234,6 +235,7 @@ func (h *VirtualModelHandler) GetResolved(w http.ResponseWriter, r *http.Request
 	var result []resolvedEntry
 	for i, rm := range resolved {
 		tags := make(map[string]string)
+		tags["mc.name"] = models.MCName(rm.Model.Name, rm.ReasoningEffort)
 		for _, t := range rm.Model.Tags {
 			tags["mc."+t.Key] = t.Value
 		}

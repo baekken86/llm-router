@@ -9,7 +9,49 @@
   import SortableTree from './SortableTree.svelte';
   import ConditionBuilder from './ConditionBuilder.svelte';
 
-  let { criteria = [], onChange } = $props();
+  let {
+    criteria = [],
+    onChange,
+    // Optional: enabled global sort conditions to show merged into the list
+    // (read-only, gray badge). Only the root source passes these.
+    globals = [],
+    disabledGlobals = [],
+    onToggleGlobal = null,
+  } = $props();
+
+  function entrySummary(entry) {
+    if (entry.condition) {
+      return `IF ${formatConditionSummary(entry.condition)} → ${entry.direction === 'asc' ? 'true first' : 'false first'}`;
+    }
+    if (entry.order) return `${entry.key}: [${entry.order.join(', ')}]`;
+    return `${entry.key || '?'} ${entry.direction || ''}`.trim();
+  }
+
+  // Merged display list: global conditions (read-only) + local entries
+  // (editable), ascending by effective priority, tie = global first.
+  const mergedRows = $derived.by(() => {
+    const rows = globals.map(g => ({
+      type: 'global',
+      key: `g:${g.id}`,
+      id: g.id,
+      name: g.name,
+      description: g.description || '',
+      priority: g.priority ?? 0,
+      disabledForVM: disabledGlobals.includes(g.id),
+    }));
+    criteria.forEach((entry, idx) => rows.push({
+      type: 'local',
+      key: `l:${idx}`,
+      entry,
+      idx,
+      summary: entrySummary(entry),
+      priority: entry.priority ?? 1000,
+    }));
+    return rows.sort((a, b) =>
+      a.priority - b.priority ||
+      (a.type === 'global' ? -1 : b.type === 'global' ? 1 : 0)
+    );
+  });
 
   function addSort() {
     onChange([...criteria, { key: '', direction: 'desc' }]);
@@ -27,6 +69,16 @@
     const next = criteria.map((c, i) => {
       if (i !== idx) return c;
       return { ...c, [field]: val };
+    });
+    onChange(next);
+  }
+
+  function updatePriority(idx, raw) {
+    const next = criteria.map((c, i) => {
+      if (i !== idx) return c;
+      const { priority, ...rest } = c;
+      const n = parseInt(raw, 10);
+      return Number.isFinite(n) ? { ...rest, priority: n } : rest;
     });
     onChange(next);
   }
@@ -117,91 +169,135 @@
   }
 </script>
 
-<SortableTree onDragEnd={handleDragEnd}>
-  <div class="space-y-3">
-    {#each criteria as entry, idx (idx)}
-      <SortableItem
-        id={`sort-${idx}`}
-        index={idx}
-        group="sort-list"
-        data={{ type: 'sort-entry', index: idx }}
-      >
-        {#snippet children(sortable)}
-          {#if entry.condition}
-            <div class="flex items-start gap-2 flex-wrap border-l-2 border-amber-700 pl-3 pt-1">
-              {#if criteria.length > 1}
-                <DragHandle attachHandle={sortable.attachHandle} />
-              {/if}
-              <span class="text-xs text-amber-400 font-mono mt-2">IF</span>
-              <div class="flex-1 min-w-0">
-                <ConditionBuilder
-                  node={entry.condition}
-                  depth={0}
-                  groupKey={`condition-${idx}`}
-                  onChange={(v) => updateCondition(idx, v)}
-                />
-              </div>
-              <div class="flex items-center gap-2 mt-2">
-                <select
-                  value={entry.direction || 'asc'}
-                  onchange={(e) => updateSort(idx, 'direction', e.target.value)}
-                  class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
-                >
-                  <option value="asc">true first</option>
-                  <option value="desc">false first</option>
-                </select>
-                <button
-                  type="button"
-                  class="text-gray-500 hover:text-red-400 px-1"
-                  onclick={() => removeEntry(idx)}
-                >x</button>
-              </div>
-            </div>
-          {:else}
-            <div class="flex items-center gap-2 flex-wrap">
-              {#if criteria.length > 1}
-                <DragHandle attachHandle={sortable.attachHandle} />
-              {/if}
-              <FieldSelector
-                value={entry.key || ''}
-                onChange={(v) => updateSort(idx, 'key', v)}
-              />
+{#snippet localRow(entry, idx)}
+  <SortableItem
+    id={`sort-${idx}`}
+    index={idx}
+    group="sort-list"
+    data={{ type: 'sort-entry', index: idx }}
+  >
+    {#snippet children(sortable)}
+      {#if entry.condition}
+        <div class="flex items-start gap-2 flex-wrap border-l-2 border-amber-700 pl-3 pt-1">
+          {#if criteria.length > 1}
+            <DragHandle attachHandle={sortable.attachHandle} />
+          {/if}
+          <span class="text-xs text-amber-400 font-mono mt-2">IF</span>
+          <div class="flex-1 min-w-0">
+            <ConditionBuilder
+              node={entry.condition}
+              depth={0}
+              groupKey={`condition-${idx}`}
+              onChange={(v) => updateCondition(idx, v)}
+            />
+          </div>
+          <div class="flex items-center gap-2 mt-2">
+            <select
+              value={entry.direction || 'asc'}
+              onchange={(e) => updateSort(idx, 'direction', e.target.value)}
+              class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+            >
+              <option value="asc">true first</option>
+              <option value="desc">false first</option>
+            </select>
+            <input
+              type="number"
+              value={entry.priority ?? ''}
+              placeholder="1000"
+              onchange={(e) => updatePriority(idx, e.target.value)}
+              class="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-emerald-500"
+              title="priority — lower = applied earlier, empty = default 1000 (commits on blur/enter)"
+            />
+            <button
+              type="button"
+              class="text-gray-500 hover:text-red-400 px-1"
+              onclick={() => removeEntry(idx)}
+            >x</button>
+          </div>
+        </div>
+      {:else}
+        <div class="flex items-center gap-2 flex-wrap">
+          {#if criteria.length > 1}
+            <DragHandle attachHandle={sortable.attachHandle} />
+          {/if}
+          <FieldSelector
+            value={entry.key || ''}
+            onChange={(v) => updateSort(idx, 'key', v)}
+          />
 
-              {#if entry.direction !== undefined}
-                <select
-                  value={entry.direction}
-                  onchange={(e) => updateSort(idx, 'direction', e.target.value)}
-                  class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
-                >
-                  <option value="asc">Ascending</option>
-                  <option value="desc">Descending</option>
-                </select>
-              {:else if entry.order}
-                <div class="flex flex-wrap gap-1">
-                  {#each entry.order as v}
-                    <span class="px-2 py-1 text-xs bg-gray-700 text-gray-300 rounded">{v}</span>
-                  {/each}
-                </div>
-              {/if}
-
-              <button
-                type="button"
-                class="text-xs text-gray-500 hover:text-gray-300 px-1"
-                onclick={() => toggleSortMode(idx)}
-                title="Toggle direction/custom order"
-              >
-                {entry.direction !== undefined ? '[]' : '↕'}
-              </button>
-              <button
-                type="button"
-                class="text-gray-500 hover:text-red-400 px-1"
-                onclick={() => removeEntry(idx)}
-              >x</button>
+          {#if entry.direction !== undefined}
+            <select
+              value={entry.direction}
+              onchange={(e) => updateSort(idx, 'direction', e.target.value)}
+              class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+            >
+              <option value="asc">Ascending</option>
+              <option value="desc">Descending</option>
+            </select>
+          {:else if entry.order}
+            <div class="flex flex-wrap gap-1">
+              {#each entry.order as v}
+                <span class="px-2 py-1 text-xs bg-gray-700 text-gray-300 rounded">{v}</span>
+              {/each}
             </div>
           {/if}
-        {/snippet}
-      </SortableItem>
-    {/each}
+
+          <button
+            type="button"
+            class="text-xs text-gray-500 hover:text-gray-300 px-1"
+            onclick={() => toggleSortMode(idx)}
+            title="Toggle direction/custom order"
+          >
+            {entry.direction !== undefined ? '[]' : '↕'}
+          </button>
+          <input
+            type="number"
+            value={entry.priority ?? ''}
+            placeholder="1000"
+            onchange={(e) => updatePriority(idx, e.target.value)}
+            class="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-emerald-500"
+            title="priority — lower = applied earlier, empty = default 1000 (commits on blur/enter)"
+          />
+          <button
+            type="button"
+            class="text-gray-500 hover:text-red-400 px-1"
+            onclick={() => removeEntry(idx)}
+          >x</button>
+        </div>
+      {/if}
+    {/snippet}
+  </SortableItem>
+{/snippet}
+
+<SortableTree onDragEnd={handleDragEnd}>
+  <div class="space-y-3">
+    {#if globals.length > 0}
+      {#each mergedRows as row (row.key)}
+        {#if row.type === 'global'}
+          <div class="flex items-center gap-2 border-l-2 border-gray-700 pl-3 py-1 opacity-70">
+            <span class="text-xs rounded px-1.5 py-0.5 font-medium shrink-0 bg-gray-700 text-gray-400">global</span>
+            <span class="text-sm font-mono {row.disabledForVM ? 'text-gray-600 line-through' : 'text-gray-400'}">{row.name}</span>
+            <span class="text-xs text-gray-600 truncate flex-1">{row.description}</span>
+            {#if onToggleGlobal}
+              <input
+                type="checkbox"
+                checked={!row.disabledForVM}
+                onchange={() => onToggleGlobal(row.id)}
+                class="accent-emerald-600 shrink-0"
+                title="enable/disable for this model"
+              />
+            {/if}
+            <span class="text-xs text-gray-500 font-mono shrink-0" title="effective priority">{row.priority}</span>
+          </div>
+        {:else}
+          {@render localRow(row.entry, row.idx)}
+        {/if}
+      {/each}
+    {:else}
+      {#each criteria as entry, idx (idx)}
+        {@render localRow(entry, idx)}
+      {/each}
+    {/if}
 
     <div class="flex gap-2">
       <button

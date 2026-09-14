@@ -240,6 +240,8 @@ func (m VMViewModel) viewRawModels() string {
 	seen := make(map[string]bool)
 	var tagKeys []string
 	var gmKeys []string
+	tagKeys = append(tagKeys, "mc.name")
+	seen["mc.name"] = true
 	for _, models := range m.rawModels {
 		for _, rm := range models {
 			for k := range rm.Tags {
@@ -340,7 +342,12 @@ func (m VMViewModel) viewRawModels() string {
 
 			for _, key := range allKeys {
 				var val string
-				if strings.HasPrefix(key, "mc.") {
+				if key == "mc.name" {
+					val = rm.Name
+					if rm.Effort != "" {
+						val += ":" + rm.Effort
+					}
+				} else if strings.HasPrefix(key, "mc.") {
 					val = rm.Tags[key[3:]]
 				} else if strings.HasPrefix(key, "m.") {
 					val = rm.GlobalMetadata[key[2:]]

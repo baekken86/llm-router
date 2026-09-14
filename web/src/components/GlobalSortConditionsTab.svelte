@@ -16,6 +16,7 @@
   let formName = $state('');
   let formDescription = $state('');
   let formEnabled = $state(true);
+  let formPriority = $state(0);
   let formSortExpr = $state([]);
 
   const sorted = $derived.by(() =>
@@ -59,6 +60,7 @@
     formName = '';
     formDescription = '';
     formEnabled = true;
+    formPriority = 0;
     formSortExpr = [];
   }
 
@@ -67,6 +69,7 @@
     formName = c.name || '';
     formDescription = c.description || '';
     formEnabled = c.enabled !== false;
+    formPriority = c.priority ?? 0;
     formSortExpr = Array.isArray(c.sort_expr) ? c.sort_expr : [];
   }
 
@@ -107,6 +110,7 @@
           sort_expr: c.sort_expr || [],
           enabled: checked,
           position: c.position ?? 0,
+          priority: c.priority ?? 0,
         },
       });
       addToast(checked ? 'Condition enabled' : 'Condition disabled', 'success');
@@ -129,6 +133,7 @@
       sort_expr: formSortExpr,
       enabled: formEnabled,
       position: editingId === 'new' ? nextPosition() : (sorted.find(c => c.id === editingId)?.position ?? 0),
+      priority: Number(formPriority) || 0,
     };
     try {
       if (editingId === 'new') {
@@ -237,6 +242,16 @@
           <label class="block text-sm text-gray-400 mb-2">Sort Expression</label>
           <SortBuilder criteria={formSortExpr} onChange={(v) => formSortExpr = v} />
         </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1" for="sort-cond-priority">Priority</label>
+          <input
+            id="sort-cond-priority"
+            type="number"
+            bind:value={formPriority}
+            class="w-28 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+          />
+          <p class="text-xs text-gray-500 mt-1">lower = applied earlier, default 0</p>
+        </div>
         <div class="flex items-center gap-3">
           <Switch
             checked={formEnabled}
@@ -277,6 +292,7 @@
             <th class="text-left px-4 py-3">Enabled</th>
             <th class="text-left px-4 py-3">Name</th>
             <th class="text-left px-4 py-3">Description</th>
+            <th class="text-center px-4 py-3">Priority</th>
             <th class="text-center px-4 py-3">Position</th>
             <th class="text-center px-4 py-3"></th>
             <th class="text-left px-4 py-3">Sort</th>
@@ -295,6 +311,7 @@
               </td>
               <td class="px-4 py-2.5 text-emerald-400 font-mono">{c.name}</td>
               <td class="px-4 py-2.5 text-gray-300">{c.description}</td>
+              <td class="px-4 py-2.5 text-center text-gray-400 font-mono">{c.priority ?? 0}</td>
               <td class="px-4 py-2.5 text-center text-gray-500">{c.position ?? 0}</td>
               <td class="px-4 py-2.5 text-center whitespace-nowrap">
                 <button

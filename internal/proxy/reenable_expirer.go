@@ -51,7 +51,7 @@ func (e *ReenableExpirer) reenableExpired(ctx context.Context, now time.Time) {
 		e.logger.Error("expirer: failed to list expired models", "error", err)
 	} else {
 		for _, id := range modelIDs {
-			if err := e.modelRepo.ToggleDisabled(ctx, id, false, nil); err != nil {
+			if err := e.modelRepo.ToggleDisabled(ctx, id, false, nil, ""); err != nil {
 				e.logger.Error("expirer: failed to re-enable model", "id", id, "error", err)
 			} else {
 				e.logger.Info("expirer: auto re-enabled model", "id", id)

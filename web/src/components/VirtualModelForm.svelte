@@ -141,6 +141,10 @@
     }
   }
 
+  // Global sort conditions are merged into the root source's SortBuilder
+  // inside the Composition section (see CompositionNode/SortBuilder).
+  // Filter and sort stay separate lists; each sorts by effective priority.
+
   onMount(() => { loadVM(); });
 </script>
 
@@ -177,16 +181,6 @@
 
       <div class="grid grid-cols-2 gap-4">
         <div>
-          <label class="block text-sm text-gray-400 mb-1">Max Retries</label>
-          <input
-            type="number"
-            bind:value={maxRetries}
-            min="0"
-            max="3"
-            class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
-          />
-        </div>
-        <div>
           <label class="block text-sm text-gray-400 mb-1">Retry on Status</label>
           <div class="flex gap-2 flex-wrap">
             {#each statusOptions as code}
@@ -203,73 +197,29 @@
       </div>
 
       <div>
-        <label class="block text-sm text-gray-400 mb-2">Global Filter Conditions</label>
-        <p class="text-xs text-gray-500 mb-2">
-          Applied first, before model-specific filters. Uncheck to disable for this model.
-        </p>
-        {#if globalFilterConditions.length === 0}
-          <p class="text-xs text-gray-500">No global filter conditions defined.</p>
-        {:else}
-          <div class="space-y-2">
-            {#each globalFilterConditions.filter(c => c.enabled !== false) as c (c.id)}
-              <label class="flex items-center gap-3 bg-gray-900 border border-gray-800 rounded px-3 py-2">
-                <input
-                  type="checkbox"
-                  checked={!disabledGlobalFilterConditions.includes(c.id)}
-                  onchange={() => toggleGlobalFilterCondition(c.id)}
-                  class="accent-emerald-600"
-                />
-                <span class="text-sm text-gray-200 font-mono">{c.name}</span>
-                <span class="text-xs text-gray-500 truncate flex-1">{c.description || ''}</span>
-              </label>
-            {/each}
-            {#each globalFilterConditions.filter(c => c.enabled === false) as c (c.id)}
-              <div class="flex items-center gap-3 bg-gray-900 border border-gray-800 rounded px-3 py-2 opacity-50">
-                <span class="text-sm text-gray-500 font-mono line-through">{c.name}</span>
-                <span class="text-xs text-gray-600">(globally disabled)</span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-
-      <div>
-        <label class="block text-sm text-gray-400 mb-2">Global Sort Conditions</label>
-        <p class="text-xs text-gray-500 mb-2">
-          Applied before model-specific sorts. Uncheck to disable for this model.
-        </p>
-        {#if globalConditions.length === 0}
-          <p class="text-xs text-gray-500">No global sort conditions defined.</p>
-        {:else}
-          <div class="space-y-2">
-            {#each globalConditions.filter(c => c.enabled !== false) as c (c.id)}
-              <label
-                class="flex items-center gap-3 bg-gray-900 border border-gray-800 rounded px-3 py-2"
-              >
-                <input
-                  type="checkbox"
-                  checked={!disabledGlobalConditions.includes(c.id)}
-                  onchange={() => toggleGlobalCondition(c.id)}
-                  class="accent-emerald-600"
-                />
-                <span class="text-sm text-gray-200 font-mono">{c.name}</span>
-                <span class="text-xs text-gray-500 truncate flex-1">{c.description || ''}</span>
-              </label>
-            {/each}
-            {#each globalConditions.filter(c => c.enabled === false) as c (c.id)}
-              <div class="flex items-center gap-3 bg-gray-900 border border-gray-800 rounded px-3 py-2 opacity-50">
-                <span class="text-sm text-gray-500 font-mono line-through">{c.name}</span>
-                <span class="text-xs text-gray-600">(globally disabled)</span>
-              </div>
-            {/each}
-          </div>
-        {/if}
+        <label class="block text-sm text-gray-400 mb-2">Max Retries</label>
+        <input
+          type="number"
+          bind:value={maxRetries}
+          min="0"
+          max="3"
+          class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+        />
       </div>
 
       <div>
         <label class="block text-sm text-gray-400 mb-2">Composition</label>
+        <p class="text-xs text-gray-500 mb-2">
+          Sort section: global conditions shown read-only (toggle = apply to this model), priority commits on blur/enter.
+        </p>
         <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-          <CompositionCanvas bind:node={compositionNode} bind:this={canvasRef} />
+          <CompositionCanvas
+            bind:node={compositionNode}
+            bind:this={canvasRef}
+            globalSorts={globalConditions.filter(c => c.enabled !== false)}
+            disabledGlobalSorts={disabledGlobalConditions}
+            onToggleGlobal={toggleGlobalCondition}
+          />
         </div>
       </div>
 

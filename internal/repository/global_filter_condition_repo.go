@@ -35,13 +35,13 @@ func NewGlobalFilterConditionRepository(db *sql.DB) GlobalFilterConditionReposit
 	return &sqliteGlobalFilterConditionRepo{db: db}
 }
 
-const gfcColumns = `id, name, description, filter_expr, enabled, position, created_at, updated_at`
+const gfcColumns = `id, name, description, filter_expr, enabled, position, priority, created_at, updated_at`
 
 func scanGlobalFilterCondition(row interface{ Scan(...interface{}) error }) (*models.GlobalFilterCondition, error) {
 	cond := &models.GlobalFilterCondition{}
 	var filterStr string
 	var enabled int
-	err := row.Scan(&cond.ID, &cond.Name, &cond.Description, &filterStr, &enabled, &cond.Position, &cond.CreatedAt, &cond.UpdatedAt)
+	err := row.Scan(&cond.ID, &cond.Name, &cond.Description, &filterStr, &enabled, &cond.Position, &cond.Priority, &cond.CreatedAt, &cond.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +58,7 @@ func scanGlobalFilterCondition(row interface{ Scan(...interface{}) error }) (*mo
 
 func (r *sqliteGlobalFilterConditionRepo) List(ctx context.Context) ([]models.GlobalFilterCondition, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+gfcColumns+` FROM global_filter_conditions ORDER BY position, id`,
+		`SELECT `+gfcColumns+` FROM global_filter_conditions ORDER BY priority, position, id`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list global filter conditions: %w", err)
@@ -97,9 +97,9 @@ func (r *sqliteGlobalFilterConditionRepo) Create(ctx context.Context, cond *mode
 	}
 
 	result, err := r.db.ExecContext(ctx,
-		`INSERT INTO global_filter_conditions (name, description, filter_expr, enabled, position, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		cond.Name, cond.Description, string(data), boolToInt(cond.Enabled), cond.Position, now, now,
+		`INSERT INTO global_filter_conditions (name, description, filter_expr, enabled, position, priority, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		cond.Name, cond.Description, string(data), boolToInt(cond.Enabled), cond.Position, cond.Priority, now, now,
 	)
 	if err != nil {
 		return fmt.Errorf("insert global filter condition: %w", err)
@@ -122,9 +122,9 @@ func (r *sqliteGlobalFilterConditionRepo) Update(ctx context.Context, cond *mode
 	}
 
 	_, err = r.db.ExecContext(ctx,
-		`UPDATE global_filter_conditions SET name = ?, description = ?, filter_expr = ?, enabled = ?, position = ?, updated_at = ?
+		`UPDATE global_filter_conditions SET name = ?, description = ?, filter_expr = ?, enabled = ?, position = ?, priority = ?, updated_at = ?
 		 WHERE id = ?`,
-		cond.Name, cond.Description, string(data), boolToInt(cond.Enabled), cond.Position, now, cond.ID,
+		cond.Name, cond.Description, string(data), boolToInt(cond.Enabled), cond.Position, cond.Priority, now, cond.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("update global filter condition: %w", err)
@@ -213,7 +213,9 @@ func (r *sqliteGlobalFilterConditionRepo) SetDisabled(ctx context.Context, virtu
 	return tx.Commit()
 }
 
-// Reorder assigns position = index for each id inside one transaction.
+// Reorder assigns priority = index * 10 for each id inside one transaction
+// (position is left untouched for legacy ordering). Ids not present keep
+// their existing priority.
 func (r *sqliteGlobalFilterConditionRepo) Reorder(ctx context.Context, ids []int64) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -223,8 +225,8 @@ func (r *sqliteGlobalFilterConditionRepo) Reorder(ctx context.Context, ids []int
 
 	for i, id := range ids {
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE global_filter_conditions SET position = ?, updated_at = ? WHERE id = ?`,
-			i, time.Now(), id,
+			`UPDATE global_filter_conditions SET priority = ?, updated_at = ? WHERE id = ?`,
+			i*10, time.Now(), id,
 		); err != nil {
 			return fmt.Errorf("reorder global filter condition: %w", err)
 		}

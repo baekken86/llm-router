@@ -39,6 +39,7 @@ func setupGlobalSortTestDB(t *testing.T) *sql.DB {
 			sort_expr TEXT NOT NULL DEFAULT '[]',
 			enabled INTEGER NOT NULL DEFAULT 1,
 			position INTEGER NOT NULL DEFAULT 0,
+			priority INTEGER NOT NULL DEFAULT 0,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -54,6 +55,7 @@ func setupGlobalSortTestDB(t *testing.T) *sql.DB {
 			filter_expr TEXT NOT NULL DEFAULT '{}',
 			enabled INTEGER NOT NULL DEFAULT 1,
 			position INTEGER NOT NULL DEFAULT 0,
+			priority INTEGER NOT NULL DEFAULT 0,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -368,8 +370,8 @@ func TestReorderConditions(t *testing.T) {
 		t.Errorf("sort reorder not applied: %+v", all)
 	}
 	for i, c := range all {
-		if c.Position != i {
-			t.Errorf("expected position %d for index %d, got %d", i, i, c.Position)
+		if c.Priority != i*10 {
+			t.Errorf("expected priority %d for index %d, got %d", i*10, i, c.Priority)
 		}
 	}
 

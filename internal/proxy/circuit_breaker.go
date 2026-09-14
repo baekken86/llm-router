@@ -228,7 +228,7 @@ func (cb *CircuitBreaker) disableModel(ctx context.Context, providerID int64, mo
 	}
 	duration := time.Duration(cooldownSec) * time.Second
 
-	if err := cb.modelRepo.ToggleDisabled(ctx, model.ID, true, &duration); err != nil {
+	if err := cb.modelRepo.ToggleDisabled(ctx, model.ID, true, &duration, "circuit_breaker"); err != nil {
 		cb.logger.Error("circuit breaker: failed to disable model", "model", modelName, "provider_id", providerID, "error", err)
 		return
 	}
@@ -288,7 +288,7 @@ func (cb *CircuitBreaker) DisableModelPermanent(ctx context.Context, providerID 
 		return false
 	}
 
-	if err := cb.modelRepo.ToggleDisabled(ctx, model.ID, true, nil); err != nil {
+	if err := cb.modelRepo.ToggleDisabled(ctx, model.ID, true, nil, "circuit_breaker"); err != nil {
 		cb.logger.Error("circuit breaker: failed to permanently disable model",
 			"model", modelName, "provider_id", providerID, "error", err)
 		return false
@@ -333,7 +333,7 @@ func (cb *CircuitBreaker) reenableExpired() {
 			return true
 		}
 
-		if err := cb.modelRepo.ToggleDisabled(ctx, model.ID, false, nil); err != nil {
+		if err := cb.modelRepo.ToggleDisabled(ctx, model.ID, false, nil, ""); err != nil {
 			cb.logger.Error("circuit breaker: failed to re-enable model", "model", mName, "provider_id", pID, "error", err)
 			return true
 		}

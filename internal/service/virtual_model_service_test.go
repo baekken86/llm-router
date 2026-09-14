@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -509,5 +510,183 @@ func TestVMOnlyFilterUnaffected(t *testing.T) {
 	}
 	if len(results) != 1 || results[0].Model.Name != "m-beta" {
 		t.Fatalf("VM-only filter should behave as before, got %+v", results)
+	}
+}
+
+// --- Priority-based merge ordering tests ---
+
+// TestPriorityMergedSortOrder verifies the merged sort criterion order for
+// priorities: g0, g10, local5, local1000 (nil priority = default local 1000).
+func TestPriorityMergedSortOrder(t *testing.T) {
+	g0 := models.GlobalSortCondition{
+		ID:       1,
+		Name:     "g0",
+		Enabled:  true,
+		Priority: 0,
+		SortExpr: models.SortExpr{{Key: "g0_key", Direction: "asc"}},
+	}
+	g10 := models.GlobalSortCondition{
+		ID:       2,
+		Name:     "g10",
+		Enabled:  true,
+		Priority: 10,
+		SortExpr: models.SortExpr{{Key: "g10_key", Direction: "asc"}},
+	}
+	svc := newGlobalSortTestService([]models.GlobalSortCondition{g0, g10}, nil)
+
+	vm := &models.VirtualModel{
+		FilterExpr: []byte(`{}`),
+		SortExpr:   json.RawMessage(`[{"key":"local5_key","direction":"asc","priority":5},{"key":"local1000_key","direction":"asc"}]`),
+	}
+
+	merged, ok := mergeSortByPriority(
+		[]models.GlobalSortCondition{g0, g10},
+		map[int64]bool{},
+		vm.SortExpr,
+	)
+	if !ok {
+		t.Fatal("expected merged sort to be present")
+	}
+	wantKeys := []string{"g0_key", "local5_key", "g10_key", "local1000_key"}
+	if len(merged) != len(wantKeys) {
+		t.Fatalf("expected %d entries, got %d: %+v", len(wantKeys), len(merged), merged)
+	}
+	for i, key := range wantKeys {
+		if merged[i].Key != key {
+			t.Errorf("entry %d: got key %q, want %q", i, merged[i].Key, key)
+		}
+	}
+
+	// End-to-end through the service: condition sorts split the two models by
+	// name match. Entries ordered local5(asc), local1000(desc): the FIRST
+	// decisive entry (local5, priority 5, asc) decides, so m-alpha first.
+	vm.SortExpr = json.RawMessage(`[
+		{"condition":{"key":"m.name","op":"eq","value":"m-alpha"},"direction":"asc","priority":5},
+		{"condition":{"key":"m.name","op":"eq","value":"m-alpha"},"direction":"desc"}
+	]`)
+	results, err := svc.ResolveModels(context.Background(), vm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	// First applied entry (priority 5, asc) decides: m-alpha first.
+	if results[0].Model.Name != "m-alpha" {
+		t.Errorf("explicit-priority entry (5) should apply before the default-priority (1000) entry, got %s first", results[0].Model.Name)
+	}
+}
+
+// TestPriorityGlobalAfterLocals verifies a global condition with a very high
+// priority (9999) is applied AFTER all local entries.
+func TestPriorityGlobalAfterLocals(t *testing.T) {
+	gLate := models.GlobalSortCondition{
+		ID:       3,
+		Name:     "late",
+		Enabled:  true,
+		Priority: 9999,
+		SortExpr: models.SortExpr{{Key: "late_key", Direction: "asc"}},
+	}
+
+	vmSort := json.RawMessage(`[{"key":"local_key","direction":"asc"}]`)
+	merged, ok := mergeSortByPriority([]models.GlobalSortCondition{gLate}, map[int64]bool{}, vmSort)
+	if !ok {
+		t.Fatal("expected merged sort to be present")
+	}
+	if len(merged) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %+v", len(merged), merged)
+	}
+	if merged[0].Key != "local_key" || merged[1].Key != "late_key" {
+		t.Errorf("expected local before late global, got %q then %q", merged[0].Key, merged[1].Key)
+	}
+}
+
+// TestPriorityTieGlobalBeforeLocal verifies that at equal priority the global
+// condition is applied before the VM-local entry.
+func TestPriorityTieGlobalBeforeLocal(t *testing.T) {
+	g := models.GlobalSortCondition{
+		ID:       4,
+		Name:     "tied",
+		Enabled:  true,
+		Priority: 500,
+		SortExpr: models.SortExpr{{Key: "global_key", Direction: "asc"}},
+	}
+
+	vmSort := json.RawMessage(`[{"key":"local_key","direction":"asc","priority":500}]`)
+	merged, ok := mergeSortByPriority([]models.GlobalSortCondition{g}, map[int64]bool{}, vmSort)
+	if !ok {
+		t.Fatal("expected merged sort to be present")
+	}
+	if len(merged) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %+v", len(merged), merged)
+	}
+	if merged[0].Key != "global_key" || merged[1].Key != "local_key" {
+		t.Errorf("expected global before local on tie, got %q then %q", merged[0].Key, merged[1].Key)
+	}
+}
+
+// TestPriorityMergedFilterOrder verifies the AND chain of global filter
+// conditions and the VM filter_expr is ordered by priority (lower first,
+// globals before locals on ties). The VM-local filter_expr is fixed at
+// models.DefaultLocalPriority (1000).
+func TestPriorityMergedFilterOrder(t *testing.T) {
+	gLate := models.GlobalFilterCondition{
+		ID:         1,
+		Name:       "late",
+		Enabled:    true,
+		Priority:   5000,
+		FilterExpr: models.FilterNode{Key: "late", Op: "eq", Value: "x"},
+	}
+	gEarly := models.GlobalFilterCondition{
+		ID:         2,
+		Name:       "early",
+		Enabled:    true,
+		Priority:   10,
+		FilterExpr: models.FilterNode{Key: "early", Op: "eq", Value: "y"},
+	}
+
+	vm := &models.VirtualModel{
+		FilterExpr: []byte(`{"key":"local","op":"eq","value":"z"}`),
+	}
+
+	merged, ok := (&virtualModelService{}).mergeGlobalFilter(
+		[]models.GlobalFilterCondition{gLate, gEarly},
+		map[int64]bool{},
+		vm,
+	)
+	if !ok {
+		t.Fatal("expected merged filter to be present")
+	}
+	if len(merged.And) != 3 {
+		t.Fatalf("expected 3 AND children, got %+v", merged)
+	}
+	wantKeys := []string{"early", "local", "late"}
+	for i, key := range wantKeys {
+		if merged.And[i].Key != key {
+			t.Errorf("AND child %d: got key %q, want %q", i, merged.And[i].Key, key)
+		}
+	}
+
+	// Tie: global before local.
+	gTie := models.GlobalFilterCondition{
+		ID:         3,
+		Name:       "tie",
+		Enabled:    true,
+		Priority:   1000,
+		FilterExpr: models.FilterNode{Key: "global_tie", Op: "eq", Value: "w"},
+	}
+	vm2 := &models.VirtualModel{
+		FilterExpr: []byte(`{"key":"local_tie","op":"eq","value":"v"}`),
+	}
+	merged2, ok := (&virtualModelService{}).mergeGlobalFilter(
+		[]models.GlobalFilterCondition{gTie},
+		map[int64]bool{},
+		vm2,
+	)
+	if !ok {
+		t.Fatal("expected merged filter to be present")
+	}
+	if len(merged2.And) != 2 || merged2.And[0].Key != "global_tie" || merged2.And[1].Key != "local_tie" {
+		t.Errorf("expected global before local on tie, got %+v", merged2)
 	}
 }

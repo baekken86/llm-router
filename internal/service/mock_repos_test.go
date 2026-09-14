@@ -137,14 +137,33 @@ func (m *mockModelRepo) Upsert(_ context.Context, providerID int64, name string)
 	return &mod, nil
 }
 
-func (m *mockModelRepo) ToggleDisabled(_ context.Context, id int64, disabled bool, _ *time.Duration) error {
+func (m *mockModelRepo) ToggleDisabled(_ context.Context, id int64, disabled bool, _ *time.Duration, reason string) error {
 	for i := range m.models {
 		if m.models[i].ID == id {
 			m.models[i].Disabled = disabled
+			if disabled {
+				m.models[i].DisabledReason = reason
+			} else {
+				m.models[i].DisabledReason = ""
+			}
 			return nil
 		}
 	}
 	return nil
+}
+
+func (m *mockModelRepo) DeleteStaleDisabled(_ context.Context) (int64, error) {
+	var count int64
+	var kept []models.Model
+	for _, mod := range m.models {
+		if mod.Disabled && mod.DisabledReason == "stale" {
+			count++
+			continue
+		}
+		kept = append(kept, mod)
+	}
+	m.models = kept
+	return count, nil
 }
 
 func (m *mockModelRepo) ListEnabled(_ context.Context) ([]models.Model, error) {
@@ -166,6 +185,7 @@ func (m *mockModelRepo) DisableByProviderExcept(_ context.Context, providerID in
 	for i := range m.models {
 		if m.models[i].ProviderID == providerID && !nameSet[m.models[i].Name] && !m.models[i].Disabled {
 			m.models[i].Disabled = true
+			m.models[i].DisabledReason = "stale"
 			count++
 		}
 	}
@@ -440,12 +460,14 @@ type mockGlobalSortRepo struct {
 }
 
 func (m *mockGlobalSortRepo) List(_ context.Context) ([]models.GlobalSortCondition, error) {
-	// Stable ordering: by position then id (mirrors the SQL ORDER BY).
+	// Stable ordering: by priority, position then id (mirrors the SQL ORDER BY).
 	result := make([]models.GlobalSortCondition, len(m.conditions))
 	copy(result, m.conditions)
 	for i := 1; i < len(result); i++ {
 		for j := len(result) - 1; j > 0; j-- {
-			if result[j].Position < result[j-1].Position || (result[j].Position == result[j-1].Position && result[j].ID < result[j-1].ID) {
+			if result[j].Priority < result[j-1].Priority ||
+				(result[j].Priority == result[j-1].Priority && (result[j].Position < result[j-1].Position ||
+					(result[j].Position == result[j-1].Position && result[j].ID < result[j-1].ID))) {
 				result[j], result[j-1] = result[j-1], result[j]
 			}
 		}
@@ -502,12 +524,14 @@ type mockGlobalFilterRepo struct {
 }
 
 func (m *mockGlobalFilterRepo) List(_ context.Context) ([]models.GlobalFilterCondition, error) {
-	// Stable ordering: by position then id (mirrors the SQL ORDER BY).
+	// Stable ordering: by priority, position then id (mirrors the SQL ORDER BY).
 	result := make([]models.GlobalFilterCondition, len(m.conditions))
 	copy(result, m.conditions)
 	for i := 1; i < len(result); i++ {
 		for j := len(result) - 1; j > 0; j-- {
-			if result[j].Position < result[j-1].Position || (result[j].Position == result[j-1].Position && result[j].ID < result[j-1].ID) {
+			if result[j].Priority < result[j-1].Priority ||
+				(result[j].Priority == result[j-1].Priority && (result[j].Position < result[j-1].Position ||
+					(result[j].Position == result[j-1].Position && result[j].ID < result[j-1].ID))) {
 				result[j], result[j-1] = result[j-1], result[j]
 			}
 		}

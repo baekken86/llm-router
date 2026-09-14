@@ -90,6 +90,7 @@ func (h *GlobalFilterConditionHandler) Create(w http.ResponseWriter, r *http.Req
 		FilterExpr  json.RawMessage `json:"filter_expr"`
 		Enabled     *bool           `json:"enabled"`
 		Position    *int            `json:"position"`
+		Priority    *int            `json:"priority"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -125,6 +126,9 @@ func (h *GlobalFilterConditionHandler) Create(w http.ResponseWriter, r *http.Req
 	if req.Position != nil {
 		cond.Position = *req.Position
 	}
+	if req.Priority != nil {
+		cond.Priority = *req.Priority
+	}
 
 	if err := h.repo.Create(r.Context(), cond); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -146,6 +150,7 @@ func (h *GlobalFilterConditionHandler) Update(w http.ResponseWriter, r *http.Req
 		FilterExpr  *json.RawMessage `json:"filter_expr"`
 		Enabled     *bool            `json:"enabled"`
 		Position    *int             `json:"position"`
+		Priority    *int             `json:"priority"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -186,6 +191,9 @@ func (h *GlobalFilterConditionHandler) Update(w http.ResponseWriter, r *http.Req
 	}
 	if req.Position != nil {
 		cond.Position = *req.Position
+	}
+	if req.Priority != nil {
+		cond.Priority = *req.Priority
 	}
 
 	if err := h.repo.Update(r.Context(), cond); err != nil {

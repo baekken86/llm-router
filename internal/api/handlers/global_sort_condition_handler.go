@@ -94,6 +94,7 @@ func (h *GlobalSortConditionHandler) Create(w http.ResponseWriter, r *http.Reque
 		SortExpr    json.RawMessage `json:"sort_expr"`
 		Enabled     *bool           `json:"enabled"`
 		Position    *int            `json:"position"`
+		Priority    *int            `json:"priority"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -126,6 +127,9 @@ func (h *GlobalSortConditionHandler) Create(w http.ResponseWriter, r *http.Reque
 	if req.Position != nil {
 		cond.Position = *req.Position
 	}
+	if req.Priority != nil {
+		cond.Priority = *req.Priority
+	}
 
 	if err := h.repo.Create(r.Context(), cond); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -147,6 +151,7 @@ func (h *GlobalSortConditionHandler) Update(w http.ResponseWriter, r *http.Reque
 		SortExpr    *json.RawMessage `json:"sort_expr"`
 		Enabled     *bool            `json:"enabled"`
 		Position    *int             `json:"position"`
+		Priority    *int             `json:"priority"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -187,6 +192,9 @@ func (h *GlobalSortConditionHandler) Update(w http.ResponseWriter, r *http.Reque
 	}
 	if req.Position != nil {
 		cond.Position = *req.Position
+	}
+	if req.Priority != nil {
+		cond.Priority = *req.Priority
 	}
 
 	if err := h.repo.Update(r.Context(), cond); err != nil {

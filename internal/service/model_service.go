@@ -22,6 +22,7 @@ type ModelEffortEntry struct {
 	ReasoningEffort   string            `json:"reasoning_effort"`
 	Disabled          bool              `json:"disabled"`
 	DisabledUntil     *time.Time        `json:"disabled_until,omitempty"`
+	DisabledReason    string            `json:"disabled_reason,omitempty"`
 	Tags              map[string]string `json:"tags"`
 	GlobalMetadata    map[string]string `json:"global_metadata"`
 	MappingTargetName *string           `json:"mapping_target_name,omitempty"`
@@ -41,7 +42,8 @@ type ModelService interface {
 	SetTags(ctx context.Context, modelID int64, tags map[string]string) error
 	GetTags(ctx context.Context, modelID int64) ([]models.Tag, error)
 	Delete(ctx context.Context, id int64) error
-	ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration) error
+	ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration, reason string) error
+	DeleteStaleDisabled(ctx context.Context) (int64, error)
 }
 
 type modelService struct {
@@ -201,8 +203,12 @@ func (s *modelService) fetchDiscoveredModels(ctx context.Context, provider *mode
 	return out, nil
 }
 
-func (s *modelService) ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration) error {
-	return s.modelRepo.ToggleDisabled(ctx, id, disabled, duration)
+func (s *modelService) ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration, reason string) error {
+	return s.modelRepo.ToggleDisabled(ctx, id, disabled, duration, reason)
+}
+
+func (s *modelService) DeleteStaleDisabled(ctx context.Context) (int64, error) {
+	return s.modelRepo.DeleteStaleDisabled(ctx)
 }
 
 func fetchModels(baseURL, apiKey string, apiType models.APIType) ([]string, error) {
@@ -371,6 +377,7 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelEffortEntry, error) 
 					ReasoningEffort:   effort,
 					Disabled:          m.Disabled,
 					DisabledUntil:     m.DisabledUntil,
+					DisabledReason:    m.DisabledReason,
 					Tags:              targetModelTags,
 					GlobalMetadata:    gm,
 					MappingTargetName: mappingTarget,
@@ -415,6 +422,7 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelEffortEntry, error) 
 					ReasoningEffort: effort,
 					Disabled:        m.Disabled,
 					DisabledUntil:   m.DisabledUntil,
+					DisabledReason:  m.DisabledReason,
 					Tags:            tagMap,
 					GlobalMetadata:  gm,
 					CreatedAt:       m.CreatedAt,

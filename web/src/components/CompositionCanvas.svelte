@@ -7,6 +7,10 @@
   let {
     node = $bindable(),
     allVMs = [],
+    // Global sort conditions merged into the root source's SortBuilder.
+    globalSorts = [],
+    disabledGlobalSorts = [],
+    onToggleGlobalSort = null,
   } = $props();
 
   let tree = $state(null);
@@ -408,6 +412,9 @@
       node={tree}
       depth={0}
       {availableVMs}
+      {globalSorts}
+      {disabledGlobalSorts}
+      {onToggleGlobalSort}
       {dragSourceId}
       {dropTargetId}
       {dropIsOperation}

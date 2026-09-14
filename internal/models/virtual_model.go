@@ -6,6 +6,22 @@ import (
 	"time"
 )
 
+// DefaultLocalPriority is the effective priority of virtual-model-local
+// criteria (sort entries without an explicit priority, and the VM's own
+// filter_expr). Lower values are applied earlier; 1000 places locals after
+// default-priority (0) global conditions, preserving the historical
+// global-first behavior.
+const DefaultLocalPriority = 1000
+
+// MCName builds the derived mc.name attribute: model name plus reasoning
+// effort (if present), e.g. "gpt-5.1:high" or plain "gpt-5.1" without effort.
+func MCName(modelName, reasoningEffort string) string {
+	if reasoningEffort == "" {
+		return modelName
+	}
+	return modelName + ":" + reasoningEffort
+}
+
 type VirtualModel struct {
 	ID            int64            `json:"id"`
 	Name          string           `json:"name"`
@@ -102,6 +118,10 @@ type SortEntry struct {
 	Key       string      `json:"key,omitempty"`
 	Direction string      `json:"direction,omitempty"`
 	Order     []string    `json:"order,omitempty"`
+	// Priority overrides when this entry is applied relative to other merged
+	// sort criteria. Lower values are applied earlier. nil uses
+	// DefaultLocalPriority (1000).
+	Priority *int `json:"priority,omitempty"`
 }
 
 // IsCondition returns true if this entry is a predicate sort.

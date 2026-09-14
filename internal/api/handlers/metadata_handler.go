@@ -57,6 +57,11 @@ func (h *MetadataHandler) GetFields(w http.ResponseWriter, r *http.Request) {
 		"description": "Model name",
 		"type":        "string",
 	}
+	// mc.name is derived: model name + reasoning effort (if present)
+	fields["mc.name"] = map[string]interface{}{
+		"description": "Model name incl. reasoning effort (e.g. gpt-5.1:high)",
+		"type":        "string",
+	}
 
 	// Add m.* fields (mirror mc.* with m. prefix)
 	if h.globalMetaRepo != nil {

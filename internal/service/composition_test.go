@@ -788,6 +788,94 @@ func TestEdgeCase_ParentSortOverridesInlineSort(t *testing.T) {
 	}
 }
 
+// TestCompositeRootSortPartitionsBeforeLateGlobal reproduces the reported bug:
+// a composite VM whose root sort (mc.cost asc) partitions the list must NOT be
+// flattened by a late global condition (priority 9000) whose sort_expr starts
+// with mc.name. Sorting is one hierarchical chain — the late global may only
+// order WITHIN the partitions created by earlier criteria.
+func TestCompositeRootSortPartitionsBeforeLateGlobal(t *testing.T) {
+	vmRepo := newMockVMRepo()
+	modelRepo := &mockModelRepo{models: []models.Model{
+		{ID: 1, ProviderID: 1, Name: "glm-5.3-flash"},
+		{ID: 2, ProviderID: 1, Name: "glm-5.3"},
+		{ID: 3, ProviderID: 2, Name: "glm-5.3"},
+	}}
+	providerRepo := &mockProviderRepo{
+		providers: map[int64]*models.Provider{
+			1: {ID: 1, Name: "zai"},
+			2: {ID: 2, Name: "other"},
+		},
+		byName: map[string]*models.Provider{
+			"zai":   {ID: 1, Name: "zai"},
+			"other": {ID: 2, Name: "other"},
+		},
+	}
+	tagRepo := newMockTagRepo()
+	costs := map[int64]string{1: "0.1", 2: "0.3", 3: "0.2"}
+	for id, cost := range costs {
+		if err := tagRepo.Set(context.Background(), id, "", map[string]string{"cost": cost}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The user's global condition: high priority (applied last), but its own
+	// sort_expr starts with mc.name — without the fix this flattened the
+	// cost partitioning ("glm-5.3" < "glm-5.3-flash" lexicographically).
+	late := models.GlobalSortCondition{
+		ID:       1,
+		Name:     "zai first for the same model",
+		Enabled:  true,
+		Priority: 9000,
+		SortExpr: models.SortExpr{
+			{Key: "mc.name", Direction: "asc"},
+			{Condition: &models.FilterNode{Key: "p.name", Op: "eq", Value: "zai"}, Direction: "asc"},
+		},
+	}
+
+	svc := &virtualModelService{
+		vmRepo:           vmRepo,
+		modelRepo:        modelRepo,
+		tagRepo:          tagRepo,
+		providerRepo:     providerRepo,
+		providerMetaRepo: newMockProviderMetaRepo(),
+		globalMetaRepo:   newMockGlobalMetaRepo(),
+		mappingRepo:      newMockMappingRepo(),
+		globalSortRepo:   &mockGlobalSortRepo{conditions: []models.GlobalSortCondition{late}},
+	}
+
+	comp := &models.CompositionNode{
+		Operation: "union",
+		Sources: []models.CompositionNode{
+			{FilterExpr: &models.FilterNode{Key: "p.name", Op: "eq", Value: "zai"}},
+			{FilterExpr: &models.FilterNode{Key: "p.name", Op: "eq", Value: "other"}},
+		},
+		SortExpr: models.SortExpr{{Key: "mc.cost", Direction: "asc"}},
+	}
+	vm := &models.VirtualModel{Name: "chat", Composition: comp}
+
+	result, err := svc.ResolveModels(context.Background(), vm)
+	if err != nil {
+		t.Fatalf("ResolveModels() error = %v", err)
+	}
+	if len(result) != 3 {
+		t.Fatalf("got %d models, want 3", len(result))
+	}
+
+	type key struct{ name, provider string }
+	got := make([]key, 0, len(result))
+	for _, r := range result {
+		got = append(got, key{r.Model.Name, r.Provider.Name})
+	}
+	// Cost partitions decide: flash (0.1), other-glm-5.3 (0.2), zai-glm-5.3 (0.3).
+	// The buggy order was: zai-glm-5.3, other-glm-5.3, glm-5.3-flash.
+	want := []key{{"glm-5.3-flash", "zai"}, {"glm-5.3", "other"}, {"glm-5.3", "zai"}}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("position %d: got %v, want %v (full order %v)", i+1, got[i], w, got)
+		}
+	}
+}
+
 func TestEdgeCase_FilterSourceAtDepthLimit(t *testing.T) {
 	// Build a tree of depth 10 with filter sources at leaves
 	leaf := &models.CompositionNode{FilterExpr: &models.FilterNode{Key: "p.name", Op: "eq", Value: "openai"}}

@@ -100,7 +100,7 @@ func runToggleModel(args []string) {
 		dur = &d
 	}
 
-	if err := modelService.ToggleDisabled(ctx, target.ID, newDisabled, dur); err != nil {
+	if err := modelService.ToggleDisabled(ctx, target.ID, newDisabled, dur, "manual"); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to toggle model: %v\n", err)
 		os.Exit(1)
 	}

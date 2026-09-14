@@ -17,6 +17,11 @@
     globalSorts = [],
     disabledGlobalSorts = [],
     onToggleGlobalSort = null,
+    // Global filter conditions shown above the root's filter tree
+    // (read-only rows, per-VM toggle). Only passed at the root.
+    globalFilters = [],
+    disabledGlobalFilters = [],
+    onToggleGlobalFilter = null,
     onDragStart,
     onDragOver,
     onDragLeave,
@@ -104,6 +109,26 @@
     {#if node._expandedFilter}
       <div class="px-2 pb-2">
         <div class="bg-gray-900/50 rounded p-2 border border-gray-800">
+          {#if depth === 0 && globalFilters.length > 0}
+            <div class="space-y-1 mb-2">
+              {#each globalFilters as gf (gf.id)}
+                <div class="flex items-center gap-2 border-l-2 border-gray-700 pl-3 py-1 opacity-70">
+                  <span class="text-xs rounded px-1.5 py-0.5 font-medium shrink-0 bg-gray-700 text-gray-400">global</span>
+                  <span class="text-sm font-mono {disabledGlobalFilters.includes(gf.id) ? 'text-gray-600 line-through' : 'text-gray-400'}">{gf.name}</span>
+                  <span class="text-xs text-gray-600 truncate flex-1">{gf.description || ''}</span>
+                  {#if onToggleGlobalFilter}
+                    <input
+                      type="checkbox"
+                      checked={!disabledGlobalFilters.includes(gf.id)}
+                      onchange={() => onToggleGlobalFilter(gf.id)}
+                      class="accent-emerald-600 shrink-0"
+                      title="apply to this model"
+                    />
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
           <ConditionBuilder
             node={node.filter_expr || { and: [] }}
             onChange={(v) => onSetFilter(node.__id, v)}

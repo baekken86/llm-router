@@ -219,6 +219,9 @@
             globalSorts={globalConditions.filter(c => c.enabled !== false)}
             disabledGlobalSorts={disabledGlobalConditions}
             onToggleGlobal={toggleGlobalCondition}
+            globalFilters={globalFilterConditions.filter(c => c.enabled !== false)}
+            disabledGlobalFilters={disabledGlobalFilterConditions}
+            onToggleGlobalFilter={toggleGlobalFilterCondition}
           />
         </div>
       </div>

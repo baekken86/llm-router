@@ -11,6 +11,10 @@
     globalSorts = [],
     disabledGlobalSorts = [],
     onToggleGlobalSort = null,
+    // Global filter conditions shown above the root's filter tree.
+    globalFilters = [],
+    disabledGlobalFilters = [],
+    onToggleGlobalFilter = null,
   } = $props();
 
   let tree = $state(null);
@@ -415,6 +419,9 @@
       {globalSorts}
       {disabledGlobalSorts}
       {onToggleGlobalSort}
+      {globalFilters}
+      {disabledGlobalFilters}
+      {onToggleGlobalFilter}
       {dragSourceId}
       {dropTargetId}
       {dropIsOperation}

@@ -687,3 +687,70 @@ func codexEventJSON(t *testing.T, ev map[string]any) string {
 	}
 	return string(data)
 }
+
+// TestPumpCodexSSEToPipe_OversizedLine verifies the pump survives upstream
+// SSE lines larger than bufio's default 64KB token cap. The codex backend
+// embeds reasoning.encrypted_content blobs in response.output_item.done
+// events; before scanner.Buffer was raised, one oversized line aborted the
+// scan mid-stream: the pipe closed with an error, the client saw a truncated
+// stream (no content, no usage, no [DONE]) and the engine still logged
+// 200/completed with 0 tokens.
+func TestPumpCodexSSEToPipe_OversizedLine(t *testing.T) {
+	blob := strings.Repeat("A", 200000) // 200KB encrypted reasoning payload
+	events := []string{
+		`{"type":"response.created","response":{"id":"r1"}}`,
+		`{"type":"response.reasoning_summary_text.delta","delta":"thinking..."}`,
+		`{"type":"response.output_item.done","item":{"type":"reasoning","encrypted_content":"` + blob + `"}}`,
+		`{"type":"response.output_text.delta","delta":"HEL"}`,
+		`{"type":"response.output_text.delta","delta":"LO"}`,
+		`{"type":"response.completed","response":{"usage":{"input_tokens":27,"output_tokens":6,"output_tokens_details":{"reasoning_tokens":0}}}}`,
+	}
+	srv := codexSSRServer(t, events)
+	defer srv.Close()
+
+	c := NewCodexClient()
+	req := ChatCompletionRequest{Model: "gpt-6-astra", Messages: []Message{{Role: "user", Content: "hi"}}}
+	body, _, err := c.ChatCompletionStream(context.Background(), srv.URL, "tok", "acct", "s1", req)
+	if err != nil {
+		t.Fatalf("ChatCompletionStream: %v", err)
+	}
+	defer body.Close()
+
+	raw, _ := io.ReadAll(body)
+	got := string(raw)
+	if !strings.Contains(got, `"content":"HEL"`) || !strings.Contains(got, `"content":"LO"`) {
+		t.Errorf("content deltas lost after oversized line; got:\n%s", got)
+	}
+	if !strings.Contains(got, `"prompt_tokens":27`) || !strings.Contains(got, `"completion_tokens":6`) {
+		t.Errorf("usage lost after oversized line; got:\n%s", got)
+	}
+	if !strings.Contains(got, "data: [DONE]") {
+		t.Errorf("stream missing final [DONE]; got:\n%s", got)
+	}
+}
+
+// TestCollectCodexStream_OversizedLine is the non-streaming counterpart: the
+// aggregator must survive oversized lines and still yield content + usage.
+func TestCollectCodexStream_OversizedLine(t *testing.T) {
+	blob := strings.Repeat("A", 200000)
+	events := []string{
+		`{"type":"response.output_text.delta","delta":"HELLO"}`,
+		`{"type":"response.output_item.done","item":{"type":"reasoning","encrypted_content":"` + blob + `"}}`,
+		`{"type":"response.completed","response":{"usage":{"input_tokens":27,"output_tokens":6,"output_tokens_details":{"reasoning_tokens":0}}}}`,
+	}
+	srv := codexSSRServer(t, events)
+	defer srv.Close()
+
+	c := NewCodexClient()
+	req := ChatCompletionRequest{Model: "gpt-6-astra", Messages: []Message{{Role: "user", Content: "hi"}}}
+	resp, err := c.ChatCompletion(context.Background(), srv.URL, "tok", "acct", "s1", req)
+	if err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+	if resp.Choices[0].Message.Content != "HELLO" {
+		t.Errorf("content = %q, want HELLO", resp.Choices[0].Message.Content)
+	}
+	if resp.Usage.PromptTokens != 27 || resp.Usage.CompletionTokens != 6 {
+		t.Errorf("usage = %d/%d, want 27/6", resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+	}
+}

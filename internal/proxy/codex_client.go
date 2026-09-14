@@ -226,11 +226,22 @@ func codexStreamErrorToProviderError(err error) error {
 	return &ProviderError{StatusCode: http.StatusBadGateway, Message: msg}
 }
 
+// maxCodexSSELineBytes caps a single upstream SSE line for the scanners
+// below. Codex Responses events embed opaque blobs (notably
+// reasoning.encrypted_content in response.output_item.done) that grow with
+// the conversation and routinely exceed bufio's default 64KB token cap. When
+// a line exceeded the cap, the scan aborted mid-stream: the pump closed the
+// pipe with an error, the client got a truncated stream without [DONE], usage
+// was never parsed (response.completed was lost too), and the engine logged
+// the request as 200/completed with 0 tokens. 16MB gives generous headroom.
+const maxCodexSSELineBytes = 16 * 1024 * 1024
+
 // pumpCodexSSEToPipe reads Responses SSE from r and writes OpenAI
 // chat-completions SSE to pw, ending with a final "data: [DONE]".
 func pumpCodexSSEToPipe(r io.Reader, pw *io.PipeWriter, model, sessionID string) error {
 	state := NewCodexStreamState(model, sessionID)
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxCodexSSELineBytes)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -273,6 +284,7 @@ func pumpCodexSSEToPipe(r io.Reader, pw *io.PipeWriter, model, sessionID string)
 func collectCodexStream(r io.Reader, state *CodexStreamState) ([]StreamChunk, error) {
 	var chunks []StreamChunk
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxCodexSSELineBytes)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {

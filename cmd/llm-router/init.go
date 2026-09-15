@@ -45,7 +45,8 @@ func runInit(args []string) {
 			CostType           *string                        `json:"cost_type,omitempty"`
 			CostPer1mInput     *float64                       `json:"cost_per_1m_input,omitempty"`
 			CostPer1mOutput    *float64                       `json:"cost_per_1m_output,omitempty"`
-			CostPer1mCache     *float64                       `json:"cost_per_1m_cache,omitempty"`
+			CostPer1mCache     *float64                        `json:"cost_per_1m_cache,omitempty"`
+			CostPerTask        *float64                        `json:"cost_per_task,omitempty"`
 			Efforts            map[string]map[string]interface{} `json:"efforts,omitempty"`
 			Intel              *float64                       `json:"intelligence,omitempty"`
 			Speed              *float64                       `json:"speed,omitempty"`
@@ -83,6 +84,9 @@ func runInit(args []string) {
 		}
 		if model.CostPer1mCache != nil {
 			baseTags["cost_per_1m_cache"] = fmt.Sprintf("%g", *model.CostPer1mCache)
+		}
+		if model.CostPerTask != nil {
+			baseTags["cost_per_task"] = fmt.Sprintf("%g", *model.CostPerTask)
 		}
 
 		if model.HasReasoningEffort && len(model.Efforts) > 0 {

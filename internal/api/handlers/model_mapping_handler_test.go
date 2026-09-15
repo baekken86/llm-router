@@ -50,6 +50,7 @@ func setupMappingHandlerTest(t *testing.T) *testMappingDB {
 			name TEXT NOT NULL,
 			disabled INTEGER NOT NULL DEFAULT 0,
 			disabled_until TIMESTAMP NULL,
+			disabled_reason TEXT NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(provider_id, name)
 		)`,

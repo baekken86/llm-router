@@ -573,9 +573,16 @@
                               {m.disabled ? 'enable' : 'disable'}
                             </button>
                             {#if m.disabled}
-                              <span class="text-xs text-amber-400/70">
-                                {formatRemaining(m.disabled_until)}
-                              </span>
+                              {#if m.disabled_reason === 'stale'}
+                                <span class="text-xs px-2 py-0.5 rounded bg-red-900/50 text-red-400">stale</span>
+                              {:else}
+                                <span class="text-xs text-amber-400/70">
+                                  {formatRemaining(m.disabled_until)}
+                                </span>
+                                {#if m.disabled_reason === 'manual' || m.disabled_reason === 'circuit_breaker'}
+                                  <span class="text-xs text-gray-500">{m.disabled_reason}</span>
+                                {/if}
+                              {/if}
                             {/if}
                           </span>
                         </td>

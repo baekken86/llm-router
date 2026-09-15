@@ -33,6 +33,7 @@ func setupMappingTestDB(t *testing.T) *sql.DB {
 			name TEXT NOT NULL,
 			disabled INTEGER NOT NULL DEFAULT 0,
 			disabled_until TIMESTAMP NULL,
+			disabled_reason TEXT NULL,
 			created_at TEXT NOT NULL DEFAULT (datetime('now')),
 			UNIQUE(provider_id, name)
 		)`,

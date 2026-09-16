@@ -514,6 +514,210 @@ func TestCodexProcessEvent_ToolCallAccumulation(t *testing.T) {
 	}
 }
 
+func TestCodexProcessEvent_ToolNameFromOutputItemAdded(t *testing.T) {
+	s := NewCodexStreamState("gpt-6-astra", "req-1")
+	var all []StreamChunk
+
+	// The function name arrives in output_item.added and must ride an
+	// immediate chunk; the later argument deltas carry no name and only
+	// item_id (gpt-6-astra wire shape).
+	chunks, err := s.ProcessEvent(mustEvent(t, map[string]any{
+		"type": "response.output_item.added",
+		"item": map[string]any{
+			"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "get_weather",
+		},
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	all = append(all, chunks...)
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 chunk from output_item.added, got %d", len(chunks))
+	}
+	stc := chunks[0].Choices[0].Delta.ToolCalls
+	if len(stc) != 1 {
+		t.Fatalf("expected tool_calls delta, got %v", chunks[0].Choices[0].Delta)
+	}
+	if stc[0].Index != 0 || stc[0].ID != "call_1" || stc[0].Type != "function" {
+		t.Errorf("added chunk wrong: %+v", stc[0])
+	}
+	if stc[0].Function.Name != "get_weather" {
+		t.Errorf("added chunk must carry the name, got %q", stc[0].Function.Name)
+	}
+	if stc[0].Function.Arguments != "" {
+		t.Errorf("added chunk must carry empty arguments, got %q", stc[0].Function.Arguments)
+	}
+
+	// Delta with ONLY item_id (no call_id, no name) must correlate through
+	// the fc_ alias and carry arguments only (name already emitted).
+	chunks, err = s.ProcessEvent(mustEvent(t, map[string]any{
+		"type":    "response.function_call_arguments.delta",
+		"item_id": "fc_1", "delta": `{"a":1}`,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(chunks))
+	}
+	all = append(all, chunks...)
+	stc = chunks[0].Choices[0].Delta.ToolCalls
+	if len(stc) != 1 {
+		t.Fatalf("expected 1 tool delta, got %v", chunks[0].Choices[0].Delta)
+	}
+	if stc[0].Function.Name != "" {
+		t.Errorf("name must not repeat after the added chunk, got %q", stc[0].Function.Name)
+	}
+	if stc[0].Function.Arguments != `{"a":1}` {
+		t.Errorf("arguments delta lost: %q", stc[0].Function.Arguments)
+	}
+
+	// Both aliases must resolve to the same state.
+	if s.ToolCalls["call_1"] != s.ToolCalls["fc_1"] {
+		t.Error("item id and call_id must alias the same tool-call state")
+	}
+	if s.ToolCalls["fc_1"].Name != "get_weather" {
+		t.Errorf("tool name must be tracked, got %q", s.ToolCalls["fc_1"].Name)
+	}
+	if len(s.ToolOrder) != 1 {
+		t.Errorf("aliased keys must not duplicate ToolOrder, got %v", s.ToolOrder)
+	}
+
+	// Completed: finish_reason tool_calls despite the alias duplication.
+	chunks, err = s.ProcessEvent(mustEvent(t, map[string]any{
+		"type":     "response.completed",
+		"response": map[string]any{},
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if *chunks[0].Choices[0].FinishReason != "tool_calls" {
+		t.Errorf("finish_reason must be tool_calls, got %v", chunks[0].Choices[0].FinishReason)
+	}
+
+	// Aggregation: exactly one tool call with the joined arguments (no
+	// duplication from aliasing).
+	resp := AggregateCodexStream(all)
+	if len(resp.Choices[0].Message.ToolCalls) != 1 {
+		t.Fatalf("expected 1 aggregated tool call, got %+v", resp.Choices[0].Message.ToolCalls)
+	}
+	agg := resp.Choices[0].Message.ToolCalls[0]
+	if agg.ID != "call_1" || agg.Function.Name != "get_weather" || agg.Function.Arguments != `{"a":1}` {
+		t.Errorf("aggregated tool call wrong: %+v", agg)
+	}
+}
+
+func TestCodexProcessEvent_AddedOnlyItemID(t *testing.T) {
+	s := NewCodexStreamState("gpt-6-astra", "req-1")
+
+	// added with only an item id (no call_id): state keyed by fc_ alone.
+	chunks, err := s.ProcessEvent(mustEvent(t, map[string]any{
+		"type": "response.output_item.added",
+		"item": map[string]any{
+			"type": "function_call", "id": "fc_9", "name": "get_time",
+		},
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(chunks))
+	}
+	stc := chunks[0].Choices[0].Delta.ToolCalls
+	if stc[0].ID != "fc_9" || stc[0].Function.Name != "get_time" {
+		t.Errorf("added chunk wrong: %+v", stc[0])
+	}
+
+	// Delta with the same item id must correlate.
+	chunks, err = s.ProcessEvent(mustEvent(t, map[string]any{
+		"type":    "response.function_call_arguments.delta",
+		"item_id": "fc_9", "delta": `{"tz":`,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	stc = chunks[0].Choices[0].Delta.ToolCalls
+	if stc[0].Index != 0 || stc[0].ID != "fc_9" || stc[0].Function.Name != "" {
+		t.Errorf("delta must attach without repeating name: %+v", stc[0])
+	}
+	if stc[0].Function.Arguments != `{"tz":` {
+		t.Errorf("arguments delta lost: %q", stc[0].Function.Arguments)
+	}
+	if s.ToolCalls["fc_9"].Arguments != `{"tz":` {
+		t.Errorf("arguments must accumulate under the fc_ key, got %q", s.ToolCalls["fc_9"].Arguments)
+	}
+}
+
+func TestCodexProcessEvent_DeltaCorrelatesViaCallID(t *testing.T) {
+	s := NewCodexStreamState("gpt-6-astra", "req-1")
+
+	// added with both ids; delta carries only call_id (other direction).
+	if _, err := s.ProcessEvent(mustEvent(t, map[string]any{
+		"type": "response.output_item.added",
+		"item": map[string]any{
+			"type": "function_call", "id": "fc_2", "call_id": "call_2", "name": "get_weather",
+		},
+	})); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	chunks, err := s.ProcessEvent(mustEvent(t, map[string]any{
+		"type":    "response.function_call_arguments.delta",
+		"call_id": "call_2", "delta": `{"city":"SF"}`,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	stc := chunks[0].Choices[0].Delta.ToolCalls
+	if len(stc) != 1 || stc[0].Index != 0 || stc[0].ID != "call_2" {
+		t.Errorf("call_id delta must correlate with the added item: %+v", stc)
+	}
+	if stc[0].Function.Name != "" {
+		t.Errorf("name already emitted by added chunk, got %q", stc[0].Function.Name)
+	}
+	if stc[0].Function.Arguments != `{"city":"SF"}` {
+		t.Errorf("arguments delta lost: %q", stc[0].Function.Arguments)
+	}
+}
+
+func TestCodexProcessEvent_DeltaWithoutIDsFallsBackToMostRecent(t *testing.T) {
+	s := NewCodexStreamState("gpt-6-astra", "req-1")
+
+	// Announce one call, then send a delta with NO ids at all: it must
+	// attach to the most recent (only) tool call.
+	if _, err := s.ProcessEvent(mustEvent(t, map[string]any{
+		"type": "response.output_item.added",
+		"item": map[string]any{
+			"type": "function_call", "id": "fc_3", "call_id": "call_3", "name": "get_weather",
+		},
+	})); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	chunks, err := s.ProcessEvent(mustEvent(t, map[string]any{
+		"type": "response.function_call_arguments.delta", "delta": `{"x":1}`,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	stc := chunks[0].Choices[0].Delta.ToolCalls
+	if len(stc) != 1 || stc[0].Index != 0 || stc[0].ID != "call_3" {
+		t.Errorf("id-less delta must fall back to the recent call: %+v", stc)
+	}
+	if stc[0].Function.Arguments != `{"x":1}` {
+		t.Errorf("arguments delta lost: %q", stc[0].Function.Arguments)
+	}
+	if s.ToolCalls["call_3"].Arguments != `{"x":1}` {
+		t.Errorf("fallback delta must accumulate: %q", s.ToolCalls["call_3"].Arguments)
+	}
+
+	// The error only fires when no tool call exists at all.
+	empty := NewCodexStreamState("gpt-6-astra", "req-1")
+	if _, err := empty.ProcessEvent(mustEvent(t, map[string]any{
+		"type": "response.function_call_arguments.delta", "delta": `{"y":2}`,
+	})); err == nil {
+		t.Error("id-less delta with no prior tool call must error")
+	}
+}
+
 func TestCodexProcessEvent_InterleavedTextAndToolCall(t *testing.T) {
 	s := NewCodexStreamState("gpt-5.1-codex", "req-1")
 
@@ -631,7 +835,7 @@ func TestCodexProcessEvent_UnknownEventIgnored(t *testing.T) {
 	s := NewCodexStreamState("gpt-5.1-codex", "req-1")
 	for _, typ := range []string{
 		"response.created", "response.in_progress",
-		"response.output_item.added", "response.output_item.done",
+		"response.output_item.done",
 		"response.content_part.added", "response.content_part.done",
 		"response.output_text.done", "response.function_call_arguments.done",
 		"response.reasoning_summary_part.added", "ping",
@@ -693,6 +897,57 @@ func TestAggregateCodexStream_TextAndUsage(t *testing.T) {
 	}
 	if len(resp.Choices[0].Message.ToolCalls) != 0 {
 		t.Errorf("no tool calls expected: %+v", resp.Choices[0].Message.ToolCalls)
+	}
+}
+
+func TestAggregateCodexStream_ToolNameFromOutputItemAdded(t *testing.T) {
+	state := NewCodexStreamState("gpt-6-astra", "req-1")
+	var chunks []StreamChunk
+	for _, ev := range [][]byte{
+		mustEvent(t, map[string]any{
+			"type": "response.output_item.added",
+			"item": map[string]any{
+				"type": "function_call", "id": "item_1", "call_id": "call_1", "name": "get_weather",
+			},
+		}),
+		mustEvent(t, map[string]any{
+			"type":    "response.function_call_arguments.delta",
+			"item_id": "item_1", "call_id": "call_1", "delta": `{"city":"SF"}`,
+		}),
+		mustEvent(t, map[string]any{
+			"type": "response.completed",
+			"response": map[string]any{
+				"usage": map[string]any{"input_tokens": 8, "output_tokens": 4},
+			},
+		}),
+	} {
+		out, err := state.ProcessEvent(ev)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		chunks = append(chunks, out...)
+	}
+
+	resp := AggregateCodexStream(chunks)
+	msg := resp.Choices[0].Message
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("expected 1 aggregated tool call, got %+v", msg.ToolCalls)
+	}
+	tc := msg.ToolCalls[0]
+	if tc.ID != "call_1" || tc.Type != "function" {
+		t.Errorf("tool call identity wrong: %+v", tc)
+	}
+	if tc.Function.Name != "get_weather" {
+		t.Errorf("seeded name must survive aggregation, got %q", tc.Function.Name)
+	}
+	if tc.Function.Arguments != `{"city":"SF"}` {
+		t.Errorf("arguments must be joined, got %q", tc.Function.Arguments)
+	}
+	if resp.Choices[0].FinishReason != "tool_calls" {
+		t.Errorf("finish_reason wrong: %s", resp.Choices[0].FinishReason)
+	}
+	if resp.Usage.PromptTokens != 8 || resp.Usage.CompletionTokens != 4 {
+		t.Errorf("usage wrong: %+v", resp.Usage)
 	}
 }
 

@@ -311,6 +311,9 @@ type codexToolCallState struct {
 	ID        string
 	Name      string
 	Arguments string
+	// NameEmitted tracks whether the name already rode an emitted chunk
+	// (OpenAI convention: id+name on the first tool_call delta only).
+	NameEmitted bool
 }
 
 // CodexStreamState is the streaming state machine for the ChatGPT Codex
@@ -320,6 +323,12 @@ type codexToolCallState struct {
 type CodexStreamState struct {
 	Model      string
 	RequestID  string
+	// ToolCalls indexes each tool-call state under BOTH of its wire keys —
+	// the Responses item id (fc_…) and the call_id (call_…) — because
+	// output_item.added and function_call_arguments.delta events may
+	// correlate through either one (e.g. gpt-6-astra emits deltas carrying
+	// only item_id). Aliased entries point at the same state; ToolOrder
+	// stays 1:1 with actual states (one entry per call).
 	ToolCalls  map[string]*codexToolCallState
 	ToolOrder  []string
 	ToolIndex  int
@@ -334,6 +343,31 @@ func NewCodexStreamState(model, requestID string) *CodexStreamState {
 		Model:     model,
 		RequestID: requestID,
 		ToolCalls: make(map[string]*codexToolCallState),
+	}
+}
+
+// lookupToolState returns the first existing tool-call state for any of the
+// given keys (nil when none match; empty keys are skipped).
+func (s *CodexStreamState) lookupToolState(keys ...string) *codexToolCallState {
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		if tc, ok := s.ToolCalls[key]; ok {
+			return tc
+		}
+	}
+	return nil
+}
+
+// registerToolState aliases tc under every non-empty key. It does not touch
+// ToolOrder/ToolIndex, which stay 1:1 with actual tool-call states.
+func (s *CodexStreamState) registerToolState(tc *codexToolCallState, keys ...string) {
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		s.ToolCalls[key] = tc
 	}
 }
 
@@ -358,9 +392,20 @@ func (s *CodexStreamState) newChunk(delta StreamDelta, finishReason *string, usa
 // response.reasoning_summary_text.delta, response.completed, error) and
 // returns zero or more internal OpenAI stream chunks.
 //
+// response.output_item.added announces a tool call (item.type ==
+// "function_call"): it creates the state (aliased under both the item id and
+// the call_id, since later deltas may correlate through either one) and
+// emits id+name immediately when the item carries a name — newer models
+// (e.g. gpt-6-astra) never repeat the name on the
+// response.function_call_arguments.delta events. A nameless item waits for
+// the deltas, which then carry the name on their first emitted chunk.
+//
 // Emission mapping:
 //   - response.output_text.delta             → delta.content
-//   - response.function_call_arguments.delta → delta.tool_calls (accumulated)
+//   - response.output_item.added             → delta.tool_calls (id+name,
+//     arguments "") when item.name is known
+//   - response.function_call_arguments.delta → delta.tool_calls (accumulated;
+//     deltas with no ids fall back to the most recent tool call)
 //   - response.reasoning_summary_text.delta  → delta.reasoning_content
 //     (same convention the anthropic translator uses for reasoning deltas,
 //     translator.go ClaudeStreamState thinking_delta)
@@ -378,6 +423,7 @@ func (s *CodexStreamState) ProcessEvent(event []byte) ([]StreamChunk, error) {
 		ItemID   string          `json:"item_id"`
 		CallID   string          `json:"call_id"`
 		Name     string          `json:"name"`
+		Item     json.RawMessage `json:"item"`
 		Response json.RawMessage `json:"response"`
 		Error    *struct {
 			Code    string `json:"code"`
@@ -399,37 +445,47 @@ func (s *CodexStreamState) ProcessEvent(event []byte) ([]StreamChunk, error) {
 		if ev.Delta == "" {
 			return nil, nil
 		}
-		key := ev.CallID
-		if key == "" {
-			key = ev.ItemID
+		tc := s.lookupToolState(ev.CallID, ev.ItemID)
+		if tc == nil && ev.CallID == "" && ev.ItemID == "" {
+			// A delta carrying neither id belongs to the call most recently
+			// announced (matches the reference Responses translator's
+			// fallback); only fail when nothing exists yet.
+			if len(s.ToolOrder) == 0 {
+				return nil, fmt.Errorf("codex: function_call_arguments.delta without call_id/item_id")
+			}
+			tc = s.ToolCalls[s.ToolOrder[len(s.ToolOrder)-1]]
 		}
-		if key == "" {
-			return nil, fmt.Errorf("codex: function_call_arguments.delta without call_id/item_id")
-		}
-		isNew := false
-		tc, ok := s.ToolCalls[key]
-		if !ok {
-			isNew = true
+		if tc == nil {
+			// First delta for this call: create the state and register it
+			// under both wire keys so later events correlate regardless of
+			// which id they carry.
+			key := ev.CallID
+			if key == "" {
+				key = ev.ItemID
+			}
 			tc = &codexToolCallState{
 				Index: s.ToolIndex,
 				ID:    key,
 				Name:  ev.Name,
 			}
 			s.ToolIndex++
-			s.ToolCalls[key] = tc
 			s.ToolOrder = append(s.ToolOrder, key)
-		}
-		if ev.Name != "" && tc.Name == "" {
+			s.registerToolState(tc, ev.CallID, ev.ItemID)
+		} else if ev.Name != "" && tc.Name == "" {
 			tc.Name = ev.Name
 		}
 		tc.Arguments += ev.Delta
-		// Emit the tool name on the first delta of a call (OpenAI chunk
-		// convention: id+name ride the initial tool_call delta, subsequent
-		// deltas carry only argument fragments — mirrors the anthropic
-		// tool_use content_block_start emission in translator.go).
+		// Emit the tool name on the first emitted delta of a call (OpenAI
+		// chunk convention: id+name ride the initial tool_call delta,
+		// subsequent deltas carry only argument fragments — mirrors the
+		// anthropic tool_use content_block_start emission in
+		// translator.go). The state may already exist when the first delta
+		// arrives (created by output_item.added), so the guarantee is
+		// tracked explicitly rather than by state creation.
 		var nameField string
-		if isNew {
+		if !tc.NameEmitted {
 			nameField = tc.Name
+			tc.NameEmitted = true
 		}
 		return []StreamChunk{s.newChunk(StreamDelta{
 			ToolCalls: []StreamToolCall{{
@@ -452,7 +508,7 @@ func (s *CodexStreamState) ProcessEvent(event []byte) ([]StreamChunk, error) {
 	case "response.completed":
 		s.parseCompletedUsage(ev.Response)
 		finishReason := "stop"
-		if len(s.ToolCalls) > 0 {
+		if len(s.ToolOrder) > 0 {
 			finishReason = "tool_calls"
 		}
 		s.FinishDone = true
@@ -464,6 +520,65 @@ func (s *CodexStreamState) ProcessEvent(event []byte) ([]StreamChunk, error) {
 			msg = ev.Error.Message
 		}
 		return nil, fmt.Errorf("codex stream error: %s", msg)
+
+	case "response.output_item.added":
+		// Announce the tool call up front: the item carries the function
+		// name, while later function_call_arguments.delta events may carry
+		// only item_id and no name (e.g. gpt-6-astra). This event must
+		// never fail the stream, so unmarshal errors are tolerated
+		// silently.
+		var item struct {
+			Type   string `json:"type"`
+			ID     string `json:"id"`
+			CallID string `json:"call_id"`
+			Name   string `json:"name"`
+		}
+		if err := json.Unmarshal(ev.Item, &item); err != nil {
+			return nil, nil
+		}
+		if item.Type != "function_call" || (item.ID == "" && item.CallID == "") {
+			return nil, nil
+		}
+		if tc := s.lookupToolState(item.ID, item.CallID); tc != nil {
+			// Deltas already arrived: backfill the name without emitting.
+			if item.Name != "" && tc.Name == "" {
+				tc.Name = item.Name
+			}
+			return nil, nil
+		}
+		// Create the state now so id-only deltas correlate through the
+		// aliases; the name may still be unknown here.
+		id := item.CallID
+		if id == "" {
+			id = item.ID
+		}
+		tc := &codexToolCallState{
+			Index: s.ToolIndex,
+			ID:    id,
+			Name:  item.Name,
+		}
+		s.ToolIndex++
+		s.ToolOrder = append(s.ToolOrder, tc.ID)
+		s.registerToolState(tc, item.ID, item.CallID)
+		if tc.Name == "" {
+			// Without a name the added chunk would fail strict downstream
+			// tool-call validation; wait for the deltas to carry it.
+			return nil, nil
+		}
+		// Emit id+name immediately (arguments empty, matches the reference
+		// Responses translator); the deltas then carry fragments only.
+		tc.NameEmitted = true
+		return []StreamChunk{s.newChunk(StreamDelta{
+			ToolCalls: []StreamToolCall{{
+				Index: tc.Index,
+				ID:    tc.ID,
+				Type:  "function",
+				Function: struct {
+					Name      string `json:"name,omitempty"`
+					Arguments string `json:"arguments"`
+				}{Name: tc.Name, Arguments: ""},
+			}},
+		}, nil, nil)}, nil
 
 	default:
 		// Unknown event types are ignored silently.

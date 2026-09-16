@@ -274,7 +274,7 @@ func (s *virtualModelService) ResolveModels(ctx context.Context, vm *models.Virt
 		// only order within each partition. Re-sorting with globals alone
 		// would flatten the tree's own cost/effort partitioning.
 		sortSource := vm.SortExpr
-		if len(sortSource) == 0 && vm.Composition != nil && len(vm.Composition.SortExpr) > 0 {
+		if isEmptyJSON(sortSource) && vm.Composition != nil && len(vm.Composition.SortExpr) > 0 {
 			if data, err := json.Marshal(vm.Composition.SortExpr); err == nil {
 				sortSource = data
 			}
@@ -399,6 +399,15 @@ func sortFilterItems(items []mergedFilterItem) {
 		}
 		return items[i].global && !items[j].global
 	})
+}
+
+// isEmptyJSON reports whether raw is empty or a semantically empty JSON value
+// ("null", "{}", "[]"). Repo scans default empty DB columns to these
+// placeholders, so a length check alone can't distinguish "unset" from a
+// serialized empty value.
+func isEmptyJSON(raw json.RawMessage) bool {
+	s := strings.TrimSpace(string(raw))
+	return s == "" || s == "null" || s == "{}" || s == "[]"
 }
 
 // mergedSortItem is one sort criterion group in the priority-ordered merge.

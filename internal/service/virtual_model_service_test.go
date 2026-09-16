@@ -577,6 +577,44 @@ func TestPriorityMergedSortOrder(t *testing.T) {
 	}
 }
 
+func prioPtr(i int) *int { return &i }
+
+// TestCompositeSortExprWithEmptyTopLevelSort reproduces the DB-roundtrip case:
+// a composite VM stored with an empty top-level sort_expr. The repo scan
+// defaults it to "[]" (non-zero length), which previously fell through the
+// len==0 check so the composition root sort (e.g. premium provider first,
+// priority -2) was silently ignored — preview and resolved list disagreed.
+func TestCompositeSortExprWithEmptyTopLevelSort(t *testing.T) {
+	svc := newGlobalSortTestService(nil, nil)
+
+	compSort := models.SortExpr{
+		{Condition: &models.FilterNode{Key: "m.name", Op: "eq", Value: "m-alpha"}, Priority: prioPtr(-2)},
+		{Key: "m.name", Direction: "asc"},
+	}
+	comp := &models.CompositionNode{
+		SortExpr:   compSort,
+		FilterExpr: &models.FilterNode{},
+	}
+	vm := &models.VirtualModel{
+		FilterExpr: []byte(`{}`),
+		SortExpr:   []byte(`[]`), // what scanVM synthesizes for an empty DB column
+		Composition: comp,
+	}
+	if err := newMockVMRepo().Create(context.Background(), vm); err != nil {
+		t.Fatal(err)
+	}
+	results, err := svc.ResolveModels(context.Background(), vm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Model.Name != "m-alpha" {
+		t.Errorf("composition root sort (priority -2) should put m-alpha first, got %s", results[0].Model.Name)
+	}
+}
+
 // TestPriorityGlobalAfterLocals verifies a global condition with a very high
 // priority (9999) is applied AFTER all local entries.
 func TestPriorityGlobalAfterLocals(t *testing.T) {

@@ -9,22 +9,23 @@ import (
 )
 
 type LogEntry struct {
-	LogType      string
-	Status       string
-	Timestamp    time.Time
-	RequestID    string
-	VirtualModel string
-	ProviderName string
-	ModelName    string
-	StatusCode   int
-	Latency      time.Duration
-	InputTokens  int
-	OutputTokens int
-	CachedTokens int
-	ErrorMessage string
-	Fallback     int
-	Retry        int
-	Children     []*LogEntry
+	LogType         string
+	Status          string
+	Timestamp       time.Time
+	RequestID       string
+	VirtualModel    string
+	ProviderName    string
+	ModelName       string
+	StatusCode      int
+	Latency         time.Duration
+	InputTokens     int
+	OutputTokens    int
+	CachedTokens    int
+	ReasoningEffort string
+	ErrorMessage    string
+	Fallback        int
+	Retry           int
+	Children        []*LogEntry
 }
 
 type LogViewModel struct {
@@ -45,21 +46,22 @@ func NewLogViewModel(maxSize int) LogViewModel {
 
 func logEntryFromProxy(l proxy.RequestLog) LogEntry {
 	return LogEntry{
-		LogType:      l.Type,
-		Status:       l.Status,
-		Timestamp:    l.Timestamp,
-		RequestID:    l.RequestID,
-		VirtualModel: l.VirtualModel,
-		ProviderName: l.ProviderName,
-		ModelName:    l.ModelName,
-		StatusCode:   l.StatusCode,
-		Latency:      l.Latency,
-		InputTokens:  l.InputTokens,
-		OutputTokens: l.OutputTokens,
-		CachedTokens: l.CachedTokens,
-		ErrorMessage: l.ErrorMessage,
-		Fallback:     l.FallbackCount,
-		Retry:        l.RetryCount,
+		LogType:         l.Type,
+		Status:          l.Status,
+		Timestamp:       l.Timestamp,
+		RequestID:       l.RequestID,
+		VirtualModel:    l.VirtualModel,
+		ProviderName:    l.ProviderName,
+		ModelName:       l.ModelName,
+		StatusCode:      l.StatusCode,
+		Latency:         l.Latency,
+		InputTokens:     l.InputTokens,
+		OutputTokens:    l.OutputTokens,
+		CachedTokens:    l.CachedTokens,
+		ReasoningEffort: l.ReasoningEffort,
+		ErrorMessage:    l.ErrorMessage,
+		Fallback:        l.FallbackCount,
+		Retry:           l.RetryCount,
 	}
 }
 
@@ -74,20 +76,23 @@ func (m *LogViewModel) AddEntry(log proxy.RequestLog) {
 		return
 	}
 
+	// Incoming rows become parents; proxy/attempt rows become children of
+	// their request's parent entry. Child slots are keyed by
+	// (provider, model): a result row supersedes a pending "sent" attempt
+	// row, and an attempt never overwrites an existing result.
 	for _, parent := range m.entries {
 		if parent.RequestID == log.RequestID {
 			child := logEntryFromProxy(log)
-			found := false
 			for i, c := range parent.Children {
 				if c.ProviderName == log.ProviderName && c.ModelName == log.ModelName {
+					if c.LogType != "attempt" && log.Type == "attempt" {
+						return
+					}
 					parent.Children[i] = &child
-					found = true
-					break
+					return
 				}
 			}
-			if !found {
-				parent.Children = append(parent.Children, &child)
-			}
+			parent.Children = append(parent.Children, &child)
 			return
 		}
 	}
@@ -104,6 +109,18 @@ func (m *LogViewModel) LoadInitial(logs []proxy.RequestLog) {
 	byReqID := make(map[string]*LogEntry)
 	var order []string
 
+	// Child slots are keyed by (provider, model): history can contain both
+	// the "sent" attempt row and the result row for one dispatch, and the
+	// result must win the slot (attempt kept only when no result exists).
+	findSlot := func(e *LogEntry, l proxy.RequestLog) int {
+		for i, c := range e.Children {
+			if c.ProviderName == l.ProviderName && c.ModelName == l.ModelName {
+				return i
+			}
+		}
+		return -1
+	}
+
 	for i := len(logs) - 1; i >= 0; i-- {
 		l := logs[i]
 		if l.Type == "incoming" {
@@ -114,7 +131,15 @@ func (m *LogViewModel) LoadInitial(logs []proxy.RequestLog) {
 		} else {
 			child := logEntryFromProxy(l)
 			if parent, ok := byReqID[l.RequestID]; ok {
-				parent.Children = append(parent.Children, &child)
+				idx := findSlot(parent, l)
+				if idx >= 0 {
+					if parent.Children[idx].LogType != "attempt" && l.Type == "attempt" {
+						continue
+					}
+					parent.Children[idx] = &child
+				} else {
+					parent.Children = append(parent.Children, &child)
+				}
 			} else {
 				entry := LogEntry{
 					LogType:      "proxy",
@@ -189,6 +214,11 @@ func (m LogViewModel) renderParent(e *LogEntry) string {
 	allCompleted := len(e.Children) > 0
 	hasFailed := false
 	for _, c := range e.Children {
+		if c.LogType == "attempt" {
+			// Attempt rows are progress markers (dispatch / pre-dispatch
+			// skips). The final result row drives the parent dot state.
+			continue
+		}
 		if c.Status == "streaming" {
 			hasStreaming = true
 			allCompleted = false
@@ -228,17 +258,41 @@ func (m LogViewModel) renderChild(e *LogEntry, isLast bool) string {
 		connector = "└─"
 	}
 
-	if e.Status == "streaming" {
+	// Attempt rows are written at dispatch time, before any response exists.
+	// A status-0 attempt renders as a neutral "sent" row; skip attempts
+	// (provider rate limited / disabled / no key) carry a real status code
+	// and fall through to the normal status rendering below.
+	if e.LogType == "attempt" && e.StatusCode == 0 {
 		provider := MutedStyle.Render(truncate(e.ProviderName, 12))
 		model := truncate(e.ModelName, 20)
 		elapsed := MutedStyle.Render(fmt.Sprintf("%6s", e.Latency.Round(time.Second)))
+		return fmt.Sprintf("  %s %s %s %s %s %s %s",
+			MutedStyle.Render(ts),
+			MutedStyle.Render(connector),
+			MutedStyle.Render(truncate("sent", 9)),
+			provider,
+			model,
+			elapsed,
+			MutedStyle.Render("waiting..."),
+		)
+	}
+
+	if e.Status == "streaming" {
+		provider := MutedStyle.Render(truncate(e.ProviderName, 12))
+		model := truncate(e.ModelName, 20)
+		effort := ""
+		if e.ReasoningEffort != "" {
+			effort = MutedStyle.Render(fmt.Sprintf("[%s]", e.ReasoningEffort))
+		}
+		elapsed := MutedStyle.Render(fmt.Sprintf("%6s", e.Latency.Round(time.Second)))
 		tokens := formatStreamingTokens(e)
-		return fmt.Sprintf("  %s %s %s %-20s %s %s %s",
+		return fmt.Sprintf("  %s %s %s %-20s %s %s %s %s",
 			MutedStyle.Render(ts),
 			MutedStyle.Render(connector),
 			InfoStyle.Render(truncate("streaming", 9)),
 			provider,
 			model,
+			effort,
 			elapsed,
 			MutedStyle.Render(tokens),
 		)
@@ -254,6 +308,10 @@ func (m LogViewModel) renderChild(e *LogEntry, isLast bool) string {
 	status := statusStyle.Render(fmt.Sprintf("%3d", e.StatusCode))
 	provider := MutedStyle.Render(truncate(e.ProviderName, 12))
 	model := truncate(e.ModelName, 20)
+	effort := ""
+	if e.ReasoningEffort != "" {
+		effort = MutedStyle.Render(fmt.Sprintf("[%s]", e.ReasoningEffort))
+	}
 	latency := MutedStyle.Render(fmt.Sprintf("%6s", e.Latency.Round(time.Millisecond)))
 
 	tokens := fmt.Sprintf("%s in/%s out/%s cached",
@@ -273,12 +331,13 @@ func (m LogViewModel) renderChild(e *LogEntry, isLast bool) string {
 		extra += " " + ErrorStyle.Render(truncate(e.ErrorMessage, 40))
 	}
 
-	return fmt.Sprintf("  %s %s %s %s %-20s %s %s%s",
+	return fmt.Sprintf("  %s %s %s %s %-20s %s %s %s%s",
 		MutedStyle.Render(ts),
 		MutedStyle.Render(connector),
 		status,
 		provider,
 		model,
+		effort,
 		latency,
 		MutedStyle.Render(tokens),
 		extra,

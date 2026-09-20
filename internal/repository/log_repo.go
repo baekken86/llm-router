@@ -34,6 +34,7 @@ type RequestLog struct {
 	RTKSavedTokens     int
 	CavemanIntercepted bool
 	CavemanSavedTokens int
+	ReasoningEffort    string
 }
 
 type LogRepository struct {
@@ -51,8 +52,9 @@ func (r *LogRepository) InsertRequestLog(ctx context.Context, log RequestLog) er
 			provider_name, model_name, status_code, latency_ms,
 			input_tokens, output_tokens, cached_tokens, reasoning_tokens,
 			error_message, retry_count, fallback_count,
-			rtk_intercepted, rtk_saved_tokens, caveman_intercepted, caveman_saved_tokens
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			rtk_intercepted, rtk_saved_tokens, caveman_intercepted, caveman_saved_tokens,
+			reasoning_effort
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		log.Type,
 		log.Timestamp,
 		log.RequestID,
@@ -73,6 +75,7 @@ func (r *LogRepository) InsertRequestLog(ctx context.Context, log RequestLog) er
 		log.RTKSavedTokens,
 		log.CavemanIntercepted,
 		log.CavemanSavedTokens,
+		log.ReasoningEffort,
 	)
 	if err != nil {
 		return fmt.Errorf("insert request log: %w", err)
@@ -97,7 +100,8 @@ func (r *LogRepository) ListRequestLogs(ctx context.Context, limit int) ([]Reque
 			provider_name, model_name, status_code, latency_ms,
 			input_tokens, output_tokens, cached_tokens, reasoning_tokens,
 			error_message, retry_count, fallback_count,
-			rtk_intercepted, rtk_saved_tokens, caveman_intercepted, caveman_saved_tokens
+			rtk_intercepted, rtk_saved_tokens, caveman_intercepted, caveman_saved_tokens,
+			reasoning_effort
 		 FROM request_logs ORDER BY timestamp DESC LIMIT ?`, limit,
 	)
 	if err != nil {
@@ -115,6 +119,7 @@ func (r *LogRepository) ListRequestLogs(ctx context.Context, limit int) ([]Reque
 			&l.InputTokens, &l.OutputTokens, &l.CachedTokens, &l.ReasoningTokens,
 			&l.ErrorMessage, &l.RetryCount, &l.FallbackCount,
 			&l.RTKIntercepted, &l.RTKSavedTokens, &l.CavemanIntercepted, &l.CavemanSavedTokens,
+			&l.ReasoningEffort,
 		); err != nil {
 			return nil, fmt.Errorf("scan request log: %w", err)
 		}
@@ -172,19 +177,19 @@ func (r *LogRepository) DeleteRequestLogByRequestID(ctx context.Context, request
 }
 
 type ComputedStats struct {
-	TotalRequests     int
-	Successes         int
-	Failures          int
-	InputTokens       int
-	OutputTokens      int
-	CachedTokens      int
-	ReasoningTokens   int
-	RTKIntercepts     int
-	RTKSavedTokens    int
-	CavemanIntercepts int
+	TotalRequests      int
+	Successes          int
+	Failures           int
+	InputTokens        int
+	OutputTokens       int
+	CachedTokens       int
+	ReasoningTokens    int
+	RTKIntercepts      int
+	RTKSavedTokens     int
+	CavemanIntercepts  int
 	CavemanSavedTokens int
-	ByVirtualModel    map[string]*ComputedModelStat
-	ByProvider        map[string]*ComputedModelStat
+	ByVirtualModel     map[string]*ComputedModelStat
+	ByProvider         map[string]*ComputedModelStat
 }
 
 type ComputedModelStat struct {

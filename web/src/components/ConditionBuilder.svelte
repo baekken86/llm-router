@@ -10,7 +10,30 @@
   import SortableItem from './SortableItem.svelte';
   import SortableTree from './SortableTree.svelte';
 
-  let { node = { and: [] }, onChange, depth = 0, groupKey = 'root' } = $props();
+  import RemoveOperationDialog from './RemoveOperationDialog.svelte';
+  import { flattenFilterChild } from '../lib/treeUtils.js';
+  let { node = { and: [] }, onChange, onFlatten = null, depth = 0, groupKey = 'root' } = $props();
+  let removalTarget = $state.raw(null);
+  $effect(() => {
+    if (removalTarget && removalTarget !== node) removalTarget = null;
+  });
+
+  function requestRemoval() {
+    if (getItems(node).length) removalTarget = node;
+    else onChange(null);
+  }
+
+  function confirmRemoval(flatten) {
+    if (removalTarget !== node) { removalTarget = null; return; }
+    removalTarget = null;
+    if (flatten) onFlatten?.(getItems(node));
+    else onChange(null);
+  }
+
+  function flattenItem(item, children) {
+    const updated = flattenFilterChild(node, item, children);
+    if (updated !== node) onChange(updated);
+  }
 
   let isGroupNode = $derived(node && !node.key && (node.and || node.or));
   let mode = $derived(node?.and ? 'and' : 'or');
@@ -32,19 +55,33 @@
   }
 
   function setItems(n, items) {
-    if (n?.and) return { and: items };
-    if (n?.or) return { or: items };
+    if (n?.and) return { ...n, and: items };
+    if (n?.or) return { ...n, or: items };
     return n;
   }
 
   function toggleMode() {
-    const newMode = mode === 'and' ? 'or' : 'and';
     const items = getItems(node);
-    if (newMode === 'and') {
-      onChange({ and: items });
-    } else {
-      onChange({ or: items });
-    }
+    const next = { ...node };
+    if (mode === 'and') { delete next.and; next.or = items; }
+    else { delete next.or; next.and = items; }
+    onChange(next);
+  }
+
+  function setItemDisabled(idx, disabled) {
+    const items = getItems(node);
+    const item = items[idx];
+    const inner = unwrapNot(item);
+    const updated = { ...inner, disabled };
+    updateItem(idx, isNegated(item) ? { not: updated } : updated);
+  }
+
+  function isItemDisabled(item) {
+    return !!unwrapNot(item).disabled;
+  }
+
+  function toggleGroupDisabled() {
+    onChange({ ...node, disabled: !node.disabled });
   }
 
   function addItem(type) {
@@ -152,19 +189,35 @@
   ];
 </script>
 
+<RemoveOperationDialog
+  open={removalTarget !== null && removalTarget === node}
+  title="Remove group"
+  message="Remove with children deletes this group and its entire subtree. Flatten children removes only the group and moves its children into the parent at the same position, in their current order."
+  onRemove={() => confirmRemoval(false)}
+  onFlatten={() => confirmRemoval(true)}
+  onCancel={() => { removalTarget = null; }}
+/>
+
 {#if isGroupNode}
   {#if depth === 0}
     <!-- Top-level: wrap in SortableTree for DragDropProvider -->
     <SortableTree onDragEnd={handleTreeDragEnd}>
       <div class="space-y-2 {depth > 0 ? indentClass[depth % indentClass.length] + ' mt-2' : ''}">
         <div class="flex items-center gap-2 mb-2">
-          <button
-            class="px-2 py-0.5 text-xs font-mono rounded {mode === 'and' ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white'}"
+          <button type="button"
+            class="px-2 py-0.5 text-xs font-mono rounded {mode === 'and' ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white'} {node.disabled ? 'opacity-50 line-through' : ''}"
             onclick={toggleMode}
             title="Toggle AND/OR"
           >
             {mode === 'and' ? 'AND' : 'OR'}
           </button>
+          <input
+            type="checkbox"
+            checked={!node.disabled}
+            onchange={toggleGroupDisabled}
+            class="accent-emerald-600 shrink-0"
+            title="enable/disable group"
+          />
         </div>
 
         {#each getItems(node) as item, idx (item?.__id || idx)}
@@ -185,8 +238,8 @@
                   {#if getItems(node).length > 1}
                     <DragHandle attachHandle={sortable.attachHandle} />
                   {/if}
-                  <button
-                    class="text-xs px-1.5 py-0.5 rounded {isNegated(item) ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}"
+                  <button type="button"
+                    class="text-xs px-1.5 py-0.5 rounded {isNegated(item) ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'} {isItemDisabled(item) ? 'opacity-50' : ''}"
                     onclick={() => toggleNot(idx)}
                     title="Toggle NOT"
                   >
@@ -194,6 +247,7 @@
                   </button>
                   <FieldSelector
                     value={unwrapNot(item).key}
+                    class={isItemDisabled(item) ? 'text-gray-600 line-through' : ''}
                     onChange={(v) => {
                       const inner = unwrapNot(item);
                       const updated = { ...inner, key: v, op: '', value: '' };
@@ -203,6 +257,7 @@
                   <OperatorSelector
                     fieldType={getCondType(item)}
                     value={unwrapNot(item).op}
+                    class={isItemDisabled(item) ? 'opacity-50' : ''}
                     onChange={(v) => {
                       const inner = unwrapNot(item);
                       const updated = { ...inner, op: v };
@@ -215,12 +270,20 @@
                     fieldType={getCondType(item)}
                     operator={unwrapNot(item).op}
                     value={unwrapNot(item).value}
+                    class={isItemDisabled(item) ? 'opacity-50' : ''}
                     onChange={(v) => {
                       const inner = unwrapNot(item);
                       updateItem(idx, isNegated(item) ? { not: { ...inner, value: v } } : { ...inner, value: v });
                     }}
                   />
-                  <button
+                  <input
+                    type="checkbox"
+                    checked={!isItemDisabled(item)}
+                    onchange={(e) => setItemDisabled(idx, e.target.checked)}
+                    class="accent-emerald-600 shrink-0"
+                    title="enable/disable condition"
+                  />
+                  <button type="button"
                     class="text-gray-500 hover:text-red-400 px-1"
                     onclick={() => removeItem(idx)}
                     title="Remove condition"
@@ -232,7 +295,8 @@
                 <ConditionBuilder
                   node={item}
                   depth={depth + 1}
-                  groupKey={item?.__id || `${groupKey}-${idx}`}
+                onFlatten={(children) => flattenItem(item, children)}
+                groupKey={item?.__id || `${groupKey}-${idx}`}
                   onChange={(v) => {
                     if (v === null) removeItem(idx);
                     else updateItem(idx, v);
@@ -244,13 +308,13 @@
         {/each}
 
         <div class="flex gap-2">
-          <button
+          <button type="button"
             class="text-sm text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
             onclick={() => addItem('condition')}
           >
             + Condition
           </button>
-          <button
+          <button type="button"
             class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
             onclick={() => addItem('group')}
           >
@@ -263,16 +327,23 @@
     <!-- Nested group: shares parent's DragDropProvider -->
     <div class="space-y-2 {indentClass[depth % indentClass.length] + ' mt-2'}">
       <div class="flex items-center gap-2 mb-2">
-        <button
-          class="px-2 py-0.5 text-xs font-mono rounded {mode === 'and' ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white'}"
+        <button type="button"
+          class="px-2 py-0.5 text-xs font-mono rounded {mode === 'and' ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white'} {node.disabled ? 'opacity-50 line-through' : ''}"
           onclick={toggleMode}
           title="Toggle AND/OR"
         >
           {mode === 'and' ? 'AND' : 'OR'}
         </button>
-        <button
+        <input
+          type="checkbox"
+          checked={!node.disabled}
+          onchange={toggleGroupDisabled}
+          class="accent-emerald-600 shrink-0"
+          title="enable/disable group"
+        />
+        <button type="button"
           class="text-gray-500 hover:text-red-400 text-xs px-1"
-          onclick={() => onChange(null)}
+          onclick={requestRemoval}
           title="Remove group"
         >
           x
@@ -297,8 +368,8 @@
                 {#if getItems(node).length > 1}
                   <DragHandle attachHandle={sortable.attachHandle} />
                 {/if}
-                <button
-                  class="text-xs px-1.5 py-0.5 rounded {isNegated(item) ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}"
+                <button type="button"
+                  class="text-xs px-1.5 py-0.5 rounded {isNegated(item) ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'} {isItemDisabled(item) ? 'opacity-50' : ''}"
                   onclick={() => toggleNot(idx)}
                   title="Toggle NOT"
                 >
@@ -306,6 +377,7 @@
                 </button>
                 <FieldSelector
                   value={unwrapNot(item).key}
+                  class={isItemDisabled(item) ? 'text-gray-600 line-through' : ''}
                   onChange={(v) => {
                     const inner = unwrapNot(item);
                     const updated = { ...inner, key: v, op: '', value: '' };
@@ -315,6 +387,7 @@
                 <OperatorSelector
                   fieldType={getCondType(item)}
                   value={unwrapNot(item).op}
+                  class={isItemDisabled(item) ? 'opacity-50' : ''}
                   onChange={(v) => {
                     const inner = unwrapNot(item);
                     const updated = { ...inner, op: v };
@@ -327,12 +400,20 @@
                   fieldType={getCondType(item)}
                   operator={unwrapNot(item).op}
                   value={unwrapNot(item).value}
+                  class={isItemDisabled(item) ? 'opacity-50' : ''}
                   onChange={(v) => {
                     const inner = unwrapNot(item);
                     updateItem(idx, isNegated(item) ? { not: { ...inner, value: v } } : { ...inner, value: v });
                   }}
                 />
-                <button
+                <input
+                  type="checkbox"
+                  checked={!isItemDisabled(item)}
+                  onchange={(e) => setItemDisabled(idx, e.target.checked)}
+                  class="accent-emerald-600 shrink-0"
+                  title="enable/disable condition"
+                />
+                <button type="button"
                   class="text-gray-500 hover:text-red-400 px-1"
                   onclick={() => removeItem(idx)}
                   title="Remove condition"
@@ -344,7 +425,8 @@
               <ConditionBuilder
                 node={item}
                 depth={depth + 1}
-                groupKey={item?.__id || `${groupKey}-${idx}`}
+                onFlatten={(children) => flattenItem(item, children)}
+                  groupKey={item?.__id || `${groupKey}-${idx}`}
                 onChange={(v) => {
                   if (v === null) removeItem(idx);
                   else updateItem(idx, v);
@@ -356,13 +438,13 @@
       {/each}
 
       <div class="flex gap-2">
-        <button
+        <button type="button"
           class="text-sm text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
           onclick={() => addItem('condition')}
         >
           + Condition
         </button>
-        <button
+        <button type="button"
           class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
           onclick={() => addItem('group')}
         >
@@ -375,11 +457,13 @@
   <div class="flex items-center gap-2 flex-wrap {depth > 0 ? indentClass[depth % indentClass.length] + ' mt-2' : ''}">
     <FieldSelector
       value={node?.key || ''}
-      onChange={(v) => onChange({ key: v, op: '', value: '' })}
+      class={node.disabled ? 'text-gray-600 line-through' : ''}
+      onChange={(v) => onChange({ ...node, key: v, op: '', value: '' })}
     />
     <OperatorSelector
       fieldType={getFieldType($metadataFields, node?.key)}
       value={node?.op || ''}
+      class={node.disabled ? 'opacity-50' : ''}
       onChange={(v) => {
         const updated = { ...node, op: v };
         if (v === 'in') updated.value = [];
@@ -391,8 +475,18 @@
       fieldType={getFieldType($metadataFields, node?.key)}
       operator={node?.op}
       value={node?.value}
+      class={node.disabled ? 'opacity-50' : ''}
       onChange={(v) => onChange({ ...node, value: v })}
     />
+    {#if node?.key}
+      <input
+        type="checkbox"
+        checked={!node.disabled}
+        onchange={(e) => onChange({ ...node, disabled: e.target.checked })}
+        class="accent-emerald-600 shrink-0"
+        title="enable/disable condition"
+      />
+    {/if}
   </div>
 {/if}
 

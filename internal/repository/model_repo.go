@@ -20,6 +20,7 @@ type ModelRepository interface {
 	Upsert(ctx context.Context, providerID int64, name string) (*models.Model, error)
 	DisableByProviderExcept(ctx context.Context, providerID int64, names []string) (int64, error)
 	ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration, reason string) error
+	SetRateLimitIsolated(ctx context.Context, id int64, isolated bool) error
 	DeleteStaleDisabled(ctx context.Context) (int64, error)
 	ListExpiredDisabled(ctx context.Context, now time.Time) ([]int64, error)
 	GetCBStrikes(ctx context.Context, modelID int64) (int, error)
@@ -53,8 +54,8 @@ func (r *sqliteModelRepo) Create(ctx context.Context, m *models.Model) error {
 func (r *sqliteModelRepo) GetByID(ctx context.Context, id int64) (*models.Model, error) {
 	m := &models.Model{}
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, provider_id, name, disabled, disabled_until, COALESCE(disabled_reason, '') AS disabled_reason, created_at FROM models WHERE id = ?`, id,
-	).Scan(&m.ID, &m.ProviderID, &m.Name, &m.Disabled, &m.DisabledUntil, &m.DisabledReason, &m.CreatedAt)
+		`SELECT id, provider_id, name, disabled, disabled_until, COALESCE(disabled_reason, '') AS disabled_reason, COALESCE(rate_limit_isolated, 0) AS rate_limit_isolated, created_at FROM models WHERE id = ?`, id,
+	).Scan(&m.ID, &m.ProviderID, &m.Name, &m.Disabled, &m.DisabledUntil, &m.DisabledReason, &m.RateLimitIsolated, &m.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -67,8 +68,8 @@ func (r *sqliteModelRepo) GetByID(ctx context.Context, id int64) (*models.Model,
 func (r *sqliteModelRepo) GetByProviderAndName(ctx context.Context, providerID int64, name string) (*models.Model, error) {
 	m := &models.Model{}
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, provider_id, name, disabled, disabled_until, COALESCE(disabled_reason, '') AS disabled_reason, created_at FROM models WHERE provider_id = ? AND name = ?`, providerID, name,
-	).Scan(&m.ID, &m.ProviderID, &m.Name, &m.Disabled, &m.DisabledUntil, &m.DisabledReason, &m.CreatedAt)
+		`SELECT id, provider_id, name, disabled, disabled_until, COALESCE(disabled_reason, '') AS disabled_reason, COALESCE(rate_limit_isolated, 0) AS rate_limit_isolated, created_at FROM models WHERE provider_id = ? AND name = ?`, providerID, name,
+	).Scan(&m.ID, &m.ProviderID, &m.Name, &m.Disabled, &m.DisabledUntil, &m.DisabledReason, &m.RateLimitIsolated, &m.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -80,7 +81,7 @@ func (r *sqliteModelRepo) GetByProviderAndName(ctx context.Context, providerID i
 
 func (r *sqliteModelRepo) ListByProvider(ctx context.Context, providerID int64) ([]models.Model, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, provider_id, name, disabled, disabled_until, COALESCE(disabled_reason, '') AS disabled_reason, created_at FROM models WHERE provider_id = ? ORDER BY name`, providerID,
+		`SELECT id, provider_id, name, disabled, disabled_until, COALESCE(disabled_reason, '') AS disabled_reason, COALESCE(rate_limit_isolated, 0) AS rate_limit_isolated, created_at FROM models WHERE provider_id = ? ORDER BY name`, providerID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list models: %w", err)
@@ -90,7 +91,7 @@ func (r *sqliteModelRepo) ListByProvider(ctx context.Context, providerID int64) 
 	var result []models.Model
 	for rows.Next() {
 		var m models.Model
-		if err := rows.Scan(&m.ID, &m.ProviderID, &m.Name, &m.Disabled, &m.DisabledUntil, &m.DisabledReason, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ProviderID, &m.Name, &m.Disabled, &m.DisabledUntil, &m.DisabledReason, &m.RateLimitIsolated, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan model: %w", err)
 		}
 		result = append(result, m)
@@ -100,7 +101,7 @@ func (r *sqliteModelRepo) ListByProvider(ctx context.Context, providerID int64) 
 
 func (r *sqliteModelRepo) ListAll(ctx context.Context) ([]models.Model, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, provider_id, name, disabled, disabled_until, COALESCE(disabled_reason, '') AS disabled_reason, created_at FROM models ORDER BY provider_id, name`,
+		`SELECT id, provider_id, name, disabled, disabled_until, COALESCE(disabled_reason, '') AS disabled_reason, COALESCE(rate_limit_isolated, 0) AS rate_limit_isolated, created_at FROM models ORDER BY provider_id, name`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list all models: %w", err)
@@ -110,7 +111,7 @@ func (r *sqliteModelRepo) ListAll(ctx context.Context) ([]models.Model, error) {
 	var result []models.Model
 	for rows.Next() {
 		var m models.Model
-		if err := rows.Scan(&m.ID, &m.ProviderID, &m.Name, &m.Disabled, &m.DisabledUntil, &m.DisabledReason, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ProviderID, &m.Name, &m.Disabled, &m.DisabledUntil, &m.DisabledReason, &m.RateLimitIsolated, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan model: %w", err)
 		}
 		result = append(result, m)
@@ -120,7 +121,7 @@ func (r *sqliteModelRepo) ListAll(ctx context.Context) ([]models.Model, error) {
 
 func (r *sqliteModelRepo) ListEnabled(ctx context.Context) ([]models.Model, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, provider_id, name, disabled, disabled_until, COALESCE(disabled_reason, '') AS disabled_reason, created_at FROM models WHERE disabled = 0 ORDER BY provider_id, name`,
+		`SELECT id, provider_id, name, disabled, disabled_until, COALESCE(disabled_reason, '') AS disabled_reason, COALESCE(rate_limit_isolated, 0) AS rate_limit_isolated, created_at FROM models WHERE disabled = 0 ORDER BY provider_id, name`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list enabled models: %w", err)
@@ -130,7 +131,7 @@ func (r *sqliteModelRepo) ListEnabled(ctx context.Context) ([]models.Model, erro
 	var result []models.Model
 	for rows.Next() {
 		var m models.Model
-		if err := rows.Scan(&m.ID, &m.ProviderID, &m.Name, &m.Disabled, &m.DisabledUntil, &m.DisabledReason, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ProviderID, &m.Name, &m.Disabled, &m.DisabledUntil, &m.DisabledReason, &m.RateLimitIsolated, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan model: %w", err)
 		}
 		result = append(result, m)
@@ -151,13 +152,23 @@ func (r *sqliteModelRepo) Upsert(ctx context.Context, providerID int64, name str
 	err := r.db.QueryRowContext(ctx,
 		`INSERT INTO models (provider_id, name) VALUES (?, ?)
 		 ON CONFLICT(provider_id, name) DO UPDATE SET name = excluded.name
-		 RETURNING id, provider_id, name, disabled, disabled_until, COALESCE(disabled_reason, '') AS disabled_reason, created_at`,
+		 RETURNING id, provider_id, name, disabled, disabled_until, COALESCE(disabled_reason, '') AS disabled_reason, COALESCE(rate_limit_isolated, 0) AS rate_limit_isolated, created_at`,
 		providerID, name,
-	).Scan(&m.ID, &m.ProviderID, &m.Name, &m.Disabled, &m.DisabledUntil, &m.DisabledReason, &m.CreatedAt)
+	).Scan(&m.ID, &m.ProviderID, &m.Name, &m.Disabled, &m.DisabledUntil, &m.DisabledReason, &m.RateLimitIsolated, &m.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("upsert model: %w", err)
 	}
 	return m, nil
+}
+
+func (r *sqliteModelRepo) SetRateLimitIsolated(ctx context.Context, id int64, isolated bool) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE models SET rate_limit_isolated = ? WHERE id = ?`, isolated, id,
+	)
+	if err != nil {
+		return fmt.Errorf("set model rate_limit_isolated: %w", err)
+	}
+	return nil
 }
 
 func (r *sqliteModelRepo) ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration, reason string) error {

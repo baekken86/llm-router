@@ -13,6 +13,7 @@ import (
 
 	"github.com/chris/llm-router/internal/api/handlers"
 	"github.com/chris/llm-router/internal/models"
+	"github.com/chris/llm-router/internal/repository"
 	"github.com/chris/llm-router/internal/service"
 )
 
@@ -384,9 +385,19 @@ func (m *fullMockModelService) ToggleDisabled(_ context.Context, _ int64, _ bool
 	return nil
 }
 
+func (m *fullMockModelService) SetRateLimitIsolated(_ context.Context, _ int64, _ bool) error {
+	return nil
+}
+
 func (m *fullMockModelService) DeleteStaleDisabled(_ context.Context) (int64, error) {
 	return 0, nil
 }
+
+func (m *fullMockModelService) MirrorGlobalMetadata(_ context.Context, _ string) {}
+
+func (m *fullMockModelService) SetOverrideRepo(_ repository.ModelOverrideRepository) {}
+
+func (m *fullMockModelService) MirrorOverridesToGlobal(_ context.Context, _ string, _ map[string]bool) {}
 
 // postProvider marshals req and posts it to the real ProviderHandler.
 func postProvider(t *testing.T, h *handlers.ProviderHandler, req models.CreateProviderRequest) *httptest.ResponseRecorder {

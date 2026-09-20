@@ -201,6 +201,24 @@
     }
   }
 
+  async function toggleRateLimitIsolated(modelId, isolated) {
+    try {
+      await apiFetch(`/api/v1/models/${modelId}/rate-limit-isolated`, {
+        method: 'PUT',
+        body: { rate_limit_isolated: isolated }
+      });
+      models = models.map(m => {
+        if (m.model_id === modelId) {
+          return { ...m, rate_limit_isolated: isolated };
+        }
+        return m;
+      });
+      addToast(isolated ? 'Model isolation enabled' : 'Model isolation disabled', 'success');
+    } catch (e) {
+      addToast(e.message, 'error');
+    }
+  }
+
   function openDisableModal(model) {
     disableTarget = model;
     disableDuration = '10m';
@@ -521,6 +539,7 @@
                       <th class="text-left pr-3 py-1">mapping</th>
                       <th class="text-left pr-3 py-1">added at</th>
                       <th class="text-left pr-3 py-1 w-16">status</th>
+                      <th class="text-left pr-3 py-1" title="429 applies only to this model, not the whole provider">isolated</th>
                       {#each columns as col}
                         <th class="text-right pr-3 py-1">{col.key}</th>
                       {/each}
@@ -585,6 +604,15 @@
                               {/if}
                             {/if}
                           </span>
+                        </td>
+                        <td class="text-left pr-3 py-1">
+                          <input
+                            type="checkbox"
+                            class="h-3.5 w-3.5 accent-emerald-500 cursor-pointer"
+                            checked={m.rate_limit_isolated}
+                            onchange={() => toggleRateLimitIsolated(m.model_id, !m.rate_limit_isolated)}
+                            title="429 rate limits apply only to this model, not the whole provider (e.g. free-tier models)"
+                          />
                         </td>
                         {#each columns as col}
                           {@const overridden = isCellOverriddenStatic(m, col.key)}

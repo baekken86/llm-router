@@ -258,6 +258,114 @@ func TestResolveModelsFiltered_MappingEmptyEffortFallback(t *testing.T) {
 	}
 }
 
+// TestResolveModelsFiltered_MappingSourceNoTagsTargetHasTags verifies that when
+// a source model has NO tags (empty efforts) but the target model has tags under
+// effort "max", the mapping correctly resolves using the target's efforts.
+// This is the exact bug where mapped models with no source tags were excluded
+// from the Resolved Preview.
+func TestResolveModelsFiltered_MappingSourceNoTagsTargetHasTags(t *testing.T) {
+	// Source model has NO tags (empty efforts)
+	sourceModel := models.Model{ID: 100, ProviderID: 1, Name: "deepseek/deepseek-v4.1-flash"}
+
+	// Target model HAS tags under effort "max"
+	targetModel := models.Model{ID: 200, ProviderID: 2, Name: "deepseek-v4.1-flash"}
+	targetTagEfforts := map[int64][]string{200: {"max"}}
+	targetTags := map[int64][]models.Tag{
+		200: {
+			{ModelID: 200, ReasoningEffort: "max", Key: "mc.coding", Value: "92"},
+			{ModelID: 200, ReasoningEffort: "max", Key: "mc.intelligence", Value: "89"},
+		},
+	}
+
+	// Mapping: source → target
+	mappings := map[int64]*repository.ModelMapping{
+		100: {SourceModelID: 100, TargetModelName: "deepseek-v4.1-flash"},
+	}
+
+	// Global metadata for target
+	globalMeta := map[string]map[string]map[string]string{
+		"deepseek-v4.1-flash": {
+			"max": {"context_window": "131072"},
+		},
+	}
+
+	// Build repos - both source and target in enabled list (realistic scenario)
+	modelRepo := &mockModelRepo{models: []models.Model{sourceModel, targetModel}}
+	tagRepo := &mockTagRepo{tags: targetTags, efforts: targetTagEfforts}
+	providerRepo := &mockProviderRepo{
+		providers: map[int64]*models.Provider{
+			1: {ID: 1, Name: "openrouter"},
+			2: {ID: 2, Name: "opencode-go"},
+		},
+		byName: map[string]*models.Provider{
+			"openrouter":  {ID: 1, Name: "openrouter"},
+			"opencode-go": {ID: 2, Name: "opencode-go"},
+		},
+	}
+	globalMetaRepo := &mockGlobalMetaRepo{data: globalMeta}
+	mappingRepo := &mockMappingRepo{mappings: mappings}
+
+	svc := NewVirtualModelService(
+		newMockVMRepo(),
+		modelRepo,
+		tagRepo,
+		providerRepo,
+		newMockProviderMetaRepo(),
+		globalMetaRepo,
+		mappingRepo,
+		nil,
+		nil,
+		nil,
+	)
+
+	vm := &models.VirtualModel{
+		Name:       "test-vm-mapped",
+		FilterExpr: []byte(`{}`),
+	}
+
+	results, err := svc.ResolveModels(context.Background(), vm)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results (source with mapping + target), got %d", len(results))
+	}
+
+	// Find the source model result (has mapping)
+	var sourceResult *ResolvedModel
+	for i := range results {
+		if results[i].Model.Name == "deepseek/deepseek-v4.1-flash" {
+			sourceResult = &results[i]
+			break
+		}
+	}
+	if sourceResult == nil {
+		t.Fatal("source model not found in results")
+	}
+
+	// Source model must use target's tags (not nil)
+	if sourceResult.Model.Tags == nil {
+		t.Fatal("expected tags from target model on source, got nil")
+	}
+	if len(sourceResult.Model.Tags) != 2 {
+		t.Fatalf("expected 2 tags from target, got %d", len(sourceResult.Model.Tags))
+	}
+
+	// Global metadata must come from target's "max" effort
+	if sourceResult.GlobalMetadata == nil {
+		t.Fatal("expected global metadata, got nil")
+	}
+	if sourceResult.GlobalMetadata["context_window"] != "131072" {
+		t.Errorf("global metadata context_window = %q, want %q", sourceResult.GlobalMetadata["context_window"], "131072")
+	}
+
+	// Must use the target's effort, not the source's empty effort
+	if sourceResult.ReasoningEffort != "max" {
+		t.Errorf("effort = %q, want %q", sourceResult.ReasoningEffort, "max")
+	}
+}
+
 // --- Global sort condition merge tests ---
 
 // newGlobalSortTestService builds a service with two providers/models so
@@ -726,5 +834,324 @@ func TestPriorityMergedFilterOrder(t *testing.T) {
 	}
 	if len(merged2.And) != 2 || merged2.And[0].Key != "global_tie" || merged2.And[1].Key != "local_tie" {
 		t.Errorf("expected global before local on tie, got %+v", merged2)
+	}
+}
+
+// --- Disabled global condition request plumbing tests ---
+
+// TestUpdateAppliesDisabledConditions verifies that UpdateVirtualModelRequest's
+// disabled-condition pointer fields flow into the VM passed to vmRepo.Update.
+// Absent (nil) fields must leave the hydrated sets untouched; present fields
+// (including empty) must replace them.
+func TestUpdateAppliesDisabledConditions(t *testing.T) {
+	svc := newGlobalSortTestService(nil, nil)
+
+	repo := newMockVMRepo()
+	existing := &models.VirtualModel{
+		Name:                     "vm-disabled",
+		FilterExpr:               []byte(`{}`),
+		DisabledSortConditions:   []int64{7},
+		DisabledFilterConditions: []int64{5},
+	}
+	if err := repo.Create(context.Background(), existing); err != nil {
+		t.Fatal(err)
+	}
+
+	svc = NewVirtualModelService(repo, &mockModelRepo{}, newMockTagRepo(), newMockProviderRepo(),
+		newMockProviderMetaRepo(), newMockGlobalMetaRepo(), newMockMappingRepo(), nil,
+		&mockGlobalSortRepo{}, &mockGlobalFilterRepo{})
+
+	// Nil (absent) fields keep the existing disabled sets.
+	updated, err := svc.Update(context.Background(), existing.ID, models.UpdateVirtualModelRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.DisabledSortConditions) != 1 || updated.DisabledSortConditions[0] != 7 {
+		t.Errorf("absent disabled_global_sort_conditions must keep existing set, got %v", updated.DisabledSortConditions)
+	}
+	if len(updated.DisabledFilterConditions) != 1 || updated.DisabledFilterConditions[0] != 5 {
+		t.Errorf("absent disabled_global_filter_conditions must keep existing set, got %v", updated.DisabledFilterConditions)
+	}
+
+	// Present (including empty) fields replace the sets.
+	empty := []int64{}
+	updated, err = svc.Update(context.Background(), existing.ID, models.UpdateVirtualModelRequest{
+		DisabledSortConditions:   &empty,
+		DisabledFilterConditions: &empty,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.DisabledSortConditions) != 0 {
+		t.Errorf("empty disabled_global_sort_conditions must replace existing set, got %v", updated.DisabledSortConditions)
+	}
+	if len(updated.DisabledFilterConditions) != 0 {
+		t.Errorf("empty disabled_global_filter_conditions must replace existing set, got %v", updated.DisabledFilterConditions)
+	}
+
+	newSort := []int64{11, 12}
+	newFilter := []int64{13}
+	updated, err = svc.Update(context.Background(), existing.ID, models.UpdateVirtualModelRequest{
+		DisabledSortConditions:   &newSort,
+		DisabledFilterConditions: &newFilter,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.DisabledSortConditions) != 2 {
+		t.Errorf("expected 2 disabled sort ids on the VM sent to the repo, got %v", updated.DisabledSortConditions)
+	}
+	if len(updated.DisabledFilterConditions) != 1 || updated.DisabledFilterConditions[0] != 13 {
+		t.Errorf("expected [13] disabled filter ids on the VM sent to the repo, got %v", updated.DisabledFilterConditions)
+	}
+}
+
+// TestPreviewResolveHonorsDisabledIDs verifies PreviewResolve builds its
+// synthetic VM with the given disabled-condition ids, so global conditions
+// disabled in the preview request are excluded from resolution.
+func TestPreviewResolveHonorsDisabledIDs(t *testing.T) {
+	// Global sort condition: m-alpha first. Global filter: keep only m-alpha.
+	sortCond := models.GlobalSortCondition{
+		ID:       7,
+		Name:     "alpha-first",
+		Enabled:  true,
+		SortExpr: models.SortExpr{{Condition: &models.FilterNode{Key: "m.name", Op: "eq", Value: "m-alpha"}}},
+	}
+	filterCond := models.GlobalFilterCondition{
+		ID:         5,
+		Name:       "alpha-only",
+		Enabled:    true,
+		FilterExpr: models.FilterNode{Key: "m.name", Op: "eq", Value: "m-alpha"},
+	}
+	svc := newGlobalSortTestService([]models.GlobalSortCondition{sortCond}, []models.GlobalFilterCondition{filterCond})
+
+	// No disabled ids: sort condition forces m-alpha first and the filter
+	// condition restricts to m-alpha only.
+	results, err := svc.PreviewResolve(context.Background(), json.RawMessage(`{}`), nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Model.Name != "m-alpha" {
+		t.Fatalf("expected global filter+sort to keep m-alpha only, got %+v", results)
+	}
+
+	// Both ids disabled: filter no longer restricts and the sort condition
+	// no longer forces m-alpha first (natural order: m-alpha, m-beta).
+	results, err = svc.PreviewResolve(
+		context.Background(),
+		json.RawMessage(`{}`), nil, nil, nil,
+		[]int64{7},
+		[]int64{5},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results with conditions disabled, got %d", len(results))
+	}
+	if results[0].Model.Name != "m-alpha" || results[1].Model.Name != "m-beta" {
+		t.Errorf("expected natural repo order [m-alpha, m-beta] with both conditions disabled, got [%s, %s]",
+			results[0].Model.Name, results[1].Model.Name)
+	}
+}
+
+// disabledCritService builds a service like newGlobalSortTestService but with
+// tags so local sorts by tag values are observable.
+func disabledCritService() VirtualModelService {
+	modelRepo := &mockModelRepo{models: []models.Model{
+		{ID: 1, ProviderID: 1, Name: "m-alpha"},
+		{ID: 2, ProviderID: 2, Name: "m-beta"},
+	}}
+	providerRepo := &mockProviderRepo{
+		providers: map[int64]*models.Provider{
+			1: {ID: 1, Name: "prov-a"},
+			2: {ID: 2, Name: "prov-b"},
+		},
+		byName: map[string]*models.Provider{
+			"prov-a": {ID: 1, Name: "prov-a"},
+			"prov-b": {ID: 2, Name: "prov-b"},
+		},
+	}
+	tagRepo := newMockTagRepo()
+	_ = tagRepo.Set(context.Background(), 1, "", map[string]string{"cost": "0.1"})
+	_ = tagRepo.Set(context.Background(), 2, "", map[string]string{"cost": "0.9"})
+
+	return NewVirtualModelService(newMockVMRepo(), modelRepo, tagRepo, providerRepo,
+		newMockProviderMetaRepo(), newMockGlobalMetaRepo(), newMockMappingRepo(), nil,
+		&mockGlobalSortRepo{}, &mockGlobalFilterRepo{})
+}
+
+// TestDisabledLeafInAnd behaves as if the leaf was removed from the AND group.
+func TestDisabledLeafInAnd(t *testing.T) {
+	svc := disabledCritService()
+
+	// AND(true-matcher, disabled(false-matcher)) → leaf removed → matches all.
+	// If the disabled leaf were evaluated (m.name eq m-beta), only m-beta would pass.
+	filter := json.RawMessage(`{"and":[
+		{"key":"m.name","op":"contains","value":"m-"},
+		{"key":"m.name","op":"eq","value":"m-beta","disabled":true}
+	]}`)
+	vm := &models.VirtualModel{FilterExpr: filter}
+	results, err := svc.ResolveModels(context.Background(), vm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("disabled leaf in AND must behave as if removed, got %d results", len(results))
+	}
+}
+
+// TestDisabledLeafInOr behaves as if the leaf was removed from the OR group.
+func TestDisabledLeafInOr(t *testing.T) {
+	svc := disabledCritService()
+
+	// OR(m-beta-matcher, disabled(m-alpha-matcher)) → leaf removed → only m-beta.
+	// If the disabled leaf returned neutral-true, everything would match.
+	filter := json.RawMessage(`{"or":[
+		{"key":"m.name","op":"eq","value":"m-beta"},
+		{"key":"m.name","op":"eq","value":"m-alpha","disabled":true}
+	]}`)
+	vm := &models.VirtualModel{FilterExpr: filter}
+	results, err := svc.ResolveModels(context.Background(), vm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Model.Name != "m-beta" {
+		t.Fatalf("disabled leaf in OR must behave as if removed, got %+v", results)
+	}
+}
+
+// TestDisabledLeafInNot behaves as if the leaf was removed (vacuous NOT = true).
+func TestDisabledLeafInNot(t *testing.T) {
+	svc := disabledCritService()
+
+	// NOT(disabled leaf). Vacuous NOT must match everything; if the disabled
+	// leaf returned neutral-true, NOT would reject every model.
+	filter := json.RawMessage(`{"not":{"key":"m.name","op":"eq","value":"m-beta","disabled":true}}`)
+	vm := &models.VirtualModel{FilterExpr: filter}
+	results, err := svc.ResolveModels(context.Background(), vm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("disabled leaf in NOT must behave as if removed, got %d results", len(results))
+	}
+}
+
+// TestDisabledRootFilter matches everything (no filtering at all).
+func TestDisabledRootFilter(t *testing.T) {
+	svc := disabledCritService()
+
+	vm := &models.VirtualModel{FilterExpr: json.RawMessage(`{"key":"m.name","op":"eq","value":"m-beta","disabled":true}`)}
+	results, err := svc.ResolveModels(context.Background(), vm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("disabled root filter must not filter, got %d results", len(results))
+	}
+}
+
+// TestDisabledLocalKeySort skips a disabled Key sort entry.
+func TestDisabledLocalKeySort(t *testing.T) {
+	svc := disabledCritService()
+
+	// Disabled desc sort by name must be ignored; disabled condition entries
+	// and the active entry leave natural (repo id) order: m-alpha, m-beta.
+	vm := &models.VirtualModel{
+		FilterExpr: []byte(`{}`),
+		SortExpr:   json.RawMessage(`[{"key":"m.name","direction":"desc","disabled":true}]`),
+	}
+	results, err := svc.ResolveModels(context.Background(), vm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	natural, err := disabledCritService().ResolveModels(context.Background(), &models.VirtualModel{FilterExpr: []byte(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range natural {
+		if natural[i].Model.Name != results[i].Model.Name {
+			t.Errorf("disabled key sort still affected order at index %d: %s vs %s",
+				i, results[i].Model.Name, natural[i].Model.Name)
+		}
+	}
+}
+
+// TestDisabledConditionSortEntry skips a disabled condition sort entry.
+func TestDisabledConditionSortEntry(t *testing.T) {
+	svc := disabledCritService()
+
+	// Active condition puts m-beta first; disabled condition puts m-alpha first.
+	// Only the active entry must apply.
+	vm := &models.VirtualModel{
+		FilterExpr: []byte(`{}`),
+		SortExpr: json.RawMessage(`[
+			{"condition":{"key":"m.name","op":"eq","value":"m-alpha"},"direction":"asc","disabled":true},
+			{"condition":{"key":"m.name","op":"eq","value":"m-beta"},"direction":"asc"}
+		]`),
+	}
+	results, err := svc.ResolveModels(context.Background(), vm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Model.Name != "m-beta" {
+		t.Errorf("disabled condition entry must be skipped; active entry should put m-beta first, got %s first", results[0].Model.Name)
+	}
+}
+
+// TestDisabledFilterJSONOmitEmpty verifies old JSON without "disabled"
+// unmarshals to enabled, and marshaling doesn't add the key back.
+func TestDisabledFilterJSONOmitEmpty(t *testing.T) {
+	var node models.FilterNode
+	if err := json.Unmarshal([]byte(`{"key":"m.name","op":"eq","value":"x"}`), &node); err != nil {
+		t.Fatal(err)
+	}
+	if node.Disabled {
+		t.Error("missing disabled field must default to enabled (false)")
+	}
+
+	var entry models.SortEntry
+	if err := json.Unmarshal([]byte(`{"key":"m.name","direction":"asc"}`), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Disabled {
+		t.Error("missing disabled field must default to enabled (false)")
+	}
+
+	// omitempty: round-trip must not emit "disabled".
+	out, err := json.Marshal(models.FilterNode{Key: "a", Op: "eq", Value: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "disabled") {
+		t.Errorf("enabled node must not serialize disabled key, got %s", out)
+	}
+	out, err = json.Marshal(models.SortEntry{Key: "a", Direction: "asc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "disabled") {
+		t.Errorf("enabled entry must not serialize disabled key, got %s", out)
+	}
+}
+
+// TestDisabledValidationTolerance verifies the validators accept filter nodes
+// and sort entries carrying the disabled flag.
+func TestDisabledValidationTolerance(t *testing.T) {
+	if err := validateFilterExpr(json.RawMessage(`{"key":"m.name","op":"eq","value":"x","disabled":true}`)); err != nil {
+		t.Errorf("disabled leaf must validate: %v", err)
+	}
+	if err := validateFilterExpr(json.RawMessage(`{"and":[{"key":"a","op":"eq","value":"1"},{"key":"b","op":"eq","value":"2","disabled":true}]}`)); err != nil {
+		t.Errorf("disabled child in AND must validate: %v", err)
+	}
+	if err := validateSortExpr(json.RawMessage(`[{"key":"m.name","direction":"asc","disabled":true}]`)); err != nil {
+		t.Errorf("disabled sort entry must validate: %v", err)
 	}
 }

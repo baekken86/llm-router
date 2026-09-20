@@ -142,6 +142,17 @@ export function getChildren(node) {
   return [];
 }
 
+/** Splice an immediate filter group by identity/ID, preserving parent metadata. */
+export function flattenFilterChild(parent, child, children = getChildren(child)) {
+  const key = Array.isArray(parent?.and) ? 'and' : Array.isArray(parent?.or) ? 'or' : null;
+  if (!key || !isGroup(child)) return parent;
+  const index = parent[key].findIndex(item => item === child || (child.__id && item?.__id === child.__id));
+  if (index < 0) return parent;
+  const items = [...parent[key]];
+  items.splice(index, 1, ...children);
+  return { ...parent, [key]: items };
+}
+
 /**
  * Create a new group node with given children.
  * @param {string} mode - 'and' or 'or'
@@ -387,6 +398,37 @@ export function removeNodeFromComposition(tree, removeId) {
   }
 
   return tree;
+}
+
+/**
+ * Flatten an operation node: remove it and splice its children into the
+ * operation's own position within its parent's sources (immutable).
+ * Children are kept by reference so their __ids (and expansion state) survive.
+ * @param {object} tree
+ * @param {string} removeId - __id of the operation node to flatten
+ * @returns {object|null} new tree; null if the result would be empty;
+ *          unchanged tree if id not found or node has no sources array.
+ */
+export function flattenNodeFromComposition(tree, removeId) {
+  const info = findNodeInComposition(tree, removeId);
+  if (!info) return tree;
+
+  const children = info.node.sources;
+  if (!info.node.operation || !Array.isArray(children)) {
+    return tree;
+  }
+
+  if (info.parent === null) {
+    // Flattening the root op: its children become the new root.
+    if (children.length === 0) return null;
+    if (children.length === 1) return children[0];
+    return { operation: 'union', sources: [...children] };
+  }
+
+  const newSources = [...info.parent.sources];
+  newSources.splice(info.index, 1, ...children);
+  const newParent = { ...info.parent, sources: newSources };
+  return replaceNode(tree, info.parent.__id, newParent);
 }
 
 /**

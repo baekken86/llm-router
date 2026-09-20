@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/chris/llm-router/internal/models"
@@ -919,5 +920,137 @@ func TestEdgeCase_ParentFilterOnInlineSource(t *testing.T) {
 	// gpt-4 and gpt-4o (both openai, both contain "4")
 	if len(result) != 2 {
 		t.Fatalf("got %d models, want 2", len(result))
+	}
+}
+
+// --- Inline disabled criteria on composition nodes ---
+
+// TestDisabledFilterOnCompositionSource verifies a disabled per-node filter
+// behaves as if the node had no filter at all.
+func TestDisabledFilterOnCompositionSource(t *testing.T) {
+	svc, _, _ := setupFilterSourceService()
+
+	// Source node with a disabled filter matching nothing — must return ALL models.
+	node := &models.CompositionNode{
+		FilterExpr: &models.FilterNode{Key: "p.name", Op: "eq", Value: "nonexistent", Disabled: true},
+	}
+
+	result, err := svc.resolveSource(context.Background(), node, make(map[string]bool))
+	if err != nil {
+		t.Fatalf("resolveSource() error = %v", err)
+	}
+	if len(result) != 3 {
+		t.Fatalf("disabled per-node filter must not filter, got %d models, want 3", len(result))
+	}
+}
+
+// TestDisabledSortOnCompositionSource verifies a disabled per-node sort entry
+// is skipped.
+func TestDisabledSortOnCompositionSource(t *testing.T) {
+	svc, _, _ := setupFilterSourceService()
+
+	// Desc sort disabled → natural order preserved (gpt-4 first).
+	node := &models.CompositionNode{
+		SortExpr: models.SortExpr{{Key: "m.name", Direction: "desc", Disabled: true}},
+	}
+
+	result, err := svc.resolveSource(context.Background(), node, make(map[string]bool))
+	if err != nil {
+		t.Fatalf("resolveSource() error = %v", err)
+	}
+	if len(result) != 3 {
+		t.Fatalf("got %d models, want 3", len(result))
+	}
+	if result[0].Model.Name != "gpt-4" {
+		t.Errorf("disabled sort must be skipped; expected natural order with gpt-4 first, got %s", result[0].Model.Name)
+	}
+}
+
+// TestDisabledFilterOnOperationNode verifies a disabled filter on an operation
+// node behaves as if removed.
+func TestDisabledFilterOnOperationNode(t *testing.T) {
+	svc, _, _ := setupFilterSourceService()
+
+	// union of everything, with a disabled filter that would otherwise match nothing.
+	comp := &models.CompositionNode{
+		Operation: "union",
+		Sources: []models.CompositionNode{
+			{FilterExpr: &models.FilterNode{Key: "p.name", Op: "eq", Value: "openai"}},
+			{FilterExpr: &models.FilterNode{Key: "p.name", Op: "eq", Value: "anthropic"}},
+		},
+		FilterExpr: &models.FilterNode{Key: "m.name", Op: "eq", Value: "nonexistent", Disabled: true},
+	}
+
+	vm := &models.VirtualModel{Name: "test", Composition: comp}
+	result, err := svc.ResolveModels(context.Background(), vm)
+	if err != nil {
+		t.Fatalf("ResolveModels() error = %v", err)
+	}
+	if len(result) != 3 {
+		t.Fatalf("disabled operation-node filter must not filter, got %d models, want 3", len(result))
+	}
+}
+
+// TestDisabledConditionSortOnCompositionNode verifies a disabled condition sort
+// entry on a composition node is skipped while an active one still applies.
+func TestDisabledConditionSortOnCompositionNode(t *testing.T) {
+	svc, _, _ := setupFilterSourceService()
+
+	comp := &models.CompositionNode{
+		SortExpr: models.SortExpr{
+			// Disabled: would put claude-3 (anthropic) first.
+			{Condition: &models.FilterNode{Key: "p.name", Op: "eq", Value: "anthropic"}, Direction: "asc", Disabled: true},
+			// Active: puts gpt-4o first by name desc... both openai tie, then anthropic.
+			{Key: "m.name", Direction: "asc"},
+		},
+	}
+
+	vm := &models.VirtualModel{Name: "test", Composition: comp}
+	result, err := svc.ResolveModels(context.Background(), vm)
+	if err != nil {
+		t.Fatalf("ResolveModels() error = %v", err)
+	}
+	if len(result) != 3 {
+		t.Fatalf("got %d models, want 3", len(result))
+	}
+	// Active key sort (asc) decides: claude-3, gpt-4, gpt-4o. The disabled
+	// condition entry (anthropic first) must have been skipped.
+	if result[0].Model.Name != "claude-3" || result[1].Model.Name != "gpt-4" || result[2].Model.Name != "gpt-4o" {
+		t.Errorf("disabled condition entry must be skipped, got order: %s, %s, %s",
+			result[0].Model.Name, result[1].Model.Name, result[2].Model.Name)
+	}
+}
+
+// TestDisabledCompositionRoundTrip verifies a composition tree carrying
+// disabled flags survives JSON unmarshal (old stored JSON without the key
+// stays enabled).
+func TestDisabledCompositionRoundTrip(t *testing.T) {
+	data := []byte(`{
+		"operation":"union",
+		"sources":[
+			{"collection":"a","filter_expr":{"key":"p.name","op":"eq","value":"x","disabled":true}},
+			{"collection":"b"}
+		],
+		"sort_expr":[{"key":"m.name","direction":"asc","disabled":true}]
+	}`)
+	var node models.CompositionNode
+	if err := json.Unmarshal(data, &node); err != nil {
+		t.Fatal(err)
+	}
+	if !node.Sources[0].FilterExpr.Disabled {
+		t.Error("expected disabled=true on source filter_expr")
+	}
+	if !node.SortExpr[0].Disabled {
+		t.Error("expected disabled=true on source sort entry")
+	}
+
+	// Re-marshal must not add "disabled" keys for enabled parts.
+	out, err := json.Marshal(&node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if strings.Count(s, `"disabled":true`) != 2 {
+		t.Errorf("expected exactly 2 disabled:true in round-trip JSON, got: %s", s)
 	}
 }

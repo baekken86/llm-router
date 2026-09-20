@@ -73,6 +73,18 @@
     onChange(next);
   }
 
+  function toggleEntryDisabled(idx) {
+    const next = criteria.map((c, i) => {
+      if (i !== idx) return c;
+      if (c.disabled) {
+        const { disabled, ...rest } = c;
+        return rest;
+      }
+      return { ...c, disabled: true };
+    });
+    onChange(next);
+  }
+
   function updatePriority(idx, raw) {
     const next = criteria.map((c, i) => {
       if (i !== idx) return c;
@@ -134,6 +146,7 @@
   function formatSummary() {
     return criteria
       .map(c => {
+        if (c.disabled) return '';
         if (c.condition) {
           return `IF ${formatConditionSummary(c.condition)} ${c.direction || ''}`.trim();
         }
@@ -182,8 +195,8 @@
           {#if criteria.length > 1}
             <DragHandle attachHandle={sortable.attachHandle} />
           {/if}
-          <span class="text-xs text-amber-400 font-mono mt-2">IF</span>
-          <div class="flex-1 min-w-0">
+          <span class="text-xs font-mono mt-2 {entry.disabled ? 'text-gray-600 line-through' : 'text-amber-400'}">IF</span>
+          <div class="flex-1 min-w-0 {entry.disabled ? 'opacity-50' : ''}">
             <ConditionBuilder
               node={entry.condition}
               depth={0}
@@ -191,7 +204,7 @@
               onChange={(v) => updateCondition(idx, v)}
             />
           </div>
-          <div class="flex items-center gap-2 mt-2">
+          <div class="flex items-center gap-2 mt-2 {entry.disabled ? 'opacity-50' : ''}">
             <select
               value={entry.direction || 'asc'}
               onchange={(e) => updateSort(idx, 'direction', e.target.value)}
@@ -208,12 +221,19 @@
               class="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-emerald-500"
               title="priority — lower = applied earlier, empty = default 1000 (commits on blur/enter)"
             />
-            <button
-              type="button"
-              class="text-gray-500 hover:text-red-400 px-1"
-              onclick={() => removeEntry(idx)}
-            >x</button>
           </div>
+          <input
+            type="checkbox"
+            checked={!entry.disabled}
+            onchange={() => toggleEntryDisabled(idx)}
+            class="accent-emerald-600 shrink-0"
+            title="enable/disable sort"
+          />
+          <button
+            type="button"
+            class="text-gray-500 hover:text-red-400 px-1"
+            onclick={() => removeEntry(idx)}
+          >x</button>
         </div>
       {:else}
         <div class="flex items-center gap-2 flex-wrap">
@@ -223,19 +243,20 @@
           <FieldSelector
             value={entry.key || ''}
             onChange={(v) => updateSort(idx, 'key', v)}
+            class={entry.disabled ? 'text-gray-600 line-through' : ''}
           />
 
           {#if entry.direction !== undefined}
             <select
               value={entry.direction}
               onchange={(e) => updateSort(idx, 'direction', e.target.value)}
-              class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+              class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500 {entry.disabled ? 'opacity-50' : ''}"
             >
               <option value="asc">Ascending</option>
               <option value="desc">Descending</option>
             </select>
           {:else if entry.order}
-            <div class="flex flex-wrap gap-1">
+            <div class="flex flex-wrap gap-1 {entry.disabled ? 'opacity-50' : ''}">
               {#each entry.order as v}
                 <span class="px-2 py-1 text-xs bg-gray-700 text-gray-300 rounded">{v}</span>
               {/each}
@@ -244,7 +265,7 @@
 
           <button
             type="button"
-            class="text-xs text-gray-500 hover:text-gray-300 px-1"
+            class="text-xs text-gray-500 hover:text-gray-300 px-1 {entry.disabled ? 'opacity-50' : ''}"
             onclick={() => toggleSortMode(idx)}
             title="Toggle direction/custom order"
           >
@@ -255,8 +276,15 @@
             value={entry.priority ?? ''}
             placeholder="1000"
             onchange={(e) => updatePriority(idx, e.target.value)}
-            class="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-emerald-500"
+            class="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-emerald-500 {entry.disabled ? 'opacity-50' : ''}"
             title="priority — lower = applied earlier, empty = default 1000 (commits on blur/enter)"
+          />
+          <input
+            type="checkbox"
+            checked={!entry.disabled}
+            onchange={() => toggleEntryDisabled(idx)}
+            class="accent-emerald-600 shrink-0"
+            title="enable/disable sort"
           />
           <button
             type="button"

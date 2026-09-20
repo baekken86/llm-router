@@ -23,6 +23,7 @@ type ModelEffortEntry struct {
 	Disabled          bool              `json:"disabled"`
 	DisabledUntil     *time.Time        `json:"disabled_until,omitempty"`
 	DisabledReason    string            `json:"disabled_reason,omitempty"`
+	RateLimitIsolated bool              `json:"rate_limit_isolated"`
 	Tags              map[string]string `json:"tags"`
 	GlobalMetadata    map[string]string `json:"global_metadata"`
 	MappingTargetName *string           `json:"mapping_target_name,omitempty"`
@@ -43,7 +44,23 @@ type ModelService interface {
 	GetTags(ctx context.Context, modelID int64) ([]models.Tag, error)
 	Delete(ctx context.Context, id int64) error
 	ToggleDisabled(ctx context.Context, id int64, disabled bool, duration *time.Duration, reason string) error
+	SetRateLimitIsolated(ctx context.Context, id int64, isolated bool) error
 	DeleteStaleDisabled(ctx context.Context) (int64, error)
+	SetOverrideRepo(repo repository.ModelOverrideRepository)
+	// MirrorGlobalMetadata copies global metadata (m.*) for modelName into
+	// model_tags (mc.*) on every provider row carrying that model name — the
+	// same bridge Discover uses. Filters and sorts evaluate mc.* attributes,
+	// so manually entered global metadata only becomes filterable after this
+	// sync. Best-effort: errors are logged, not returned.
+	MirrorGlobalMetadata(ctx context.Context, modelName string)
+	// MirrorOverridesToGlobal rewrites the global metadata layer (m.*) for
+	// modelName from the effective override state: for every (model, effort)
+	// row carrying that name, per-key override values replace m.* values.
+	// clearedKeys lists override keys deleted in the triggering write; they
+	// are removed from the m.* layer as well (they'd otherwise resurface as
+	// stale values once the override row is gone). Pass nil when nothing was
+	// deleted. Best-effort: errors are logged, not returned.
+	MirrorOverridesToGlobal(ctx context.Context, modelName string, clearedKeys map[string]bool)
 }
 
 type modelService struct {
@@ -53,6 +70,9 @@ type modelService struct {
 	provService    ProviderService
 	globalMetaRepo repository.GlobalMetadataRepository
 	mappingRepo    repository.ModelMappingRepository
+	// overrideRepo is optional (nil in tests): needed by
+	// MirrorOverridesToGlobal to read the effective override state.
+	overrideRepo repository.ModelOverrideRepository
 
 	// Codex discovery collaborators (§4.7), wired post-construction via
 	// SetCodexDiscovery because the OAuth service is created after this one.
@@ -79,6 +99,12 @@ func NewModelService(
 		globalMetaRepo: globalMetaRepo,
 		mappingRepo:    mappingRepo,
 	}
+}
+
+// SetOverrideRepo wires the optional override repository used by
+// MirrorOverridesToGlobal (avoiding a constructor signature change).
+func (s *modelService) SetOverrideRepo(repo repository.ModelOverrideRepository) {
+	s.overrideRepo = repo
 }
 
 type openAIModelsResponse struct {
@@ -207,8 +233,147 @@ func (s *modelService) ToggleDisabled(ctx context.Context, id int64, disabled bo
 	return s.modelRepo.ToggleDisabled(ctx, id, disabled, duration, reason)
 }
 
+func (s *modelService) SetRateLimitIsolated(ctx context.Context, id int64, isolated bool) error {
+	return s.modelRepo.SetRateLimitIsolated(ctx, id, isolated)
+}
+
 func (s *modelService) DeleteStaleDisabled(ctx context.Context) (int64, error) {
 	return s.modelRepo.DeleteStaleDisabled(ctx)
+}
+
+// MirrorGlobalMetadata copies global metadata (m.*) for modelName into
+// model_tags (mc.*) for every enabled model row carrying that name — the same
+// bridge the Discover flow applies (Discover's globalMetaRepo → tagRepo copy).
+// Filters and sorts evaluate mc.* attributes, so metadata written directly to
+// model_metadata_global (UI "Add Model", PUT /model-metadata) only becomes
+// filterable after this sync.
+//
+// Efforts are taken from the metadata rows themselves; existing tags for those
+// efforts are merged (global metadata wins) so nothing is lost. Best-effort:
+// any repo error is logged and skipped.
+func (s *modelService) MirrorGlobalMetadata(ctx context.Context, modelName string) {
+	if s == nil || s.globalMetaRepo == nil || s.tagRepo == nil || modelName == "" {
+		return
+	}
+
+	// All per-effort metadata rows for this model name.
+	metadata, err := s.globalMetaRepo.GetByModel(ctx, modelName)
+	if err != nil || len(metadata) == 0 {
+		if err != nil {
+			slog.Warn("metadata mirror: load failed", "model", modelName, "error", err)
+		}
+		return
+	}
+
+	// Every model row with this name (a model may exist on several providers).
+	allModels, err := s.modelRepo.ListAll(ctx)
+	if err != nil {
+		slog.Warn("metadata mirror: list models failed", "model", modelName, "error", err)
+		return
+	}
+
+	for _, m := range allModels {
+		if m.Name != modelName {
+			continue
+		}
+		for effort, tags := range metadata {
+			if len(tags) == 0 {
+				continue
+			}
+			// Merge over existing tags for this effort, global metadata wins.
+			merged := make(map[string]string, len(tags))
+			existing, err := s.tagRepo.GetByModelEffort(ctx, m.ID, effort)
+			if err != nil {
+				slog.Warn("metadata mirror: load tags failed", "model", modelName, "error", err)
+				continue
+			}
+			for _, t := range existing {
+				merged[t.Key] = t.Value
+			}
+			for k, v := range tags {
+				merged[k] = v
+			}
+			if err := s.tagRepo.Set(ctx, m.ID, effort, merged); err != nil {
+				slog.Warn("metadata mirror: write tags failed", "model", modelName, "effort", effort, "error", err)
+			}
+		}
+	}
+}
+
+// MirrorOverridesToGlobal rewrites the global metadata layer (m.*) for
+// modelName from the effective override state (see ModelService docs).
+// Layering per (model, effort): base = m.* metadata, then per-key overrides
+// applied on top; keys in clearedKeys are dropped from m.* entirely.
+// Best-effort: errors are logged, not returned.
+func (s *modelService) MirrorOverridesToGlobal(ctx context.Context, modelName string, clearedKeys map[string]bool) {
+	if s == nil || s.globalMetaRepo == nil || modelName == "" {
+		return
+	}
+	if s.overrideRepo == nil {
+		return
+	}
+
+	allModels, err := s.modelRepo.ListAll(ctx)
+	if err != nil {
+		slog.Warn("override mirror: list models failed", "model", modelName, "error", err)
+		return
+	}
+
+	for _, m := range allModels {
+		if m.Name != modelName {
+			continue
+		}
+
+		// Efforts known for this model: from m.* rows plus override rows.
+		gmByEffort, err := s.globalMetaRepo.GetByModel(ctx, modelName)
+		if err != nil {
+			slog.Warn("override mirror: load metadata failed", "model", modelName, "error", err)
+			return
+		}
+		efforts := make(map[string]bool, len(gmByEffort)+1)
+		for effort := range gmByEffort {
+			efforts[effort] = true
+		}
+		if overrideEfforts, err := s.overrideRepo.GetEffortsByModel(ctx, m.ID); err == nil {
+			for _, e := range overrideEfforts {
+				efforts[e] = true
+			}
+		}
+
+		for effort := range efforts {
+			overrides, err := s.overrideRepo.GetByModelAndEffort(ctx, m.ID, effort)
+			if err != nil {
+				slog.Warn("override mirror: load overrides failed", "model", modelName, "error", err)
+				continue
+			}
+
+			// Effective m.* = current m.* with overrides applied per key.
+			merged := make(map[string]string, len(gmByEffort[effort])+len(overrides))
+			for k, v := range gmByEffort[effort] {
+				merged[k] = v
+			}
+			// Keys cleared in the triggering write are removed from m.* —
+			// their override row is gone, so nothing shadows them anymore.
+			for key := range clearedKeys {
+				delete(merged, key)
+			}
+			// Remaining overrides apply on top.
+			for _, o := range overrides {
+				if o.Value == "" {
+					delete(merged, o.Key)
+					continue
+				}
+				merged[o.Key] = o.Value
+			}
+
+			if err := s.globalMetaRepo.Set(ctx, modelName, effort, merged); err != nil {
+				slog.Warn("override mirror: write metadata failed", "model", modelName, "effort", effort, "error", err)
+			}
+		}
+	}
+
+	// Keep mc.* tags consistent with the new m.* values.
+	s.MirrorGlobalMetadata(ctx, modelName)
 }
 
 func fetchModels(baseURL, apiKey string, apiType models.APIType) ([]string, error) {
@@ -378,6 +543,7 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelEffortEntry, error) 
 					Disabled:          m.Disabled,
 					DisabledUntil:     m.DisabledUntil,
 					DisabledReason:    m.DisabledReason,
+					RateLimitIsolated: m.RateLimitIsolated,
 					Tags:              targetModelTags,
 					GlobalMetadata:    gm,
 					MappingTargetName: mappingTarget,
@@ -415,17 +581,18 @@ func (s *modelService) ListAll(ctx context.Context) ([]ModelEffortEntry, error) 
 				}
 
 				result = append(result, ModelEffortEntry{
-					ModelID:         m.ID,
-					ModelName:       m.Name,
-					ProviderID:      m.ProviderID,
-					ProviderName:    providerName,
-					ReasoningEffort: effort,
-					Disabled:        m.Disabled,
-					DisabledUntil:   m.DisabledUntil,
-					DisabledReason:  m.DisabledReason,
-					Tags:            tagMap,
-					GlobalMetadata:  gm,
-					CreatedAt:       m.CreatedAt,
+					ModelID:           m.ID,
+					ModelName:         m.Name,
+					ProviderID:        m.ProviderID,
+					ProviderName:      providerName,
+					ReasoningEffort:   effort,
+					Disabled:          m.Disabled,
+					DisabledUntil:     m.DisabledUntil,
+					DisabledReason:    m.DisabledReason,
+					RateLimitIsolated: m.RateLimitIsolated,
+					Tags:              tagMap,
+					GlobalMetadata:    gm,
+					CreatedAt:         m.CreatedAt,
 				})
 			}
 		}

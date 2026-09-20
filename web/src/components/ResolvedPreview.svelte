@@ -2,7 +2,15 @@
   import { apiFetch } from '../lib/api.js';
   import { metadataFields } from '../lib/stores.js';
 
-  let { vmId = null, filterExpr = null, sortExpr = null, composition = null, previewMode = false } = $props();
+  let {
+    vmId = null,
+    filterExpr = null,
+    sortExpr = null,
+    composition = null,
+    previewMode = false,
+    disabledGlobalSortIds = [],
+    disabledGlobalFilterIds = []
+  } = $props();
 
   let resolved = $state([]);
   let apiFilter = $state(null);
@@ -46,6 +54,8 @@
         body.filter_expr = filterExpr || {};
         body.sort_expr = sortExpr || [];
       }
+      body.disabled_global_sort_conditions = disabledGlobalSortIds;
+      body.disabled_global_filter_conditions = disabledGlobalFilterIds;
       const data = await apiFetch('/api/v1/virtual-models/preview', {
         method: 'POST',
         body
@@ -71,6 +81,8 @@
     const s = sortExpr;
     const c = composition;
     const pm = previewMode;
+    const ds = disabledGlobalSortIds;
+    const df = disabledGlobalFilterIds;
 
     if (pm) {
       schedulePreview();

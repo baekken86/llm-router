@@ -100,6 +100,7 @@
         title="Toggle sort"
       >S</button>
       <button
+        type="button"
         class="text-xs bg-gray-700 text-red-400 hover:bg-red-900 hover:text-red-300 px-2 py-1 rounded ml-auto shrink-0"
         onclick={(e) => { e.stopPropagation(); onRemove(node.__id); }}
         title="Remove source"
@@ -202,6 +203,7 @@
       >{node._expanded ? '▾' : '▸'}</button>
 
       <button
+        type="button"
         class="text-xs bg-gray-700 text-red-400 hover:bg-red-900 hover:text-red-300 px-2 py-1 rounded ml-auto shrink-0"
         onclick={(e) => { e.stopPropagation(); onRemove(node.__id); }}
         title="Remove operation"

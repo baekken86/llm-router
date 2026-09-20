@@ -8,25 +8,25 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/chris/llm-router/internal/proxy"
 	"github.com/chris/llm-router/internal/repository"
+	"github.com/go-chi/chi/v5"
 )
 
 type StatsData struct {
-	TotalRequests      int                     `json:"total_requests"`
-	Successes          int                     `json:"successes"`
-	Failures           int                     `json:"failures"`
-	InputTokens        int                     `json:"input_tokens"`
-	OutputTokens       int                     `json:"output_tokens"`
-	CachedTokens       int                     `json:"cached_tokens"`
-	ReasoningTokens    int                     `json:"reasoning_tokens"`
-	RTKIntercepts      int                     `json:"rtk_intercepts"`
-	RTKSavedTokens     int                     `json:"rtk_saved_tokens"`
-	CavemanIntercepts  int                     `json:"caveman_intercepts"`
-	CavemanSavedTokens int                     `json:"caveman_saved_tokens"`
-	ByVirtualModel     map[string]*ModelStat   `json:"by_virtual_model"`
-	ByProvider         map[string]*ModelStat   `json:"by_provider"`
+	TotalRequests      int                   `json:"total_requests"`
+	Successes          int                   `json:"successes"`
+	Failures           int                   `json:"failures"`
+	InputTokens        int                   `json:"input_tokens"`
+	OutputTokens       int                   `json:"output_tokens"`
+	CachedTokens       int                   `json:"cached_tokens"`
+	ReasoningTokens    int                   `json:"reasoning_tokens"`
+	RTKIntercepts      int                   `json:"rtk_intercepts"`
+	RTKSavedTokens     int                   `json:"rtk_saved_tokens"`
+	CavemanIntercepts  int                   `json:"caveman_intercepts"`
+	CavemanSavedTokens int                   `json:"caveman_saved_tokens"`
+	ByVirtualModel     map[string]*ModelStat `json:"by_virtual_model"`
+	ByProvider         map[string]*ModelStat `json:"by_provider"`
 }
 
 type ModelStat struct {
@@ -39,16 +39,16 @@ type ModelStat struct {
 }
 
 type StatsHandler struct {
-	mu    sync.RWMutex
-	stats StatsData
-	logs  []proxy.RequestLog
+	mu      sync.RWMutex
+	stats   StatsData
+	logs    []proxy.RequestLog
 	maxLogs int
 
-	logRepo  *repository.LogRepository
-	logger   *slog.Logger
+	logRepo *repository.LogRepository
+	logger  *slog.Logger
 
-	clients    map[chan proxy.RequestLog]bool
-	clientsMu  sync.Mutex
+	clients   map[chan proxy.RequestLog]bool
+	clientsMu sync.Mutex
 }
 
 func NewStatsHandler(logRepo *repository.LogRepository, logger *slog.Logger) *StatsHandler {
@@ -57,11 +57,11 @@ func NewStatsHandler(logRepo *repository.LogRepository, logger *slog.Logger) *St
 			ByVirtualModel: make(map[string]*ModelStat),
 			ByProvider:     make(map[string]*ModelStat),
 		},
-		logs:     make([]proxy.RequestLog, 0, 1000),
-		maxLogs:  1000,
-		logRepo:  logRepo,
-		logger:   logger,
-		clients:  make(map[chan proxy.RequestLog]bool),
+		logs:    make([]proxy.RequestLog, 0, 1000),
+		maxLogs: 1000,
+		logRepo: logRepo,
+		logger:  logger,
+		clients: make(map[chan proxy.RequestLog]bool),
 	}
 	h.loadFromDB()
 	return h
@@ -168,14 +168,7 @@ func (h *StatsHandler) RecordLog(log proxy.RequestLog) {
 				existing.ProviderName == log.ProviderName && existing.ModelName == log.ModelName &&
 				existing.Status == "streaming" {
 				h.logs[i] = log
-				h.clientsMu.Lock()
-				for ch := range h.clients {
-					select {
-					case ch <- log:
-					default:
-					}
-				}
-				h.clientsMu.Unlock()
+				h.broadcast(log)
 				return
 			}
 		}
@@ -183,14 +176,7 @@ func (h *StatsHandler) RecordLog(log proxy.RequestLog) {
 		if len(h.logs) > h.maxLogs {
 			h.logs = h.logs[:h.maxLogs]
 		}
-		h.clientsMu.Lock()
-		for ch := range h.clients {
-			select {
-			case ch <- log:
-			default:
-			}
-		}
-		h.clientsMu.Unlock()
+		h.broadcast(log)
 		return
 	}
 
@@ -223,7 +209,19 @@ func (h *StatsHandler) RecordLog(log proxy.RequestLog) {
 		}
 	}
 
-	if log.Type != "proxy" {
+	// "attempt" rows are progress markers: they join the in-memory log feed
+	// and are broadcast to SSE clients at the end of this function. They ARE
+	// persisted to the DB via the generalized persist condition below (so
+	// they survive a web UI refresh), but they never contribute to stats.
+	if log.Type == "attempt" {
+		h.logs = append([]proxy.RequestLog{log}, h.logs...)
+		if len(h.logs) > h.maxLogs {
+			h.logs = h.logs[:h.maxLogs]
+		}
+	}
+
+	// Other non-proxy rows ("incoming") keep their existing handling.
+	if log.Type != "proxy" && log.Type != "attempt" {
 		h.logs = append([]proxy.RequestLog{log}, h.logs...)
 		if len(h.logs) > h.maxLogs {
 			h.logs = h.logs[:h.maxLogs]
@@ -277,16 +275,13 @@ func (h *StatsHandler) RecordLog(log proxy.RequestLog) {
 		}
 	}
 
-	h.clientsMu.Lock()
-	for ch := range h.clients {
-		select {
-		case ch <- log:
-		default:
-		}
-	}
-	h.clientsMu.Unlock()
+	h.broadcast(log)
 
-	if h.logRepo != nil && log.Type == "proxy" && log.Status != "streaming" {
+	// "proxy" and "attempt" rows are persisted so they survive restarts and
+	// UI refreshes. "streaming" rows are transient progress snapshots and are
+	// not persisted (attempt rows never carry Status, so they always land
+	// here).
+	if h.logRepo != nil && (log.Type == "proxy" || log.Type == "attempt") && log.Status != "streaming" {
 		dbLog := repository.RequestLog{
 			Type:               log.Type,
 			Timestamp:          log.Timestamp,
@@ -301,6 +296,7 @@ func (h *StatsHandler) RecordLog(log proxy.RequestLog) {
 			OutputTokens:       log.OutputTokens,
 			CachedTokens:       log.CachedTokens,
 			ReasoningTokens:    log.ReasoningTokens,
+			ReasoningEffort:    log.ReasoningEffort,
 			ErrorMessage:       log.ErrorMessage,
 			RetryCount:         log.RetryCount,
 			FallbackCount:      log.FallbackCount,
@@ -313,6 +309,19 @@ func (h *StatsHandler) RecordLog(log proxy.RequestLog) {
 			h.logger.Warn("failed to persist request log", "error", err)
 		}
 	}
+}
+
+// broadcast sends a log entry to every connected SSE log client without
+// blocking when a client's buffer is full.
+func (h *StatsHandler) broadcast(log proxy.RequestLog) {
+	h.clientsMu.Lock()
+	for ch := range h.clients {
+		select {
+		case ch <- log:
+		default:
+		}
+	}
+	h.clientsMu.Unlock()
 }
 
 func (h *StatsHandler) getOrCreateVM(name string) *ModelStat {

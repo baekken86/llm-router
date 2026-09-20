@@ -161,9 +161,9 @@
     try {
       const metadata = {};
       for (const [key, value] of Object.entries(newMetadata)) {
-        if (value !== '') {
+        if (value !== '' && value !== null && value !== undefined) {
           const raw = key.startsWith('mc.') ? key.slice(3) : key;
-          metadata[raw] = value;
+          metadata[raw] = String(value);
         }
       }
       await apiFetch('/api/v1/model-metadata', {

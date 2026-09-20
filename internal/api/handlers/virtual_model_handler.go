@@ -70,7 +70,7 @@ func (h *VirtualModelHandler) Preview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resolved, err := h.vmService.PreviewResolve(r.Context(), req.FilterExpr, req.SortExpr, req.IncludeModels, req.Composition)
+	resolved, err := h.vmService.PreviewResolve(r.Context(), req.FilterExpr, req.SortExpr, req.IncludeModels, req.Composition, req.DisabledSortConditions, req.DisabledFilterConditions)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

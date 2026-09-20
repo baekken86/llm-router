@@ -223,7 +223,7 @@ func (m *mockVMService) Update(_ context.Context, _ int64, _ models.UpdateVirtua
 func (m *mockVMService) Delete(_ context.Context, _ int64) error {
 	panic("not used")
 }
-func (m *mockVMService) PreviewResolve(_ context.Context, _ json.RawMessage, _ json.RawMessage, _ json.RawMessage, _ *models.CompositionNode) ([]service.ResolvedModel, error) {
+func (m *mockVMService) PreviewResolve(_ context.Context, _ json.RawMessage, _ json.RawMessage, _ json.RawMessage, _ *models.CompositionNode, _ []int64, _ []int64) ([]service.ResolvedModel, error) {
 	panic("not used")
 }
 func (m *mockVMService) GetDependencies(_ context.Context) (map[string][]string, error) {
@@ -1353,5 +1353,173 @@ func TestHandleChatCompletionStream_Codex_Success(t *testing.T) {
 	}
 	if !strings.Contains(respBody, "[DONE]") {
 		t.Errorf("stream missing [DONE]: %s", respBody)
+	}
+}
+
+// --- attempt log rows ---
+
+// A request that fails on model 1 and succeeds on model 2 must produce an
+// attempt row (status 0) for BOTH models, each written BEFORE its result
+// row (dispatch-time logging, verified via logChan ordering), plus the
+// existing proxy result rows.
+func TestHandleChatCompletion_AttemptRowsBeforeResults(t *testing.T) {
+	failCount := 0
+	var mu sync.Mutex
+	failSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		failCount++
+		mu.Unlock()
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"boom"}`))
+	}))
+	defer failSrv.Close()
+
+	var hitOK bool
+	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hitOK = true
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer okSrv.Close()
+
+	vmName := "test-attempt-vm"
+	vmSvc := &mockVMService{
+		getByNameFn: func(_ context.Context, name string) (*models.VirtualModel, error) {
+			if name != vmName {
+				return nil, nil
+			}
+			return &models.VirtualModel{ID: 11, Name: vmName, MaxRetries: 0}, nil
+		},
+		resolveFn: func(_ context.Context, _ *models.VirtualModel) ([]service.ResolvedModel, error) {
+			return []service.ResolvedModel{
+				{
+					Model:    models.Model{ID: 1, ProviderID: 1, Name: "fail-model"},
+					Provider: models.Provider{ID: 1, Name: "prov-fail", APIType: models.APITypeOpenAI, BaseURL: failSrv.URL, APIKeyEncrypted: "enc:test"},
+				},
+				{
+					Model:    models.Model{ID: 2, ProviderID: 2, Name: "ok-model"},
+					Provider: models.Provider{ID: 2, Name: "prov-ok", APIType: models.APITypeOpenAI, BaseURL: okSrv.URL, APIKeyEncrypted: "enc:test"},
+				},
+			}, nil
+		},
+	}
+
+	engine, logChan := newTestEngine(vmSvc, &mockProviderService{
+		decryptKeyFn: func(_ string) (string, error) { return "test-key", nil },
+	}, &mockOAuthService{
+		getTokenFn: func(_ context.Context, _ int64) (string, error) { return "", io.EOF },
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-attempt-vm","messages":[{"role":"user","content":"hi"}]}`))
+	w := httptest.NewRecorder()
+	engine.HandleChatCompletion(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HTTP status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	if !hitOK {
+		t.Error("expected fallback to reach the success server")
+	}
+
+	logs := drainLogs(t, logChan)
+
+	type row struct {
+		typ      string
+		provider string
+		status   int
+	}
+	// Expect, in order: incoming, attempt(fail-model, 0), proxy(500 fail),
+	// attempt(ok-model, 0), proxy(200 ok).
+	want := []row{
+		{"incoming", "", http.StatusOK},
+		{"attempt", "prov-fail", 0},
+		{"proxy", "prov-fail", http.StatusInternalServerError},
+		{"attempt", "prov-ok", 0},
+		{"proxy", "prov-ok", http.StatusOK},
+	}
+	if len(logs) != len(want) {
+		for i, l := range logs {
+			t.Logf("log[%d]: type=%s provider=%q model=%q status=%d err=%q", i, l.Type, l.ProviderName, l.ModelName, l.StatusCode, l.ErrorMessage)
+		}
+		t.Fatalf("expected %d log rows, got %d", len(want), len(logs))
+	}
+	for i, w := range want {
+		got := logs[i]
+		if got.Type != w.typ || got.ProviderName != w.provider || got.StatusCode != w.status {
+			t.Errorf("log[%d] = (%s, %q, %d), want (%s, %q, %d)",
+				i, got.Type, got.ProviderName, got.StatusCode, w.typ, w.provider, w.status)
+		}
+	}
+	for _, l := range logs {
+		if l.Type == "attempt" {
+			if l.ErrorMessage != "" {
+				t.Errorf("dispatch attempt row must have no error message, got %q", l.ErrorMessage)
+			}
+			if l.Timestamp.IsZero() {
+				t.Error("attempt row Timestamp must be set (dispatch moment)")
+			}
+		}
+	}
+}
+
+// A model skipped before dispatch (model rate limited) must NOT produce any
+// attempt row — only real upstream dispatches are logged as attempts. The
+// request's only proxy row is the final 502 all-models-failed entry.
+func TestHandleChatCompletionStream_SkippedModel_NoAttemptRow(t *testing.T) {
+	tracker := &RateLimitTracker{}
+	tracker.MarkModelLimited(1, "limited-model", time.Minute)
+
+	vmName := "test-skip-vm"
+	vmSvc := &mockVMService{
+		getByNameFn: func(_ context.Context, name string) (*models.VirtualModel, error) {
+			if name != vmName {
+				return nil, nil
+			}
+			return &models.VirtualModel{ID: 12, Name: vmName, MaxRetries: 0}, nil
+		},
+		resolveFn: func(_ context.Context, _ *models.VirtualModel) ([]service.ResolvedModel, error) {
+			return []service.ResolvedModel{
+				{
+					Model:    models.Model{ID: 1, ProviderID: 1, Name: "limited-model"},
+					Provider: models.Provider{ID: 1, Name: "prov-limited", APIType: models.APITypeOpenAI, BaseURL: "http://unused", APIKeyEncrypted: "enc:test"},
+				},
+			}, nil
+		},
+	}
+
+	engine, logChan := newTestEngine(vmSvc, &mockProviderService{
+		decryptKeyFn: func(_ string) (string, error) { return "test-key", nil },
+	}, &mockOAuthService{
+		getTokenFn: func(_ context.Context, _ int64) (string, error) { return "", io.EOF },
+	})
+	engine.rateLimits = tracker
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-skip-vm","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	w := httptest.NewRecorder()
+	engine.HandleChatCompletionStream(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("HTTP status = %d, want 502", w.Code)
+	}
+
+	logs := drainLogs(t, logChan)
+
+	for _, l := range logs {
+		if l.Type == "attempt" {
+			t.Errorf("skipped model must not produce an attempt row, got %+v", l)
+		}
+	}
+	proxies := 0
+	for _, l := range logs {
+		if l.Type == "proxy" {
+			proxies++
+		}
+	}
+	if proxies != 1 {
+		t.Fatalf("expected exactly 1 proxy row (all models failed), got %d; logs = %+v", proxies, logs)
+	}
+	final := logs[len(logs)-1]
+	if final.StatusCode != http.StatusBadGateway || final.ErrorMessage != "all models failed" {
+		t.Errorf("final row = (%d, %q), want (502, all models failed)", final.StatusCode, final.ErrorMessage)
 	}
 }

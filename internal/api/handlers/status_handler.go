@@ -57,7 +57,8 @@ type ProviderStatus struct {
 }
 
 type StatusResponse struct {
-	Providers []ProviderStatus `json:"providers"`
+	Providers        []ProviderStatus             `json:"providers"`
+	ModelRateLimits  []proxy.ModelRateLimitStatus `json:"model_rate_limits,omitempty"`
 }
 
 func (h *StatusHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +136,7 @@ func (h *StatusHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(StatusResponse{Providers: result})
+	json.NewEncoder(w).Encode(StatusResponse{Providers: result, ModelRateLimits: h.engine.GetModelRateLimitStatus()})
 }
 
 func (h *StatusHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {

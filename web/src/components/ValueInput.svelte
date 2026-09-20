@@ -2,7 +2,7 @@
   import { getFieldValues, getFieldMinMax } from '../lib/fields.js';
   import { metadataFields } from '../lib/stores.js';
 
-  let { fieldKey = '', fieldType = 'string', operator = '', value = '', onChange } = $props();
+  let { fieldKey = '', fieldType = 'string', operator = '', value = '', onChange, class: className = '' } = $props();
 
   let knownValues = $derived(getFieldValues($metadataFields, fieldKey));
   let minMax = $derived(getFieldMinMax($metadataFields, fieldKey));
@@ -33,7 +33,7 @@
 </script>
 
 {#if operator === 'in' && knownValues}
-  <div class="flex flex-wrap gap-1">
+  <div class="flex flex-wrap gap-1 {className}">
     {#each knownValues as v}
       <button
         class="px-2 py-1 text-xs rounded {selectedValues.includes(v) ? 'bg-emerald-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}"
@@ -44,7 +44,7 @@
     {/each}
   </div>
 {:else if fieldType === 'boolean'}
-  <div class="flex gap-2">
+  <div class="flex gap-2 {className}">
     <button
       class="px-3 py-1 text-xs rounded {value === true ? 'bg-emerald-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}"
       onclick={() => handleToggle('true')}
@@ -59,7 +59,7 @@
     </button>
   </div>
 {:else if fieldType === 'number'}
-  <div class="flex items-center gap-2">
+  <div class="flex items-center gap-2 {className}">
     <input
       type="number"
       {value}
@@ -85,7 +85,7 @@
   <select
     {value}
     onchange={(e) => onChange(e.target.value)}
-    class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+    class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500 {className}"
   >
     <option value="">Select...</option>
     {#each knownValues as v}
@@ -98,6 +98,6 @@
     {value}
     oninput={handleInput}
     placeholder="Value..."
-    class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500"
+    class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-emerald-500 {className}"
   />
 {/if}

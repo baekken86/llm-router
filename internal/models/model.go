@@ -11,6 +11,11 @@ type Model struct {
 	DisabledReason string     `json:"disabled_reason,omitempty"`
 	Tags          []Tag      `json:"tags,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
+
+	// RateLimitIsolated: when true, a 429 from this model only cools down
+	// this model — not the whole provider — and provider-level cooldowns
+	// never block requests for it.
+	RateLimitIsolated bool `json:"rate_limit_isolated"`
 }
 
 type Tag struct {

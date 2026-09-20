@@ -987,6 +987,11 @@ func sortResolved(resolved []ResolvedModelInfo, sortExpr models.SortExpr) {
 		tagsJ := resolved[j].Tags
 
 		for _, s := range sortExpr {
+			// Disabled entries are skipped entirely, as if not present,
+			// matching the service-side compareModels semantics.
+			if s.Disabled {
+				continue
+			}
 			if s.IsCondition() {
 				iMatch := evalFilterNodeTUI(*s.Condition, tagsI)
 				jMatch := evalFilterNodeTUI(*s.Condition, tagsJ)
@@ -1056,6 +1061,11 @@ func matchesFilter(tags map[string]string, filter models.FilterNode) bool {
 }
 
 func evalFilterNodeTUI(node models.FilterNode, tags map[string]string) bool {
+	// Disabled nodes behave as if not present (neutral element true),
+	// matching the service-side evalFilterNode semantics.
+	if node.Disabled {
+		return true
+	}
 	if node.IsLeaf() {
 		val, exists := tags[node.Key]
 		if !exists {
@@ -1066,6 +1076,9 @@ func evalFilterNodeTUI(node models.FilterNode, tags map[string]string) bool {
 
 	if len(node.And) > 0 {
 		for _, child := range node.And {
+			if child.Disabled {
+				continue // disabled children are ignored, as if removed
+			}
 			if !evalFilterNodeTUI(child, tags) {
 				return false
 			}
@@ -1075,6 +1088,9 @@ func evalFilterNodeTUI(node models.FilterNode, tags map[string]string) bool {
 
 	if len(node.Or) > 0 {
 		for _, child := range node.Or {
+			if child.Disabled {
+				continue // disabled children are ignored, as if removed
+			}
 			if evalFilterNodeTUI(child, tags) {
 				return true
 			}
@@ -1083,6 +1099,9 @@ func evalFilterNodeTUI(node models.FilterNode, tags map[string]string) bool {
 	}
 
 	if node.Not != nil {
+		if node.Not.Disabled {
+			return true // vacuous NOT: disabled child behaves as if removed
+		}
 		return !evalFilterNodeTUI(*node.Not, tags)
 	}
 

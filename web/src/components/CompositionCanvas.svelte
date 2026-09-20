@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/api.js';
   import { assignCompositionIds, autoUnwrap, removeNodeFromComposition, findNodeInComposition } from '../lib/treeUtils.js';
+  import RemoveOperationDialog from './RemoveOperationDialog.svelte';
+  import { flattenNodeFromComposition } from '../lib/treeUtils.js';
   import CompositionNode from './CompositionNode.svelte';
 
   let {
@@ -76,6 +78,7 @@
     if (internalUpdate) { internalUpdate = false; return; }
     if (node === lastInitSource) return;
     lastInitSource = node;
+    pendingRemoveId = null;
     initTree(node);
   });
 
@@ -159,6 +162,34 @@
     } else {
       tree = wrapInOperation(tree, newOp);
     }
+    assignCompositionIds(tree);
+    emitChange();
+  }
+
+  let pendingRemoveId = $state(null);
+  let pendingRemoval = $derived(findNodeInComposition(tree, pendingRemoveId));
+  let removalMessage = $derived(
+    'Remove with children deletes this operation and its entire subtree. Flatten children removes only the operation. ' +
+    (pendingRemoval?.parent === null
+      ? 'At the root, one source becomes the root; multiple sources are kept under a new Union because compositions require a single root. '
+      : 'Its children move up into the parent at the same position, in their current order. ') +
+    (pendingRemoval?.node?.filter_expr || pendingRemoval?.node?.sort_expr?.length
+      ? 'Filters and sorts on this operation will be discarded, not transferred.' : '')
+  );
+
+  function requestRemoveItem(id) {
+    const info = findNodeInComposition(tree, id);
+    if (info?.node?.operation && info.node.sources?.length) pendingRemoveId = id;
+    else removeItem(id);
+  }
+
+  function confirmRemoval(flatten) {
+    const id = pendingRemoveId;
+    pendingRemoveId = null;
+    if (!findNodeInComposition(tree, id)) return;
+    if (!flatten) { removeItem(id); return; }
+    tree = flattenNodeFromComposition(tree, id);
+    if (tree?.operation && !tree.__id) tree._expanded = true;
     assignCompositionIds(tree);
     emitChange();
   }
@@ -406,6 +437,14 @@
   }
 </script>
 
+<RemoveOperationDialog
+  open={!!pendingRemoval}
+  message={removalMessage}
+  onRemove={() => confirmRemoval(false)}
+  onFlatten={() => confirmRemoval(true)}
+  onCancel={() => { pendingRemoveId = null; }}
+/>
+
 <div class="space-y-1"
   role="list"
   ondragover={handleCanvasDragOver}
@@ -437,7 +476,7 @@
       onSetOperation={setItemOperation}
       onSetFilter={setItemFilter}
       onSetSort={setItemSort}
-      onRemove={removeItem}
+      onRemove={requestRemoveItem}
       onAddFilterSource={addFilterSource}
       onAddOperation={addOperation}
     />

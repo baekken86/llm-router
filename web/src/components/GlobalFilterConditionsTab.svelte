@@ -19,6 +19,13 @@
   let formPriority = $state(0);
   let formFilterExpr = $state({ and: [{ key: '', op: 'eq', value: '' }] });
 
+  // Ids of ALL sort conditions, used by the edit-page preview to disable
+  // every other global condition so only the edited one applies. Local state
+  // only — the shared stores stay owned by their own tab.
+  let allSortIds = $state([]);
+  // List preview: additionally apply the enabled global sort crits.
+  let sortCheckbox = $state(false);
+
   const sorted = $derived.by(() =>
     [...conditions].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
   );
@@ -32,10 +39,10 @@
     );
   });
 
-  const previewFilterExpr = $derived.by(() => {
-    if (editingId !== null) {
-      return formFilterExpr || null;
-    }
+  // List preview always uses the enabled-conditions derivation; the separate
+  // edit page passes the live form expression in its own preview. Null means
+  // no filter applies (preview shows all models).
+  const enabledFilterExpr = $derived.by(() => {
     const nodes = sorted
       .filter(c => c.enabled !== false)
       .map(c => c.filter_expr)
@@ -45,13 +52,22 @@
     return { and: nodes };
   });
 
+  // All condition ids of this type — passed as disabled so the backend does
+  // not merge the stored global filters on top of the explicit expression.
+  const allFilterIds = $derived(conditions.map(c => c.id));
+
   let previewOpen = $state(true);
 
   async function load() {
     loading = true;
     try {
-      conditions = await apiFetch('/api/v1/global-filter-conditions');
+      const [conds, otherConds] = await Promise.all([
+        apiFetch('/api/v1/global-filter-conditions'),
+        apiFetch('/api/v1/global-sort-conditions').catch(() => []),
+      ]);
+      conditions = conds;
       filterConditions.set(conditions);
+      allSortIds = (Array.isArray(otherConds) ? otherConds : []).map(c => c.id);
     } catch (e) {
       addToast(e.message, 'error');
     } finally {
@@ -197,35 +213,19 @@
 </script>
 
 <div>
-  <div class="flex items-center justify-between mb-6">
-    <h2 class="text-xl font-bold text-gray-100">Filter Conditions</h2>
-    <button
-      class="text-xs text-gray-500 hover:text-gray-300"
-      onclick={() => previewOpen = !previewOpen}
-    >
-      {previewOpen ? '▾' : '▸'} Preview (enabled conditions)
-    </button>
-  </div>
-  <div class="flex items-center gap-4 mb-6">
-    <input
-      type="text"
-      placeholder="Filter by name..."
-      bind:value={filter}
-      class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-emerald-500"
-    />
-    <button
-      class="bg-emerald-600 hover:bg-emerald-700 text-white rounded px-4 py-2 text-sm font-medium"
-      onclick={openCreate}
-    >
-      + Add Condition
-    </button>
-  </div>
-
   {#if editingId !== null}
-    <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-6">
-      <h3 class="text-sm font-medium text-gray-300 mb-4">
-        {editingId === 'new' ? 'New Condition' : 'Edit Condition'}
-      </h3>
+    <button
+      type="button"
+      class="text-sm text-gray-400 hover:text-white mb-4 inline-block"
+      onclick={closeForm}
+    >
+      &larr; Back to Filter Conditions
+    </button>
+    <h2 class="text-xl font-bold text-gray-100 mb-6">
+      {editingId === 'new' ? 'New Condition' : `Edit Condition: ${formName}`}
+    </h2>
+
+    <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
       <form onsubmit={(e) => { e.preventDefault(); save(); }} class="space-y-4 max-w-3xl">
         <div>
           <label class="block text-sm text-gray-400 mb-1">Name</label>
@@ -285,98 +285,140 @@
         </div>
       </form>
     </div>
-  {/if}
 
-  {#if loading}
-    <p class="text-gray-500">Loading...</p>
-  {:else if filtered.length === 0}
-    <p class="text-gray-500">No filter conditions defined.</p>
-  {:else}
-    <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="text-gray-500 border-b border-gray-800">
-            <th class="text-left px-4 py-3">Enabled</th>
-            <th class="text-left px-4 py-3">Name</th>
-            <th class="text-left px-4 py-3">Description</th>
-            <th class="text-center px-4 py-3">Priority</th>
-            <th class="text-center px-4 py-3">Position</th>
-            <th class="text-center px-4 py-3"></th>
-            <th class="text-left px-4 py-3">Filter</th>
-            <th class="text-right px-4 py-3">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each filtered as c, i (c.id)}
-            <tr class="border-b border-gray-850 hover:bg-gray-850/50">
-              <td class="px-4 py-2.5">
-                <Switch
-                  checked={c.enabled !== false}
-                  onCheckedChange={(v) => toggleEnabled(c, v)}
-                  class="data-[state=checked]:bg-emerald-600 data-[state=unchecked]:bg-gray-700"
-                />
-              </td>
-              <td class="px-4 py-2.5 text-emerald-400 font-mono">{c.name}</td>
-              <td class="px-4 py-2.5 text-gray-300">{c.description}</td>
-              <td class="px-4 py-2.5 text-center text-gray-400 font-mono">{c.priority ?? 0}</td>
-              <td class="px-4 py-2.5 text-center text-gray-500">{c.position ?? 0}</td>
-              <td class="px-4 py-2.5 text-center whitespace-nowrap">
-                <button
-                  class="text-xs text-gray-500 hover:text-white px-1 {i === 0 ? 'invisible' : ''}"
-                  title="Move up (applied earlier)"
-                  onclick={() => moveRow(i, -1)}
-                >▲</button>
-                <button
-                  class="text-xs text-gray-500 hover:text-white px-1 {i === filtered.length - 1 ? 'invisible' : ''}"
-                  title="Move down (applied later)"
-                  onclick={() => moveRow(i, 1)}
-                >▼</button>
-              </td>
-              <td class="px-4 py-2.5 text-gray-400 text-xs font-mono max-w-md truncate" title={filterSummary(c.filter_expr)}>
-                {filterSummary(c.filter_expr)}
-              </td>
-              <td class="px-4 py-2.5 text-right">
-                <button
-                  class="text-xs text-gray-500 hover:text-emerald-400 mr-2"
-                  onclick={() => openEdit(c)}
-                >Edit</button>
-                {#if deleteConfirmId === c.id}
-                  <span class="text-xs text-gray-400 mr-2">Delete?</span>
-                  <button
-                    class="text-xs text-red-400 hover:text-red-300 mr-2"
-                    onclick={() => deleteCondition(c.id)}
-                  >Yes</button>
-                  <button
-                    class="text-xs text-gray-500 hover:text-gray-300"
-                    onclick={() => deleteConfirmId = null}
-                  >No</button>
-                {:else}
-                  <button
-                    class="text-xs text-gray-500 hover:text-red-400"
-                    onclick={() => deleteConfirmId = c.id}
-                  >Delete</button>
-                {/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
-  {/if}
-
-  {#if previewOpen}
     <div class="mt-8 bg-gray-900 border border-gray-800 rounded-lg p-4">
       <h3 class="text-sm font-medium text-gray-300 mb-2">
-        Preview <span class="text-gray-500 text-xs">(enabled conditions — per-VM overrides may disable some of these)</span>
+        Preview <span class="text-gray-500 text-xs">(this condition only — no other global conditions applied)</span>
       </h3>
-      {#if previewFilterExpr}
+      <ResolvedPreview
+        previewMode={true}
+        composition={{ filter_expr: formFilterExpr || null, sort_expr: [] }}
+        disabledGlobalSortIds={allSortIds}
+        disabledGlobalFilterIds={allFilterIds}
+      />
+    </div>
+  {:else}
+    <div class="flex items-center justify-between mb-6">
+      <h2 class="text-xl font-bold text-gray-100">Filter Conditions</h2>
+      <button
+        class="text-xs text-gray-500 hover:text-gray-300"
+        onclick={() => previewOpen = !previewOpen}
+      >
+        {previewOpen ? '▾' : '▸'} Preview (enabled conditions)
+      </button>
+    </div>
+    <div class="flex items-center gap-4 mb-6">
+      <input
+        type="text"
+        placeholder="Filter by name..."
+        bind:value={filter}
+        class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-emerald-500"
+      />
+      <button
+        class="bg-emerald-600 hover:bg-emerald-700 text-white rounded px-4 py-2 text-sm font-medium"
+        onclick={openCreate}
+      >
+        + Add Condition
+      </button>
+    </div>
+
+    {#if loading}
+      <p class="text-gray-500">Loading...</p>
+    {:else if filtered.length === 0}
+      <p class="text-gray-500">No filter conditions defined.</p>
+    {:else}
+      <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-gray-500 border-b border-gray-800">
+              <th class="text-left px-4 py-3">Enabled</th>
+              <th class="text-left px-4 py-3">Name</th>
+              <th class="text-left px-4 py-3">Description</th>
+              <th class="text-center px-4 py-3">Priority</th>
+              <th class="text-center px-4 py-3">Position</th>
+              <th class="text-center px-4 py-3"></th>
+              <th class="text-left px-4 py-3">Filter</th>
+              <th class="text-right px-4 py-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each filtered as c, i (c.id)}
+              <tr class="border-b border-gray-850 hover:bg-gray-850/50">
+                <td class="px-4 py-2.5">
+                  <Switch
+                    checked={c.enabled !== false}
+                    onCheckedChange={(v) => toggleEnabled(c, v)}
+                    class="data-[state=checked]:bg-emerald-600 data-[state=unchecked]:bg-gray-700"
+                  />
+                </td>
+                <td class="px-4 py-2.5 text-emerald-400 font-mono">{c.name}</td>
+                <td class="px-4 py-2.5 text-gray-300">{c.description}</td>
+                <td class="px-4 py-2.5 text-center text-gray-400 font-mono">{c.priority ?? 0}</td>
+                <td class="px-4 py-2.5 text-center text-gray-500">{c.position ?? 0}</td>
+                <td class="px-4 py-2.5 text-center whitespace-nowrap">
+                  <button
+                    class="text-xs text-gray-500 hover:text-white px-1 {i === 0 ? 'invisible' : ''}"
+                    title="Move up (applied earlier)"
+                    onclick={() => moveRow(i, -1)}
+                  >▲</button>
+                  <button
+                    class="text-xs text-gray-500 hover:text-white px-1 {i === filtered.length - 1 ? 'invisible' : ''}"
+                    title="Move down (applied later)"
+                    onclick={() => moveRow(i, 1)}
+                  >▼</button>
+                </td>
+                <td class="px-4 py-2.5 text-gray-400 text-xs font-mono max-w-md truncate" title={filterSummary(c.filter_expr)}>
+                  {filterSummary(c.filter_expr)}
+                </td>
+                <td class="px-4 py-2.5 text-right">
+                  <button
+                    class="text-xs text-gray-500 hover:text-emerald-400 mr-2"
+                    onclick={() => openEdit(c)}
+                  >Edit</button>
+                  {#if deleteConfirmId === c.id}
+                    <span class="text-xs text-gray-400 mr-2">Delete?</span>
+                    <button
+                      class="text-xs text-red-400 hover:text-red-300 mr-2"
+                      onclick={() => deleteCondition(c.id)}
+                    >Yes</button>
+                    <button
+                      class="text-xs text-gray-500 hover:text-gray-300"
+                      onclick={() => deleteConfirmId = null}
+                    >No</button>
+                  {:else}
+                    <button
+                      class="text-xs text-gray-500 hover:text-red-400"
+                      onclick={() => deleteConfirmId = c.id}
+                    >Delete</button>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+
+    {#if previewOpen}
+      <div class="mt-8 bg-gray-900 border border-gray-800 rounded-lg p-4">
+        <h3 class="text-sm font-medium text-gray-300 mb-2">
+          Preview <span class="text-gray-500 text-xs">(enabled conditions — per-VM overrides may disable some of these)</span>
+        </h3>
+        <div class="flex items-center gap-3 mb-3">
+          <Switch
+            checked={sortCheckbox}
+            onCheckedChange={(c) => sortCheckbox = c}
+            class="data-[state=checked]:bg-emerald-600 data-[state=unchecked]:bg-gray-700"
+          />
+          <span class="text-sm text-gray-400">Sort by global sort crits (enabled)</span>
+        </div>
         <ResolvedPreview
           previewMode={true}
-          composition={{ filter_expr: previewFilterExpr, sort_expr: [] }}
+          composition={{ filter_expr: enabledFilterExpr, sort_expr: [] }}
+          disabledGlobalFilterIds={allFilterIds}
+          disabledGlobalSortIds={sortCheckbox ? [] : allSortIds}
         />
-      {:else}
-        <p class="text-sm text-gray-500">No enabled filter conditions.</p>
-      {/if}
-    </div>
+      </div>
+    {/if}
   {/if}
 </div>

@@ -95,6 +95,10 @@ func (m *mockModelRepo) DisableByProviderExcept(_ context.Context, _ int64, _ []
 	return 0, nil
 }
 
+func (m *mockModelRepo) SetRateLimitIsolated(_ context.Context, id int64, isolated bool) error {
+	return nil
+}
+
 func (m *mockModelRepo) ToggleDisabled(_ context.Context, id int64, disabled bool, duration *time.Duration, reason string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -871,9 +875,18 @@ func TestApplySessionHeader_OpencodeHost(t *testing.T) {
 		"https://api.opencode.ai/v1",
 	} {
 		req, _ := http.NewRequest("POST", baseURL+"/v1/chat/completions", nil)
-		applySessionHeader(req, baseURL, "sess-123")
+		applyOpencodeHeaders(req, baseURL, "sess-123")
 		if got := req.Header.Get("X-Opencode-Session"); got != "sess-123" {
 			t.Errorf("baseURL %q: expected header sess-123, got %q", baseURL, got)
+		}
+		if got := req.Header.Get("User-Agent"); got != opencodeUserAgent {
+			t.Errorf("baseURL %q: expected User-Agent %q, got %q", baseURL, opencodeUserAgent, got)
+		}
+		if got := req.Header.Get("X-Opencode-Client"); got != "cli" {
+			t.Errorf("baseURL %q: expected X-Opencode-Client cli, got %q", baseURL, got)
+		}
+		if got := req.Header.Get("X-Opencode-Request"); got == "" {
+			t.Errorf("baseURL %q: expected non-empty X-Opencode-Request", baseURL)
 		}
 	}
 }
@@ -886,18 +899,74 @@ func TestApplySessionHeader_OtherHosts(t *testing.T) {
 		"https://localhost:11434/v1",
 	} {
 		req, _ := http.NewRequest("POST", baseURL+"/v1/chat/completions", nil)
-		applySessionHeader(req, baseURL, "sess-123")
+		applyOpencodeHeaders(req, baseURL, "sess-123")
 		if got := req.Header.Get("X-Opencode-Session"); got != "" {
 			t.Errorf("baseURL %q: expected no header, got %q", baseURL, got)
+		}
+		if got := req.Header.Get("X-Opencode-Client"); got != "" {
+			t.Errorf("baseURL %q: expected no X-Opencode-Client, got %q", baseURL, got)
+		}
+		if got := req.Header.Get("X-Opencode-Request"); got != "" {
+			t.Errorf("baseURL %q: expected no X-Opencode-Request, got %q", baseURL, got)
+		}
+		if got := req.Header.Get("User-Agent"); got != "" {
+			t.Errorf("baseURL %q: expected User-Agent unset at request-build time, got %q", baseURL, got)
 		}
 	}
 }
 
 func TestApplySessionHeader_EmptySessionID(t *testing.T) {
 	req, _ := http.NewRequest("POST", "https://opencode.ai/zen/go", nil)
-	applySessionHeader(req, "https://opencode.ai/zen/go", "")
+	applyOpencodeHeaders(req, "https://opencode.ai/zen/go", "")
 	if req.Header.Get("X-Opencode-Session") != "" {
 		t.Error("empty sessionID must not set header")
+	}
+	// The host check gates ALL opencode headers: the CLI-identifying headers
+	// must still be set even without a session ID (free tier validates UA).
+	if got := req.Header.Get("User-Agent"); got != opencodeUserAgent {
+		t.Errorf("empty sessionID must still set User-Agent %q, got %q", opencodeUserAgent, got)
+	}
+	if got := req.Header.Get("X-Opencode-Client"); got != "cli" {
+		t.Errorf("empty sessionID must still set X-Opencode-Client cli, got %q", got)
+	}
+	if got := req.Header.Get("X-Opencode-Request"); got == "" {
+		t.Error("empty sessionID must still set X-Opencode-Request")
+	}
+}
+
+func TestApplySessionHeader_RequestIDUniquePerCall(t *testing.T) {
+	req1, _ := http.NewRequest("POST", "https://opencode.ai/zen/go", nil)
+	req2, _ := http.NewRequest("POST", "https://opencode.ai/zen/go", nil)
+	applyOpencodeHeaders(req1, "https://opencode.ai/zen/go", "sess-123")
+	applyOpencodeHeaders(req2, "https://opencode.ai/zen/go", "sess-123")
+	id1 := req1.Header.Get("X-Opencode-Request")
+	id2 := req2.Header.Get("X-Opencode-Request")
+	if id1 == "" || id2 == "" {
+		t.Fatalf("X-Opencode-Request must be non-empty, got %q and %q", id1, id2)
+	}
+	if id1 == id2 {
+		t.Errorf("X-Opencode-Request must differ per request, got %q twice", id1)
+	}
+}
+
+// TestNormalizeOpenAIBaseURL pins the base URL normalization used before
+// appending "/chat/completions". Stored provider base URLs may or may not
+// already include "/v1"; both forms must yield exactly one "/v1" segment.
+// Regression: openrouter's stored "https://openrouter.ai/api/v1" produced
+// "/v1/v1/chat/completions" upstream 404s.
+func TestNormalizeOpenAIBaseURL(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"https://openrouter.ai/api/v1", "https://openrouter.ai/api/v1"},
+		{"https://openrouter.ai/api/v1/", "https://openrouter.ai/api/v1"},
+		{"https://api.openai.com", "https://api.openai.com/v1"},
+		{"https://api.openai.com/", "https://api.openai.com/v1"},
+		{"https://integrate.api.nvidia.com/v1", "https://integrate.api.nvidia.com/v1"},
+		{"https://opencode.ai/zen/go", "https://opencode.ai/zen/go/v1"},
+		{"http://localhost:11434", "http://localhost:11434/v1"},
+	} {
+		if got := normalizeOpenAIBaseURL(tc.in); got != tc.want {
+			t.Errorf("normalizeOpenAIBaseURL(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 
@@ -926,6 +995,10 @@ func TestOpenCodeGo_SessionHeaderForwarded(t *testing.T) {
 	origHostCheck := isOpencodeHost
 	isOpencodeHost = func(string) bool { return true }
 	defer func() { isOpencodeHost = origHostCheck }()
+
+	origUA := opencodeUserAgent
+	opencodeUserAgent = "opencode/test-fixed"
+	defer func() { opencodeUserAgent = origUA }()
 
 	var captured http.Header
 	srv := captureServer(t, &captured)
@@ -958,5 +1031,55 @@ func TestOpenCodeGo_SessionHeaderForwarded(t *testing.T) {
 
 	if captured.Get("X-Opencode-Session") == "" {
 		t.Errorf("expected X-Opencode-Session to be set, headers: %v", captured)
+	}
+	if got := captured.Get("User-Agent"); !strings.HasPrefix(got, "opencode/") {
+		t.Errorf("expected User-Agent with opencode/ prefix, got %q", got)
+	}
+	if got := captured.Get("X-Opencode-Client"); got != "cli" {
+		t.Errorf("expected X-Opencode-Client cli, got %q", got)
+	}
+
+	// X-Opencode-Request must be present and differ between two consecutive
+	// requests (per-request uniqueness, not process-stable like the session).
+	firstRequestID := captured.Get("X-Opencode-Request")
+	if firstRequestID == "" {
+		t.Errorf("expected X-Opencode-Request to be set, headers: %v", captured)
+	}
+
+	var captured2 http.Header
+	srv2 := captureServer(t, &captured2)
+	defer srv2.Close()
+
+	vmSvc2 := &mockVMService{
+		getByNameFn: func(_ context.Context, _ string) (*models.VirtualModel, error) {
+			return &models.VirtualModel{ID: 1, Name: "test-vm", MaxRetries: 0}, nil
+		},
+		resolveFn: func(_ context.Context, _ *models.VirtualModel) ([]service.ResolvedModel, error) {
+			return []service.ResolvedModel{
+				{
+					Model:    models.Model{ID: 42, ProviderID: 1, Name: "go-model"},
+					Provider: models.Provider{ID: 1, Name: "opencode-go", APIType: models.APITypeOpenAI, BaseURL: srv2.URL + "/go", APIKeyEncrypted: "enc:test"},
+				},
+			}, nil
+		},
+	}
+
+	engine2, _ := newTestEngine(vmSvc2, &mockProviderService{
+		decryptKeyFn: func(_ string) (string, error) { return "test-key", nil },
+	}, &mockOAuthService{
+		getTokenFn: func(_ context.Context, _ int64) (string, error) { return "", io.EOF },
+	})
+
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-vm","messages":[{"role":"user","content":"hi"}]}`))
+	req2.Header.Set("X-Request-ID", "sess_abc123")
+	w2 := httptest.NewRecorder()
+	engine2.HandleChatCompletion(w2, req2)
+
+	secondRequestID := captured2.Get("X-Opencode-Request")
+	if secondRequestID == "" {
+		t.Errorf("expected X-Opencode-Request to be set on second request, headers: %v", captured2)
+	}
+	if secondRequestID != "" && secondRequestID == firstRequestID {
+		t.Errorf("X-Opencode-Request must differ between consecutive requests, got %q twice", firstRequestID)
 	}
 }

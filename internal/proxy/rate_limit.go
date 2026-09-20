@@ -36,6 +36,11 @@ func classifyRateLimit(body []byte) time.Duration {
 
 type RateLimitTracker struct {
 	entries sync.Map // providerID (int64) -> cooldownUntil (time.Time)
+
+	// modelCooldowns tracks per-model rate-limit cooldowns, keyed by
+	// modelKey(providerID, modelName) (same helper the circuit breaker uses).
+	// Isolated models cool down here instead of poisoning the whole provider.
+	modelCooldowns sync.Map // modelKey(providerID, modelName) (string) -> cooldownUntil (time.Time)
 }
 
 type ProviderRateLimitStatus struct {
@@ -90,4 +95,62 @@ func (t *RateLimitTracker) GetStatus() []ProviderRateLimitStatus {
 
 func (t *RateLimitTracker) Clear(providerID int64) {
 	t.entries.Delete(providerID)
+}
+
+// ModelRateLimitStatus is one per-model rate-limit cooldown entry.
+type ModelRateLimitStatus struct {
+	ProviderID int64         `json:"provider_id"`
+	ModelName  string        `json:"model_name"`
+	Limited    bool          `json:"limited"`
+	Remaining  time.Duration `json:"remaining"`
+	Until      time.Time     `json:"until"`
+}
+
+func (t *RateLimitTracker) MarkModelLimited(providerID int64, modelName string, retryAfter time.Duration) {
+	cooldown := retryAfter
+	if cooldown <= 0 {
+		cooldown = defaultCooldown
+	}
+	t.modelCooldowns.Store(modelKey(providerID, modelName), time.Now().Add(cooldown))
+}
+
+func (t *RateLimitTracker) IsModelLimited(providerID int64, modelName string) (bool, time.Duration) {
+	key := modelKey(providerID, modelName)
+	val, ok := t.modelCooldowns.Load(key)
+	if !ok {
+		return false, 0
+	}
+	until := val.(time.Time)
+	remaining := time.Until(until)
+	if remaining <= 0 {
+		t.modelCooldowns.Delete(key)
+		return false, 0
+	}
+	return true, remaining
+}
+
+func (t *RateLimitTracker) ClearModel(providerID int64, modelName string) {
+	t.modelCooldowns.Delete(modelKey(providerID, modelName))
+}
+
+func (t *RateLimitTracker) GetModelStatus() []ModelRateLimitStatus {
+	var statuses []ModelRateLimitStatus
+	t.modelCooldowns.Range(func(key, value interface{}) bool {
+		providerID, modelName := parseModelKey(key.(string))
+		until := value.(time.Time)
+		remaining := time.Until(until)
+		if remaining <= 0 {
+			t.modelCooldowns.Delete(key)
+			return true
+		}
+		statuses = append(statuses, ModelRateLimitStatus{
+			ProviderID: providerID,
+			ModelName:  modelName,
+			Limited:    true,
+			Remaining:  remaining,
+			Until:      until,
+		})
+		return true
+	})
+	return statuses
 }

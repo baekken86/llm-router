@@ -26,6 +26,7 @@ func (h *ModelHandler) Routes() chi.Router {
 	r.Put("/{id}/tags", h.SetTags)
 	r.Get("/{id}/tags", h.GetTags)
 	r.Put("/{id}/disabled", h.ToggleDisabled)
+	r.Put("/{id}/rate-limit-isolated", h.SetRateLimitIsolated)
 	r.Delete("/stale", h.DeleteStale)
 	r.Delete("/{id}", h.Delete)
 	return r
@@ -165,6 +166,39 @@ func (h *ModelHandler) ToggleDisabled(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.modelService.ToggleDisabled(r.Context(), id, req.Disabled, duration, "manual"); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, m)
+}
+
+func (h *ModelHandler) SetRateLimitIsolated(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	var req struct {
+		RateLimitIsolated bool `json:"rate_limit_isolated"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	m, err := h.modelService.GetByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if m == nil {
+		writeError(w, http.StatusNotFound, "model not found")
+		return
+	}
+
+	if err := h.modelService.SetRateLimitIsolated(r.Context(), id, req.RateLimitIsolated); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

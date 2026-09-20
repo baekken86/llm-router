@@ -21,7 +21,7 @@ type VirtualModelService interface {
 	Update(ctx context.Context, id int64, req models.UpdateVirtualModelRequest) (*models.VirtualModel, error)
 	Delete(ctx context.Context, id int64) error
 	ResolveModels(ctx context.Context, vm *models.VirtualModel) ([]ResolvedModel, error)
-	PreviewResolve(ctx context.Context, filterExpr json.RawMessage, sortExpr json.RawMessage, includeModels json.RawMessage, composition *models.CompositionNode) ([]ResolvedModel, error)
+	PreviewResolve(ctx context.Context, filterExpr json.RawMessage, sortExpr json.RawMessage, includeModels json.RawMessage, composition *models.CompositionNode, disabledSortIDs []int64, disabledFilterIDs []int64) ([]ResolvedModel, error)
 	GetDependencies(ctx context.Context) (map[string][]string, error)
 	RouteModel(ctx context.Context, name string) (*ModelRoute, error)
 }
@@ -128,6 +128,12 @@ func (s *virtualModelService) Create(ctx context.Context, req models.CreateVirtu
 	if req.RetryOnStatus != nil {
 		vm.RetryOnStatus = req.RetryOnStatus
 	}
+	if req.DisabledSortConditions != nil {
+		vm.DisabledSortConditions = *req.DisabledSortConditions
+	}
+	if req.DisabledFilterConditions != nil {
+		vm.DisabledFilterConditions = *req.DisabledFilterConditions
+	}
 
 	if err := s.vmRepo.Create(ctx, vm); err != nil {
 		return nil, err
@@ -203,6 +209,12 @@ func (s *virtualModelService) Update(ctx context.Context, id int64, req models.U
 		}
 		vm.IncludeModels = *req.IncludeModels
 	}
+	if req.DisabledSortConditions != nil {
+		vm.DisabledSortConditions = *req.DisabledSortConditions
+	}
+	if req.DisabledFilterConditions != nil {
+		vm.DisabledFilterConditions = *req.DisabledFilterConditions
+	}
 
 	if err := s.vmRepo.Update(ctx, vm); err != nil {
 		return nil, err
@@ -214,7 +226,7 @@ func (s *virtualModelService) Delete(ctx context.Context, id int64) error {
 	return s.vmRepo.Delete(ctx, id)
 }
 
-func (s *virtualModelService) PreviewResolve(ctx context.Context, filterExpr json.RawMessage, sortExpr json.RawMessage, includeModels json.RawMessage, composition *models.CompositionNode) ([]ResolvedModel, error) {
+func (s *virtualModelService) PreviewResolve(ctx context.Context, filterExpr json.RawMessage, sortExpr json.RawMessage, includeModels json.RawMessage, composition *models.CompositionNode, disabledSortIDs []int64, disabledFilterIDs []int64) ([]ResolvedModel, error) {
 	if composition != nil {
 		if len(filterExpr) > 0 && string(filterExpr) != "{}" {
 			return nil, fmt.Errorf("cannot specify both composition and filter_expr")
@@ -238,10 +250,12 @@ func (s *virtualModelService) PreviewResolve(ctx context.Context, filterExpr jso
 	}
 
 	vm := &models.VirtualModel{
-		FilterExpr:    filterExpr,
-		SortExpr:      sortExpr,
-		IncludeModels: includeModels,
-		Composition:   composition,
+		FilterExpr:               filterExpr,
+		SortExpr:                 sortExpr,
+		IncludeModels:            includeModels,
+		Composition:              composition,
+		DisabledSortConditions:   disabledSortIDs,
+		DisabledFilterConditions: disabledFilterIDs,
 	}
 	return s.ResolveModels(ctx, vm)
 }
@@ -565,19 +579,32 @@ func (s *virtualModelService) resolveModelsFiltered(ctx context.Context, filter 
 			mapping = mappingMap[m.ID]
 		}
 
-		for _, effort := range efforts {
+		// For mapped models, resolve efforts from the target model so
+		// tag/metadata lookups use the target's effort set (the source
+		// may have no tags while the target has them stored under e.g.
+		// "max"). Source efforts are still used for override lookups.
+		tagLookupEfforts := efforts
+		var targetModel *models.Model
+		if mapping != nil {
+			for i := range allModels {
+				if allModels[i].Name == mapping.TargetModelName {
+					targetModel = &allModels[i]
+					break
+				}
+			}
+			if targetModel != nil {
+				if te, err := s.tagRepo.GetAvailableEfforts(ctx, targetModel.ID); err == nil && len(te) > 0 {
+					tagLookupEfforts = te
+				}
+			}
+		}
+
+		for _, effort := range tagLookupEfforts {
 			var tags []models.Tag
 			var globalMeta map[string]string
 
 			if mapping != nil {
 				// Mapped: use target model's tags + global metadata by name
-				var targetModel *models.Model
-				for i := range allModels {
-					if allModels[i].Name == mapping.TargetModelName {
-						targetModel = &allModels[i]
-						break
-					}
-				}
 				if targetModel != nil {
 					tags, err = s.tagRepo.GetByModelEffort(ctx, targetModel.ID, effort)
 					if err != nil {
@@ -1111,6 +1138,12 @@ func matchesFilter(tags []models.Tag, modelName string, filter models.FilterNode
 }
 
 func evalFilterNode(node models.FilterNode, allMaps []map[string]string) bool {
+	// Disabled nodes behave as if not present (neutral element true):
+	// AND ignores them, OR short-circuits on them (equal to removing the
+	// child), NOT of them is vacuous, and a disabled root matches everything.
+	if node.Disabled {
+		return true
+	}
 	if node.IsLeaf() {
 		var val string
 		var exists bool
@@ -1129,6 +1162,9 @@ func evalFilterNode(node models.FilterNode, allMaps []map[string]string) bool {
 
 	if len(node.And) > 0 {
 		for _, child := range node.And {
+			if child.Disabled {
+				continue // disabled children are ignored, as if removed
+			}
 			if !evalFilterNode(child, allMaps) {
 				return false
 			}
@@ -1138,6 +1174,12 @@ func evalFilterNode(node models.FilterNode, allMaps []map[string]string) bool {
 
 	if len(node.Or) > 0 {
 		for _, child := range node.Or {
+			if child.Disabled {
+				// Disabled children are ignored, as if removed. Skipping (not
+				// short-circuiting on the neutral true) is required: letting a
+				// disabled child return true here would match every model.
+				continue
+			}
 			if evalFilterNode(child, allMaps) {
 				return true
 			}
@@ -1146,6 +1188,9 @@ func evalFilterNode(node models.FilterNode, allMaps []map[string]string) bool {
 	}
 
 	if node.Not != nil {
+		if node.Not.Disabled {
+			return true // vacuous NOT: disabled child behaves as if removed
+		}
 		return !evalFilterNode(*node.Not, allMaps)
 	}
 
@@ -1243,6 +1288,10 @@ func compareModels(a, b ResolvedModel, sortExpr models.SortExpr) bool {
 	bMaps := []map[string]string{bTagMap}
 
 	for _, s := range sortExpr {
+		// Disabled entries are skipped entirely, as if not present.
+		if s.Disabled {
+			continue
+		}
 		if s.IsCondition() {
 			aMatch := evalFilterNode(*s.Condition, aMaps)
 			bMatch := evalFilterNode(*s.Condition, bMaps)

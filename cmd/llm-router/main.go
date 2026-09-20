@@ -405,13 +405,34 @@ func runProxy(args []string) {
 	vmHandler := handlers.NewVirtualModelHandler(vmService)
 	keyHandler := handlers.NewKeyHandler(keyService)
 	importHandler := handlers.NewImportHandler(service.NewImportService(modelRepo, tagRepo))
+	modelService.SetOverrideRepo(overrideRepo)
 	metadataHandler := handlers.NewMetadataHandler(llmrouter.ModelsJSON, providerMetadataRepo, globalMetaRepo)
+	// Mirror m.* metadata into mc.* model tags after every manual metadata
+	// write so filters/sorts see the values without a provider re-discovery.
+	metadataHandler.SetMirrorFn(func(modelName string) {
+		modelService.MirrorGlobalMetadata(context.Background(), modelName)
+	})
 	adminHandler := handlers.NewAdminHandler(adminService)
 	statusHandler := handlers.NewStatusHandler(engine, providerService, oauthService, providerMetadataRepo)
 	syslogHandler := handlers.NewSyslogHandler(logRepo)
 	settingsHandler := handlers.NewSettingsHandler(cfg, engine)
 	mappingHandler := handlers.NewModelMappingHandler(modelMappingRepo, modelRepo, logger)
 	modelOverrideHandler := handlers.NewModelOverrideHandler(overrideRepo)
+	// Keep the m.* metadata layer in sync after override writes: overrides
+	// shadow m.* per model, and a stale m.* value would resurface the moment
+	// an override is cleared (or on another provider's row of the same name).
+	modelOverrideHandler.SetMirrorFn(
+		func(modelName string, clearedKeys map[string]bool) {
+			modelService.MirrorOverridesToGlobal(context.Background(), modelName, clearedKeys)
+		},
+		func(ctx context.Context, modelID int64) (string, bool) {
+			m, err := modelRepo.GetByID(ctx, modelID)
+			if err != nil || m == nil {
+				return "", false
+			}
+			return m.Name, true
+		},
+	)
 	globalSortHandler := handlers.NewGlobalSortConditionHandler(globalSortRepo)
 	globalFilterHandler := handlers.NewGlobalFilterConditionHandler(globalFilterRepo)
 
@@ -446,7 +467,7 @@ func runProxy(args []string) {
 		Addr:         addr,
 		Handler:      r,
 		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 5 * time.Minute,
+		WriteTimeout: 30 * time.Minute,
 		IdleTimeout:  120 * time.Second,
 	}
 

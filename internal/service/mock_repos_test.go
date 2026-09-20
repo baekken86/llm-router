@@ -137,6 +137,16 @@ func (m *mockModelRepo) Upsert(_ context.Context, providerID int64, name string)
 	return &mod, nil
 }
 
+func (m *mockModelRepo) SetRateLimitIsolated(_ context.Context, id int64, isolated bool) error {
+	for i := range m.models {
+		if m.models[i].ID == id {
+			m.models[i].RateLimitIsolated = isolated
+			return nil
+		}
+	}
+	return nil
+}
+
 func (m *mockModelRepo) ToggleDisabled(_ context.Context, id int64, disabled bool, _ *time.Duration, reason string) error {
 	for i := range m.models {
 		if m.models[i].ID == id {
@@ -226,11 +236,18 @@ func newMockTagRepo() *mockTagRepo {
 }
 
 func (m *mockTagRepo) Set(_ context.Context, modelID int64, effort string, tags map[string]string) error {
-	var tagList []models.Tag
-	for k, v := range tags {
-		tagList = append(tagList, models.Tag{ModelID: modelID, ReasoningEffort: effort, Key: k, Value: v})
+	// Effort-scoped replace, mirroring sqliteTagRepo.Set semantics: only the
+	// given effort's tags are replaced, other efforts stay intact.
+	var kept []models.Tag
+	for _, t := range m.tags[modelID] {
+		if t.ReasoningEffort != effort {
+			kept = append(kept, t)
+		}
 	}
-	m.tags[modelID] = tagList
+	for k, v := range tags {
+		kept = append(kept, models.Tag{ModelID: modelID, ReasoningEffort: effort, Key: k, Value: v})
+	}
+	m.tags[modelID] = kept
 	return nil
 }
 

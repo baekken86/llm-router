@@ -3,6 +3,8 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -152,36 +154,84 @@ var isOpencodeHost = func(host string) bool {
 	return host == "opencode.ai" || strings.HasSuffix(host, ".opencode.ai")
 }
 
-// applySessionHeader sets X-Opencode-Session for OpenCode hosts. OpenCode Go
-// requires a stable per-conversation session ID and errors without it. The
-// header is only sent to opencode.ai hosts; other providers are unaffected.
-func applySessionHeader(httpReq *http.Request, baseURL, sessionID string) {
-	if sessionID == "" {
-		return
+// opencodeUserAgent mimics the OpenCode CLI's User-Agent. OpenCode Go/zen
+// free tier (Console upstream) only unlocks capacity for requests that
+// identify as the OpenCode CLI: the upstream validates the "opencode/"
+// UA prefix (see anomalyco/opencode packages/opencode/src/session/llm/
+// request.ts; issues #42029/#42500 — the x-opencode-* headers alone do not
+// unlock free-tier models). Without it, -free models return FreeTierError.
+// Package var so tests can pin it to a fixed value.
+var opencodeUserAgent = "opencode/1.18.31 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
+
+// randomRequestID returns a random 16-byte hex ID for per-request headers.
+func randomRequestID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("req-%d", time.Now().UnixNano())
 	}
+	return hex.EncodeToString(b)
+}
+
+// isOpencodeBaseURL reports whether the provider base URL points at an
+// opencode.ai host. Cheap re-check for call sites that need to know the
+// host matched (the httpReq headers alone don't tell them).
+func isOpencodeBaseURL(baseURL string) bool {
 	u, err := url.Parse(baseURL)
 	if err != nil {
+		return false
+	}
+	return isOpencodeHost(u.Hostname())
+}
+
+// applyOpencodeHeaders sets the headers OpenCode Go/zen requires for its
+// free tier (Console upstream): requests must identify as the OpenCode CLI
+// via the "opencode/..." User-Agent plus the x-opencode-* headers, or -free
+// models fail with FreeTierError ("OpenCode's free tier can only be used
+// from within OpenCode"). The host check gates ALL opencode headers; the
+// session header itself is only set when sessionID is non-empty. Other
+// providers are completely unaffected.
+func applyOpencodeHeaders(httpReq *http.Request, baseURL, sessionID string) {
+	if !isOpencodeBaseURL(baseURL) {
 		return
 	}
-	if isOpencodeHost(u.Hostname()) {
+	httpReq.Header.Set("User-Agent", opencodeUserAgent)
+	httpReq.Header.Set("X-Opencode-Client", "cli")
+	httpReq.Header.Set("X-Opencode-Request", randomRequestID())
+	if sessionID != "" {
 		httpReq.Header.Set("X-Opencode-Session", sessionID)
 	}
 }
 
+// normalizeOpenAIBaseURL returns a base URL that always ends right before
+// "/v1", so "/v1/chat/completions" is appended exactly once. Stored provider
+// base URLs may already include "/v1" (e.g. https://openrouter.ai/api/v1),
+// which previously produced "/v1/v1/chat/completions" and upstream 404s.
+func normalizeOpenAIBaseURL(baseURL string) string {
+	return strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/v1") + "/v1"
+}
+
 func (c *OpenAIClient) ChatCompletion(baseURL, apiKey, sessionID string, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
+	// Zen free-tier gate (see opencode_free.go): -free models require
+	// stream:true, the CLI system-prompt marker and anonymous auth, so the
+	// non-stream caller gets a server-side SSE aggregation instead of a
+	// direct JSON response. The caller's req struct is never mutated.
+	if isOpencodeBaseURL(baseURL) && isOpencodeFreeModel(req.Model) {
+		return c.chatCompletionOpencodeFree(baseURL, apiKey, sessionID, req)
+	}
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", baseURL+"/v1/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequest("POST", normalizeOpenAIBaseURL(baseURL)+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	applySessionHeader(httpReq, baseURL, sessionID)
+	applyOpencodeHeaders(httpReq, baseURL, sessionID)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -203,6 +253,14 @@ func (c *OpenAIClient) ChatCompletion(baseURL, apiKey, sessionID string, req Cha
 }
 
 func (c *OpenAIClient) ChatCompletionStream(baseURL, apiKey, sessionID string, req ChatCompletionRequest) (io.ReadCloser, *http.Response, error) {
+	// Zen free-tier gate (see opencode_free.go): anonymous auth and the
+	// content-marker system message. The request is already streamed here;
+	// only the outgoing copy is modified, the caller's struct is untouched.
+	if isOpencodeBaseURL(baseURL) && isOpencodeFreeModel(req.Model) {
+		req = opencodeFreeRequest(req)
+		apiKey = opencodeFreeAuthKey
+	}
+
 	req.Stream = true
 	req.StreamOptions = &StreamOptions{IncludeUsage: true}
 
@@ -211,7 +269,7 @@ func (c *OpenAIClient) ChatCompletionStream(baseURL, apiKey, sessionID string, r
 		return nil, nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", baseURL+"/v1/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequest("POST", normalizeOpenAIBaseURL(baseURL)+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, fmt.Errorf("create request: %w", err)
 	}
@@ -219,7 +277,7 @@ func (c *OpenAIClient) ChatCompletionStream(baseURL, apiKey, sessionID string, r
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("Accept", "text/event-stream")
-	applySessionHeader(httpReq, baseURL, sessionID)
+	applyOpencodeHeaders(httpReq, baseURL, sessionID)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -233,6 +291,47 @@ func (c *OpenAIClient) ChatCompletionStream(baseURL, apiKey, sessionID string, r
 	}
 
 	return resp.Body, resp, nil
+}
+
+// chatCompletionOpencodeFree serves a non-stream ChatCompletion for a zen
+// -free model. The free-tier gate rejects non-stream bodies, so the request
+// is sent as stream:true (with the marker system message and anonymous
+// "Bearer public" auth) and the SSE reply is aggregated server-side into a
+// normal ChatCompletionResponse — invisible to the caller.
+func (c *OpenAIClient) chatCompletionOpencodeFree(baseURL, apiKey, sessionID string, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
+	out := opencodeFreeRequest(req)
+
+	body, err := json.Marshal(out)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", normalizeOpenAIBaseURL(baseURL)+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+opencodeFreeAuthKey)
+	httpReq.Header.Set("Accept", "text/event-stream")
+	applyOpencodeHeaders(httpReq, baseURL, sessionID)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, newProviderError(resp, respBody)
+	}
+
+	result := aggregateFreeStreamResponse(ParseSSEStream(resp.Body))
+	if result == nil {
+		return nil, fmt.Errorf("opencode zen free stream produced no chunks")
+	}
+	return result, nil
 }
 
 func ParseSSEStream(reader io.ReadCloser) <-chan StreamChunk {

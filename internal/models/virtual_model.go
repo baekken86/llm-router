@@ -51,6 +51,10 @@ type CreateVirtualModelRequest struct {
 	Composition   *CompositionNode `json:"composition,omitempty"`
 	MaxRetries    *int             `json:"max_retries,omitempty"`
 	RetryOnStatus json.RawMessage  `json:"retry_on_status,omitempty"`
+	// Pointer to slice: nil = absent (no disabled conditions), non-nil empty
+	// = explicitly clear/keep none disabled.
+	DisabledSortConditions   *[]int64 `json:"disabled_global_sort_conditions,omitempty"`
+	DisabledFilterConditions *[]int64 `json:"disabled_global_filter_conditions,omitempty"`
 }
 
 type UpdateVirtualModelRequest struct {
@@ -62,6 +66,10 @@ type UpdateVirtualModelRequest struct {
 	Composition   *CompositionNode `json:"composition,omitempty"`
 	MaxRetries    *int             `json:"max_retries,omitempty"`
 	RetryOnStatus *json.RawMessage `json:"retry_on_status,omitempty"`
+	// Pointer to slice: nil = absent (keep existing disabled sets), non-nil
+	// empty = replace the existing set with none disabled.
+	DisabledSortConditions   *[]int64 `json:"disabled_global_sort_conditions,omitempty"`
+	DisabledFilterConditions *[]int64 `json:"disabled_global_filter_conditions,omitempty"`
 }
 
 type PreviewVirtualModelRequest struct {
@@ -69,6 +77,9 @@ type PreviewVirtualModelRequest struct {
 	SortExpr      json.RawMessage  `json:"sort_expr,omitempty"`
 	IncludeModels json.RawMessage  `json:"include_models,omitempty"`
 	Composition   *CompositionNode `json:"composition,omitempty"`
+	// Stateless preview: plain slices, nil/empty = nothing disabled.
+	DisabledSortConditions   []int64 `json:"disabled_global_sort_conditions,omitempty"`
+	DisabledFilterConditions []int64 `json:"disabled_global_filter_conditions,omitempty"`
 }
 
 // FilterNode is a recursive filter expression.
@@ -83,6 +94,11 @@ type FilterNode struct {
 	And []FilterNode `json:"and,omitempty"`
 	Or  []FilterNode `json:"or,omitempty"`
 	Not *FilterNode  `json:"not,omitempty"`
+
+	// Disabled marks this node as inactive: during evaluation it behaves as if
+	// it were not present (neutral element = true). A disabled leaf is ignored
+	// by and/or/not combinators and a disabled root matches everything.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // IsLeaf returns true if this is a simple condition (key+op+value).
@@ -122,6 +138,10 @@ type SortEntry struct {
 	// sort criteria. Lower values are applied earlier. nil uses
 	// DefaultLocalPriority (1000).
 	Priority *int `json:"priority,omitempty"`
+
+	// Disabled marks this entry as inactive: it is skipped entirely when the
+	// sort expression is applied, as if it were not present.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // IsCondition returns true if this entry is a predicate sort.

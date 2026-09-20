@@ -15,6 +15,10 @@ type MetadataHandler struct {
 	fieldsJSON      []byte
 	providerMetaRepo repository.ProviderMetadataRepository
 	globalMetaRepo   repository.GlobalMetadataRepository
+	// mirrorFn is called after a successful SetEntry with the model name so
+	// freshly written m.* metadata is mirrored into mc.* model tags (the
+	// bridge that makes it visible to filters/sorts). Optional.
+	mirrorFn func(modelName string)
 }
 
 func NewMetadataHandler(modelsJSON []byte, providerMetaRepo repository.ProviderMetadataRepository, globalMetaRepo repository.GlobalMetadataRepository) *MetadataHandler {
@@ -175,12 +179,24 @@ func (h *MetadataHandler) SetEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Mirror m.* → mc.* model tags so the new values are filterable without
+	// waiting for the next provider discovery. Best-effort, non-fatal.
+	if h.mirrorFn != nil {
+		h.mirrorFn(req.ModelName)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(modelMetadataEntry{
 		ModelName:       req.ModelName,
 		ReasoningEffort: req.ReasoningEffort,
 		Metadata:        req.Metadata,
 	})
+}
+
+// SetMirrorFn wires the post-write mirror callback (constructor stays
+// signature-compatible; modelService is created before handlers in main).
+func (h *MetadataHandler) SetMirrorFn(fn func(modelName string)) {
+	h.mirrorFn = fn
 }
 
 func inferType(key string) string {

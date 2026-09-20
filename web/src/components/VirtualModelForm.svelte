@@ -218,7 +218,7 @@
             bind:this={canvasRef}
             globalSorts={globalConditions.filter(c => c.enabled !== false)}
             disabledGlobalSorts={disabledGlobalConditions}
-            onToggleGlobal={toggleGlobalCondition}
+            onToggleGlobalSort={toggleGlobalCondition}
             globalFilters={globalFilterConditions.filter(c => c.enabled !== false)}
             disabledGlobalFilters={disabledGlobalFilterConditions}
             onToggleGlobalFilter={toggleGlobalFilterCondition}
@@ -249,7 +249,7 @@
       <h3 class="text-sm font-medium text-gray-300 mb-3">
         Resolved Models <span class="text-gray-500 text-xs">(live preview)</span>
       </h3>
-      <ResolvedPreview previewMode={true} composition={canvasRef?.getComposition() || compositionNode} />
+      <ResolvedPreview previewMode={true} composition={canvasRef?.getComposition() || compositionNode} disabledGlobalSortIds={disabledGlobalConditions} disabledGlobalFilterIds={disabledGlobalFilterConditions} />
     </div>
   {/if}
 </div>

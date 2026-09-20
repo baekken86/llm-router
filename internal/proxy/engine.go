@@ -20,8 +20,13 @@ import (
 	"github.com/chris/llm-router/internal/service"
 )
 
+// RequestLog carries one structured event about a proxied request.
+// Type is "incoming" (request accepted), "attempt" (one model attempt:
+// logged at dispatch time before the upstream response, or for models
+// skipped before dispatch with the skip status/message), or "proxy" (a
+// completed result row).
 type RequestLog struct {
-	Type               string // "incoming" or "proxy"
+	Type               string // "incoming", "attempt", or "proxy"
 	Status             string // "streaming", "completed", "failed", or "" for non-streaming
 	Timestamp          time.Time
 	RequestID          string
@@ -42,6 +47,7 @@ type RequestLog struct {
 	RTKSavedTokens     int
 	CavemanIntercepted bool
 	CavemanSavedTokens int
+	ReasoningEffort    string
 }
 
 type StreamProgress struct {
@@ -122,6 +128,14 @@ func (e *Engine) GetRateLimitStatus() []ProviderRateLimitStatus {
 
 func (e *Engine) ClearRateLimit(providerID int64) {
 	e.rateLimits.Clear(providerID)
+}
+
+func (e *Engine) GetModelRateLimitStatus() []ModelRateLimitStatus {
+	return e.rateLimits.GetModelStatus()
+}
+
+func (e *Engine) ClearModelRateLimit(providerID int64, modelName string) {
+	e.rateLimits.ClearModel(providerID, modelName)
 }
 
 func (e *Engine) SetCircuitBreaker(cb *CircuitBreaker) {
@@ -359,6 +373,13 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	for i := 0; i < len(resolvedModels); i++ {
 		rm := resolvedModels[i]
+
+		prs, exists := providerRetries[rm.Provider.ID]
+		if !exists {
+			prs = &providerRetryState{}
+			providerRetries[rm.Provider.ID] = prs
+		}
+
 		apiKey, err := e.getAPIKey(r.Context(), rm.Provider)
 		if err != nil {
 			e.logger.Error("get api key", "error", err, "provider", rm.Provider.Name)
@@ -371,22 +392,30 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		prs, exists := providerRetries[rm.Provider.ID]
-		if !exists {
-			prs = &providerRetryState{}
-			providerRetries[rm.Provider.ID] = prs
-		}
-
 		if prs.retries > vm.MaxRetries {
 			continue
 		}
 
-		if limited, remaining := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+		if !rm.Model.RateLimitIsolated {
+			if limited, remaining := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+				msg := fmt.Sprintf("rate limited, retry in %s", remaining.Round(time.Second))
+				failures = append(failures, map[string]interface{}{
+					"model":    rm.Model.Name,
+					"provider": rm.Provider.Name,
+					"status":   429,
+					"message":  msg,
+				})
+				continue
+			}
+		}
+
+		if limited, mRemaining := e.rateLimits.IsModelLimited(rm.Provider.ID, rm.Model.Name); limited {
+			msg := fmt.Sprintf("model rate limited, retry in %s", mRemaining.Round(time.Second))
 			failures = append(failures, map[string]interface{}{
 				"model":    rm.Model.Name,
 				"provider": rm.Provider.Name,
 				"status":   429,
-				"message":  fmt.Sprintf("rate limited, retry in %s", remaining.Round(time.Second)),
+				"message":  msg,
 			})
 			continue
 		}
@@ -401,6 +430,10 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		// Attempt rows are written only when a request is actually dispatched
+		// upstream; pre-dispatch skips (no key, rate limited, disabled) are
+		// intentionally not logged.
+		e.logAttempt(requestID, req.Model, rm.Provider.Name, rm.Model.Name, rm.ReasoningEffort, 0, "", i, prs.retries)
 		resp, reqResult, err := e.sendRequest(r, rm, apiKey, req)
 		if reqResult == nil {
 			reqResult = &SendRequestResult{}
@@ -430,6 +463,7 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 				CavemanSavedTokens: reqResult.CavemanSavedTokens,
 				FallbackCount:      i,
 				RetryCount:         prs.retries,
+				ReasoningEffort:    rm.ReasoningEffort,
 			})
 
 			e.recordModelSuccess(rm)
@@ -445,17 +479,18 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		providerErr := e.processProviderError(r.Context(), err, rm)
 
 		e.logRequest(RequestLog{
-			Type:          "proxy",
-			Timestamp:     start,
-			RequestID:     requestID,
-			VirtualModel:  req.Model,
-			ProviderName:  rm.Provider.Name,
-			ModelName:     rm.Model.Name,
-			StatusCode:    providerErr.StatusCode,
-			Latency:       time.Since(start),
-			ErrorMessage:  providerErr.Message,
-			FallbackCount: i,
-			RetryCount:    prs.retries,
+			Type:            "proxy",
+			Timestamp:       start,
+			RequestID:       requestID,
+			VirtualModel:    req.Model,
+			ProviderName:    rm.Provider.Name,
+			ModelName:       rm.Model.Name,
+			StatusCode:      providerErr.StatusCode,
+			Latency:         time.Since(start),
+			ErrorMessage:    providerErr.Message,
+			FallbackCount:   i,
+			RetryCount:      prs.retries,
+			ReasoningEffort: rm.ReasoningEffort,
 		})
 
 		if shouldRetry(providerErr.StatusCode, retryOnStatus) && prs.retries < vm.MaxRetries {
@@ -558,13 +593,28 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 
-		if limited, remaining := e.rateLimits.IsLimited(rm.Provider.ID); limited {
-			e.logger.Warn("skipping provider: rate limited", "provider", rm.Provider.Name, "model", rm.Model.Name, "remaining", remaining.Round(time.Second))
+		if !rm.Model.RateLimitIsolated {
+			if limited, remaining := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+				msg := fmt.Sprintf("rate limited, retry in %s", remaining.Round(time.Second))
+				e.logger.Warn("skipping provider: rate limited", "provider", rm.Provider.Name, "model", rm.Model.Name, "remaining", remaining.Round(time.Second))
+				failures = append(failures, map[string]interface{}{
+					"model":    rm.Model.Name,
+					"provider": rm.Provider.Name,
+					"status":   429,
+					"message":  msg,
+				})
+				continue
+			}
+		}
+
+		if limited, mRemaining := e.rateLimits.IsModelLimited(rm.Provider.ID, rm.Model.Name); limited {
+			msg := fmt.Sprintf("model rate limited, retry in %s", mRemaining.Round(time.Second))
+			e.logger.Warn("skipping model: rate limited", "provider", rm.Provider.Name, "model", rm.Model.Name, "remaining", mRemaining.Round(time.Second))
 			failures = append(failures, map[string]interface{}{
 				"model":    rm.Model.Name,
 				"provider": rm.Provider.Name,
 				"status":   429,
-				"message":  fmt.Sprintf("rate limited, retry in %s", remaining.Round(time.Second)),
+				"message":  msg,
 			})
 			continue
 		}
@@ -585,21 +635,26 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 				time.Sleep(time.Duration(retry) * time.Second)
 			}
 
+			// Attempt rows are written only when a request is actually
+			// dispatched upstream; pre-dispatch skips are intentionally not
+			// logged.
+			e.logAttempt(requestID, req.Model, rm.Provider.Name, rm.Model.Name, rm.ReasoningEffort, 0, "", i, retry)
 			streamResp, httpResp, err := e.sendStreamRequest(r, rm, apiKey, req)
 			if err == nil {
 				e.recordModelSuccess(rm)
 
 				e.logRequest(RequestLog{
-					Type:          "proxy",
-					Status:        "streaming",
-					Timestamp:     start,
-					RequestID:     requestID,
-					VirtualModel:  req.Model,
-					ProviderName:  rm.Provider.Name,
-					ModelName:     rm.Model.Name,
-					StatusCode:    0,
-					FallbackCount: i,
-					RetryCount:    retry,
+					Type:            "proxy",
+					Status:          "streaming",
+					Timestamp:       start,
+					RequestID:       requestID,
+					VirtualModel:    req.Model,
+					ProviderName:    rm.Provider.Name,
+					ModelName:       rm.Model.Name,
+					StatusCode:      0,
+					FallbackCount:   i,
+					RetryCount:      retry,
+					ReasoningEffort: rm.ReasoningEffort,
 				})
 
 				w.Header().Set("Content-Type", "text/event-stream")
@@ -631,6 +686,7 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 						ReasoningTokens: p.ReasoningTokens,
 						FallbackCount:   i,
 						RetryCount:      retry,
+						ReasoningEffort: rm.ReasoningEffort,
 					})
 				}
 
@@ -642,19 +698,20 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 				}
 
 				log := RequestLog{
-					Type:           "proxy",
-					Status:         "completed",
-					Timestamp:      start,
-					RequestID:      requestID,
-					VirtualModel:   req.Model,
-					ProviderName:   rm.Provider.Name,
-					ModelName:      rm.Model.Name,
-					StatusCode:     http.StatusOK,
-					Latency:        time.Since(start),
-					RTKIntercepted: rtkIntercepted,
-					RTKSavedTokens: rtkSavedTokens,
-					FallbackCount:  i,
-					RetryCount:     retry,
+					Type:            "proxy",
+					Status:          "completed",
+					Timestamp:       start,
+					RequestID:       requestID,
+					VirtualModel:    req.Model,
+					ProviderName:    rm.Provider.Name,
+					ModelName:       rm.Model.Name,
+					StatusCode:      http.StatusOK,
+					Latency:         time.Since(start),
+					RTKIntercepted:  rtkIntercepted,
+					RTKSavedTokens:  rtkSavedTokens,
+					FallbackCount:   i,
+					RetryCount:      retry,
+					ReasoningEffort: rm.ReasoningEffort,
 				}
 				if usage != nil {
 					log.InputTokens = usage.PromptTokens
@@ -671,16 +728,17 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 			providerErr := e.processProviderError(r.Context(), err, rm)
 
 			e.logRequest(RequestLog{
-				Type:          "proxy",
-				Timestamp:     start,
-				RequestID:     requestID,
-				VirtualModel:  req.Model,
-				ProviderName:  rm.Provider.Name,
-				ModelName:     rm.Model.Name,
-				StatusCode:    providerErr.StatusCode,
-				ErrorMessage:  providerErr.Message,
-				FallbackCount: i,
-				RetryCount:    retry,
+				Type:            "proxy",
+				Timestamp:       start,
+				RequestID:       requestID,
+				VirtualModel:    req.Model,
+				ProviderName:    rm.Provider.Name,
+				ModelName:       rm.Model.Name,
+				StatusCode:      providerErr.StatusCode,
+				ErrorMessage:    providerErr.Message,
+				FallbackCount:   i,
+				RetryCount:      retry,
+				ReasoningEffort: rm.ReasoningEffort,
 			})
 
 			if !shouldRetry(providerErr.StatusCode, retryOnStatus) {
@@ -1038,6 +1096,30 @@ func extractReasoningTokens(usage *Usage) int {
 	return r
 }
 
+// logAttempt logs one per-model attempt row (Type "attempt"). Written
+// immediately BEFORE each upstream dispatch (status 0, no error) so the log
+// shows the attempt the moment it is sent, on every retry iteration.
+// Pre-dispatch skips (no api key, rate limited, disabled) are intentionally
+// NOT logged as attempts — a skip has no response code and logging one
+// would read like a received status. The database consumer persists proxy
+// and attempt rows; stats queries filter log_type='proxy', so attempt rows
+// never affect stats.
+func (e *Engine) logAttempt(requestID, virtualModel, providerName, modelName, reasoningEffort string, statusCode int, errMsg string, fallbackCount, retryCount int) {
+	e.logRequest(RequestLog{
+		Type:            "attempt",
+		Timestamp:       time.Now(),
+		RequestID:       requestID,
+		VirtualModel:    virtualModel,
+		ProviderName:    providerName,
+		ModelName:       modelName,
+		StatusCode:      statusCode,
+		ErrorMessage:    errMsg,
+		FallbackCount:   fallbackCount,
+		RetryCount:      retryCount,
+		ReasoningEffort: reasoningEffort,
+	})
+}
+
 func (e *Engine) logRequest(log RequestLog) {
 	attrs := []any{
 		"request_id", log.RequestID,
@@ -1051,6 +1133,7 @@ func (e *Engine) logRequest(log RequestLog) {
 		"cached_tokens", log.CachedTokens,
 		"fallback", log.FallbackCount,
 		"retry", log.RetryCount,
+		"reasoning_effort", log.ReasoningEffort,
 	}
 
 	if log.Status != "" {
@@ -1110,7 +1193,9 @@ func isModelUnavailableError(pe *ProviderError) bool {
 // processProviderError normalizes err to *ProviderError (via errors.As,
 // unknown errors → 500) and applies all side effects:
 //   - 402 (SubscriptionRequiredError) → circuitBreaker.DisableModelPermanent
-//   - 429 → rateLimits.MarkLimited (RetryAfter, then classifyRateLimit fallback)
+//   - 429 → rateLimits.MarkLimited (RetryAfter, then classifyRateLimit fallback);
+//     for rate-limit-isolated models, MarkModelLimited instead — only that
+//     model cools down, not the provider
 //   - >=500 → circuitBreaker.Record5xx
 //   - 400/404 "model unavailable" → circuitBreaker.RecordUnavailable
 //
@@ -1134,7 +1219,13 @@ func (e *Engine) processProviderError(ctx context.Context, err error, rm service
 		if cooldown == 0 {
 			cooldown = classifyRateLimit(providerErr.RawBody)
 		}
-		e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
+		if rm.Model.RateLimitIsolated {
+			// Isolated model: only this model cools down, the provider stays
+			// available for its other models.
+			e.rateLimits.MarkModelLimited(rm.Provider.ID, rm.Model.Name, cooldown)
+		} else {
+			e.rateLimits.MarkLimited(rm.Provider.ID, cooldown)
+		}
 	}
 
 	if e.circuitBreaker != nil && providerErr.StatusCode >= 500 {
@@ -1300,13 +1391,28 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 
-		if limited, remaining := e.rateLimits.IsLimited(rm.Provider.ID); limited {
-			e.logger.Warn("skipping provider: rate limited", "provider", rm.Provider.Name, "model", rm.Model.Name, "remaining", remaining.Round(time.Second))
+		if !rm.Model.RateLimitIsolated {
+			if limited, remaining := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+				msg := fmt.Sprintf("rate limited, retry in %s", remaining.Round(time.Second))
+				e.logger.Warn("skipping provider: rate limited", "provider", rm.Provider.Name, "model", rm.Model.Name, "remaining", remaining.Round(time.Second))
+				failures = append(failures, map[string]interface{}{
+					"model":    rm.Model.Name,
+					"provider": rm.Provider.Name,
+					"status":   429,
+					"message":  msg,
+				})
+				continue
+			}
+		}
+
+		if limited, mRemaining := e.rateLimits.IsModelLimited(rm.Provider.ID, rm.Model.Name); limited {
+			msg := fmt.Sprintf("model rate limited, retry in %s", mRemaining.Round(time.Second))
+			e.logger.Warn("skipping model: rate limited", "provider", rm.Provider.Name, "model", rm.Model.Name, "remaining", mRemaining.Round(time.Second))
 			failures = append(failures, map[string]interface{}{
 				"model":    rm.Model.Name,
 				"provider": rm.Provider.Name,
 				"status":   429,
-				"message":  fmt.Sprintf("rate limited, retry in %s", remaining.Round(time.Second)),
+				"message":  msg,
 			})
 			continue
 		}
@@ -1327,6 +1433,10 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 				time.Sleep(time.Duration(retry) * time.Second)
 			}
 
+			// Attempt rows are written only when a request is actually
+			// dispatched upstream; pre-dispatch skips are intentionally not
+			// logged.
+			e.logAttempt(requestID, anthReq.Model, rm.Provider.Name, rm.Model.Name, rm.ReasoningEffort, 0, "", i, retry)
 			openResp, reqResult, err := e.sendRequest(r, rm, apiKey, openReq)
 			if reqResult == nil {
 				reqResult = &SendRequestResult{}
@@ -1358,6 +1468,7 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 					CavemanSavedTokens: reqResult.CavemanSavedTokens,
 					FallbackCount:      i,
 					RetryCount:         retry,
+					ReasoningEffort:    rm.ReasoningEffort,
 				})
 
 				w.Header().Set("Content-Type", "application/json")
@@ -1369,17 +1480,18 @@ func (e *Engine) HandleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 			providerErr := e.processProviderError(r.Context(), err, rm)
 
 			e.logRequest(RequestLog{
-				Type:          "proxy",
-				Timestamp:     start,
-				RequestID:     requestID,
-				VirtualModel:  anthReq.Model,
-				ProviderName:  rm.Provider.Name,
-				ModelName:     rm.Model.Name,
-				StatusCode:    providerErr.StatusCode,
-				Latency:       time.Since(start),
-				ErrorMessage:  providerErr.Message,
-				FallbackCount: i,
-				RetryCount:    retry,
+				Type:            "proxy",
+				Timestamp:       start,
+				RequestID:       requestID,
+				VirtualModel:    anthReq.Model,
+				ProviderName:    rm.Provider.Name,
+				ModelName:       rm.Model.Name,
+				StatusCode:      providerErr.StatusCode,
+				Latency:         time.Since(start),
+				ErrorMessage:    providerErr.Message,
+				FallbackCount:   i,
+				RetryCount:      retry,
+				ReasoningEffort: rm.ReasoningEffort,
 			})
 
 			if !shouldRetry(providerErr.StatusCode, retryOnStatus) {
@@ -1467,12 +1579,25 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 			continue
 		}
 
-		if limited, _ := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+		if !rm.Model.RateLimitIsolated {
+			if limited, _ := e.rateLimits.IsLimited(rm.Provider.ID); limited {
+				failures = append(failures, map[string]interface{}{
+					"model":    rm.Model.Name,
+					"provider": rm.Provider.Name,
+					"status":   429,
+					"message":  "rate limited",
+				})
+				continue
+			}
+		}
+
+		if limited, mRemaining := e.rateLimits.IsModelLimited(rm.Provider.ID, rm.Model.Name); limited {
+			msg := fmt.Sprintf("model rate limited, retry in %s", mRemaining.Round(time.Second))
 			failures = append(failures, map[string]interface{}{
 				"model":    rm.Model.Name,
 				"provider": rm.Provider.Name,
 				"status":   429,
-				"message":  "rate limited",
+				"message":  msg,
 			})
 			continue
 		}
@@ -1493,6 +1618,11 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 				time.Sleep(time.Duration(retry) * time.Second)
 			}
 
+			// Attempt rows are written only when a request is actually
+			// dispatched upstream; pre-dispatch skips are intentionally not
+			// logged.
+			e.logAttempt(requestID, virtualModel, rm.Provider.Name, rm.Model.Name, rm.ReasoningEffort, 0, "", i, retry)
+
 			var lastErr error
 			if rm.Provider.APIType == models.APITypeAnthropic {
 				anthReq.Model = rm.Model.Name
@@ -1502,16 +1632,17 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 					e.recordModelSuccess(rm)
 
 					e.logRequest(RequestLog{
-						Type:          "proxy",
-						Status:        "streaming",
-						Timestamp:     start,
-						RequestID:     requestID,
-						VirtualModel:  anthReq.Model,
-						ProviderName:  rm.Provider.Name,
-						ModelName:     rm.Model.Name,
-						StatusCode:    0,
-						FallbackCount: i,
-						RetryCount:    retry,
+						Type:            "proxy",
+						Status:          "streaming",
+						Timestamp:       start,
+						RequestID:       requestID,
+						VirtualModel:    anthReq.Model,
+						ProviderName:    rm.Provider.Name,
+						ModelName:       rm.Model.Name,
+						StatusCode:      0,
+						FallbackCount:   i,
+						RetryCount:      retry,
+						ReasoningEffort: rm.ReasoningEffort,
 					})
 
 					w.Header().Set("Content-Type", "text/event-stream")
@@ -1540,23 +1671,25 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 							ReasoningTokens: p.ReasoningTokens,
 							FallbackCount:   i,
 							RetryCount:      retry,
+							ReasoningEffort: rm.ReasoningEffort,
 						})
 					}
 
 					usage := e.streamAnthropicPassthrough(w, flusher, streamBody, onProgress)
 
 					log := RequestLog{
-						Type:          "proxy",
-						Status:        "completed",
-						Timestamp:     start,
-						RequestID:     requestID,
-						VirtualModel:  anthReq.Model,
-						ProviderName:  rm.Provider.Name,
-						ModelName:     rm.Model.Name,
-						StatusCode:    http.StatusOK,
-						Latency:       time.Since(start),
-						FallbackCount: i,
-						RetryCount:    retry,
+						Type:            "proxy",
+						Status:          "completed",
+						Timestamp:       start,
+						RequestID:       requestID,
+						VirtualModel:    anthReq.Model,
+						ProviderName:    rm.Provider.Name,
+						ModelName:       rm.Model.Name,
+						StatusCode:      http.StatusOK,
+						Latency:         time.Since(start),
+						FallbackCount:   i,
+						RetryCount:      retry,
+						ReasoningEffort: rm.ReasoningEffort,
 					}
 					if usage != nil {
 						log.InputTokens = usage.PromptTokens
@@ -1577,16 +1710,17 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 					e.recordModelSuccess(rm)
 
 					e.logRequest(RequestLog{
-						Type:          "proxy",
-						Status:        "streaming",
-						Timestamp:     start,
-						RequestID:     requestID,
-						VirtualModel:  anthReq.Model,
-						ProviderName:  rm.Provider.Name,
-						ModelName:     rm.Model.Name,
-						StatusCode:    0,
-						FallbackCount: i,
-						RetryCount:    retry,
+						Type:            "proxy",
+						Status:          "streaming",
+						Timestamp:       start,
+						RequestID:       requestID,
+						VirtualModel:    anthReq.Model,
+						ProviderName:    rm.Provider.Name,
+						ModelName:       rm.Model.Name,
+						StatusCode:      0,
+						FallbackCount:   i,
+						RetryCount:      retry,
+						ReasoningEffort: rm.ReasoningEffort,
 					})
 
 					w.Header().Set("Content-Type", "text/event-stream")
@@ -1615,23 +1749,25 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 							ReasoningTokens: p.ReasoningTokens,
 							FallbackCount:   i,
 							RetryCount:      retry,
+							ReasoningEffort: rm.ReasoningEffort,
 						})
 					}
 
 					usage := e.streamOpenAIToAnthropic(w, flusher, streamBody, rm.Model.Name, requestID, onProgress)
 
 					log := RequestLog{
-						Type:          "proxy",
-						Status:        "completed",
-						Timestamp:     start,
-						RequestID:     requestID,
-						VirtualModel:  anthReq.Model,
-						ProviderName:  rm.Provider.Name,
-						ModelName:     rm.Model.Name,
-						StatusCode:    http.StatusOK,
-						Latency:       time.Since(start),
-						FallbackCount: i,
-						RetryCount:    retry,
+						Type:            "proxy",
+						Status:          "completed",
+						Timestamp:       start,
+						RequestID:       requestID,
+						VirtualModel:    anthReq.Model,
+						ProviderName:    rm.Provider.Name,
+						ModelName:       rm.Model.Name,
+						StatusCode:      http.StatusOK,
+						Latency:         time.Since(start),
+						FallbackCount:   i,
+						RetryCount:      retry,
+						ReasoningEffort: rm.ReasoningEffort,
 					}
 					if usage != nil {
 						log.InputTokens = usage.PromptTokens
@@ -1650,16 +1786,17 @@ func (e *Engine) HandleAnthropicMessagesStream(w http.ResponseWriter, r *http.Re
 			providerErr := e.processProviderError(r.Context(), lastErr, rm)
 
 			e.logRequest(RequestLog{
-				Type:          "proxy",
-				Timestamp:     start,
-				RequestID:     requestID,
-				VirtualModel:  anthReq.Model,
-				ProviderName:  rm.Provider.Name,
-				ModelName:     rm.Model.Name,
-				StatusCode:    providerErr.StatusCode,
-				ErrorMessage:  providerErr.Message,
-				FallbackCount: i,
-				RetryCount:    retry,
+				Type:            "proxy",
+				Timestamp:       start,
+				RequestID:       requestID,
+				VirtualModel:    anthReq.Model,
+				ProviderName:    rm.Provider.Name,
+				ModelName:       rm.Model.Name,
+				StatusCode:      providerErr.StatusCode,
+				ErrorMessage:    providerErr.Message,
+				FallbackCount:   i,
+				RetryCount:      retry,
+				ReasoningEffort: rm.ReasoningEffort,
 			})
 
 			if !shouldRetry(providerErr.StatusCode, retryOnStatus) {

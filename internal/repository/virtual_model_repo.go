@@ -93,7 +93,7 @@ func (r *sqliteVirtualModelRepo) Create(ctx context.Context, vm *models.VirtualM
 	vm.ID = id
 	vm.CreatedAt = now
 	vm.UpdatedAt = now
-	return nil
+	return r.saveDisabledConditions(ctx, vm)
 }
 
 func (r *sqliteVirtualModelRepo) GetByID(ctx context.Context, id int64) (*models.VirtualModel, error) {

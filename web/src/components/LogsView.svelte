@@ -80,6 +80,14 @@
           c => c.ProviderName === log.ProviderName && c.ModelName === log.ModelName
         );
         if (existing >= 0) {
+          const cur = childMap[key].children[existing];
+          // Invariant: at most one row per (provider, model). A result row
+          // supersedes a pending "sent" attempt row (history can contain
+          // both); an attempt never overwrites an existing result. Same-kind
+          // rows (e.g. streaming progress) replace in place, newest wins.
+          if (cur.Type !== 'attempt' && log.Type === 'attempt') {
+            continue;
+          }
           childMap[key].children[existing] = log;
         } else {
           childMap[key].children.push(log);
@@ -154,12 +162,20 @@
       return next.slice(0, 500);
     }
 
-    const idx = next.findIndex(
-      l => l.Type === 'proxy' && l.RequestID === log.RequestID &&
-           l.ProviderName === log.ProviderName && l.ModelName === log.ModelName
-    );
+    // Non-incoming rows live in one slot per (request, provider, model):
+    // a result replaces a pending "sent" attempt row; an attempt arriving
+    // over an existing result is dropped (history backfills newest-first,
+    // so the result was already seen).
+    const slot = (l) =>
+      l.Type !== 'incoming' &&
+      l.RequestID === log.RequestID &&
+      l.ProviderName === log.ProviderName &&
+      l.ModelName === log.ModelName;
+    const idx = next.findIndex(slot);
     if (idx >= 0) {
-      next[idx] = log;
+      if (next[idx].Type === 'attempt' || log.Type !== 'attempt') {
+        next[idx] = log;
+      }
     } else {
       next.unshift(log);
     }
@@ -238,13 +254,19 @@
               <div class="ml-6 border-l-2 border-border">
                 {#each parent.children as child}
                   {@const isStreaming = child.Status === 'streaming'}
-                  <div class="flex items-center gap-2 px-4 py-1.5 text-xs {isStreaming ? 'opacity-70' : ''}">
+                  {@const isAttempt = child.Type === 'attempt' && !child.StatusCode}
+                  <div class="flex items-center gap-2 px-4 py-1.5 text-xs {isStreaming || isAttempt ? 'opacity-70' : ''}">
                     <span class="text-muted-foreground font-mono w-16 shrink-0">{fmtTime(child.Timestamp)}</span>
                     <span class="text-muted-foreground w-24 shrink-0">{child.ProviderName || '-'}</span>
                     <span class="text-foreground w-40 shrink-0 truncate">{child.ModelName || '-'}</span>
-                    <span class="w-16 text-right shrink-0 {isStreaming ? 'text-blue-400' : statusColor(child.StatusCode)}">
+                    {#if child.ReasoningEffort}
+                      <span class="text-muted-foreground w-12 shrink-0">[{child.ReasoningEffort}]</span>
+                    {/if}
+                    <span class="w-16 text-right shrink-0 {isStreaming ? 'text-blue-400' : isAttempt ? 'text-muted-foreground' : statusColor(child.StatusCode)}">
                       {#if isStreaming}
                         <span class="inline-block w-2 h-2 bg-blue-400 rounded-full animate-pulse mr-1"></span>streaming
+                      {:else if isAttempt}
+                        sent
                       {:else}
                         {child.StatusCode || '-'}
                       {/if}

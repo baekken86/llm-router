@@ -35,6 +35,7 @@ func setupModelTestDB(t *testing.T) *sql.DB {
 			disabled INTEGER NOT NULL DEFAULT 0,
 			disabled_until TIMESTAMP NULL,
 			disabled_reason TEXT NULL,
+			rate_limit_isolated INTEGER NOT NULL DEFAULT 0,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(provider_id, name)
 		)`,

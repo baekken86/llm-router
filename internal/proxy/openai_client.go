@@ -54,6 +54,13 @@ type Message struct {
 	Content    interface{} `json:"content"`
 	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
+
+	// ReasoningContent carries DeepSeek-style thinking traces. Thinking-mode
+	// providers (e.g. DeepSeek via OpenRouter) require assistant messages to
+	// echo reasoning_content back on follow-up turns; dropping it made them
+	// fail with 400 "The reasoning_content in the thinking mode must be
+	// passed back to the API." on multi-turn conversations.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 type Tool struct {

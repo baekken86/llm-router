@@ -126,6 +126,11 @@ func AnthropicToOpenAI(resp *AnthropicResponse, model string) ChatCompletionResp
 		Role:    "assistant",
 		Content: strings.Join(contentParts, ""),
 	}
+	// Preserve thinking blocks as reasoning_content so thinking-mode
+	// providers can accept the assistant message back on follow-up turns.
+	if len(reasoningParts) > 0 {
+		msg.ReasoningContent = strings.Join(reasoningParts, "")
+	}
 	if len(toolCalls) > 0 {
 		msg.ToolCalls = toolCalls
 		msg.Content = nil

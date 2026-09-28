@@ -82,14 +82,24 @@ type AnthropicResponse struct {
 }
 
 type AnthropicContent struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	Thinking  string          `json:"thinking,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	Content   string          `json:"content,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Type      string                `json:"type"`
+	Text      string                `json:"text,omitempty"`
+	Thinking  string                `json:"thinking,omitempty"`
+	ID        string                `json:"id,omitempty"`
+	Name      string                `json:"name,omitempty"`
+	Input     json.RawMessage       `json:"input,omitempty"`
+	Content   string                `json:"content,omitempty"`
+	ToolUseID string                `json:"tool_use_id,omitempty"`
+	Source    *AnthropicImageSource `json:"source,omitempty"`
+}
+
+// AnthropicImageSource carries image block payloads: a base64 source for
+// data URIs, or a url source for http(s) image references.
+type AnthropicImageSource struct {
+	Type      string `json:"type"`                 // "base64" or "url"
+	MediaType string `json:"media_type,omitempty"` // only for base64
+	Data      string `json:"data,omitempty"`       // only for base64
+	URL       string `json:"url,omitempty"`        // only for url
 }
 
 type AnthropicUsage struct {

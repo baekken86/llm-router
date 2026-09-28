@@ -22,6 +22,14 @@ func OpenAIToAnthropic(req ChatCompletionRequest) AnthropicRequest {
 		if msg.Role == "system" {
 			if content, ok := msg.Content.(string); ok {
 				systemParts = append(systemParts, content)
+			} else {
+				// Array-content system messages (e.g. OpenAI content parts)
+				// contribute their text parts instead of being dropped.
+				for _, block := range normalizeOpenAIContentParts(msg.Content) {
+					if block.Type == "text" {
+						systemParts = append(systemParts, block.Text)
+					}
+				}
 			}
 			continue
 		}
@@ -67,6 +75,16 @@ func OpenAIToAnthropic(req ChatCompletionRequest) AnthropicRequest {
 
 		if content, ok := msg.Content.(string); ok {
 			anthMsg.Content = content
+		} else if parts, isList := msg.Content.([]interface{}); isList {
+			// OpenAI content-part arrays (text + image_url) must be converted
+			// to Anthropic blocks; passing them through verbatim sends images
+			// the Anthropic-format endpoint cannot read. An empty conversion
+			// (all parts skipped) omits the message entirely.
+			blocks := normalizeOpenAIContentParts(parts)
+			if len(blocks) == 0 {
+				continue
+			}
+			anthMsg.Content = blocks
 		} else {
 			anthMsg.Content = msg.Content
 		}
@@ -91,6 +109,97 @@ func OpenAIToAnthropic(req ChatCompletionRequest) AnthropicRequest {
 	}
 
 	return anthReq
+}
+
+// normalizeOpenAIContentParts converts an OpenAI content-part array (from
+// req.Messages[].Content) into Anthropic content blocks. Text parts are kept;
+// image_url parts become Anthropic image blocks — a data URI becomes a base64
+// source, an http(s) URL becomes a url source. Unknown part types and
+// malformed image parts are skipped rather than forwarded, since Anthropic
+// rejects blocks it cannot interpret. Non-list content yields nil.
+func normalizeOpenAIContentParts(content interface{}) []AnthropicContent {
+	parts, ok := content.([]interface{})
+	if !ok {
+		return nil
+	}
+
+	var blocks []AnthropicContent
+	for _, part := range parts {
+		m, ok := part.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		switch m["type"] {
+		case "text":
+			if text, ok := m["text"].(string); ok {
+				blocks = append(blocks, AnthropicContent{Type: "text", Text: text})
+			}
+
+		case "image_url":
+			var url string
+			switch v := m["image_url"].(type) {
+			case map[string]interface{}:
+				url, _ = v["url"].(string)
+			case string:
+				url = v // OpenAI string shorthand for {"url": ...}
+			}
+			if block, ok := openAIImageURLToAnthropic(url); ok {
+				blocks = append(blocks, block)
+			}
+		}
+	}
+	return blocks
+}
+
+// openAIImageURLToAnthropic maps one OpenAI image reference onto an Anthropic
+// image block. Data URIs are split into a base64 source (media type parsed
+// from the URI, defaulting to image/png), http(s) URLs become a url source,
+// and anything else reports ok=false so the part is dropped.
+func openAIImageURLToAnthropic(url string) (AnthropicContent, bool) {
+	if url == "" {
+		return AnthropicContent{}, false
+	}
+
+	if strings.HasPrefix(url, "data:") {
+		const marker = "base64,"
+		rest := strings.TrimPrefix(url, "data:")
+		idx := strings.Index(rest, marker)
+		if idx < 0 {
+			return AnthropicContent{}, false
+		}
+		data := rest[idx+len(marker):]
+		mediaType := rest[:idx]
+		if i := strings.Index(mediaType, ";"); i >= 0 {
+			mediaType = mediaType[:i] // drop ";charset=..." style parameters
+		}
+		if mediaType == "" {
+			mediaType = "image/png"
+		}
+		if !strings.HasPrefix(mediaType, "image/") {
+			return AnthropicContent{}, false
+		}
+		return AnthropicContent{
+			Type: "image",
+			Source: &AnthropicImageSource{
+				Type:      "base64",
+				MediaType: mediaType,
+				Data:      data,
+			},
+		}, true
+	}
+
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+		return AnthropicContent{
+			Type: "image",
+			Source: &AnthropicImageSource{
+				Type: "url",
+				URL:  url,
+			},
+		}, true
+	}
+
+	return AnthropicContent{}, false
 }
 
 func AnthropicToOpenAI(resp *AnthropicResponse, model string) ChatCompletionResponse {

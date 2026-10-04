@@ -323,6 +323,7 @@ func (e *Engine) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
 		return
 	}
+	ensureDefaultMaxTokens(&req, e.maxTokens)
 
 	var rtkIntercepted bool
 	var rtkSavedTokens int
@@ -539,6 +540,7 @@ func (e *Engine) HandleChatCompletionStream(w http.ResponseWriter, r *http.Reque
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
 		return
 	}
+	ensureDefaultMaxTokens(&req, e.maxTokens)
 
 	var rtkIntercepted bool
 	var rtkSavedTokens int
@@ -1956,7 +1958,13 @@ func applyReasoningEffortToAnthropic(req *AnthropicRequest, effort string) {
 	case "high":
 		req.Thinking = &AnthropicThinking{Type: "enabled", BudgetTokens: 8192}
 	case "max":
-		req.Thinking = &AnthropicThinking{Type: "enabled", BudgetTokens: 16384}
+		// Thinking must never consume the entire output budget, or the model
+		// finishes with "length" and an empty message (observed with glm-5.3).
+		budget := req.MaxTokens / 2
+		if budget > 16384 {
+			budget = 16384
+		}
+		req.Thinking = &AnthropicThinking{Type: "enabled", BudgetTokens: budget}
 	default:
 		req.Effort = &effort
 	}

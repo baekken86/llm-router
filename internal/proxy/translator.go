@@ -7,10 +7,39 @@ import (
 	"time"
 )
 
+// defaultMaxTokens caps client requests that omit max_tokens. Clients like
+// OpenCode send no max_tokens at all; without a floor the upstream default
+// (zai Anthropic endpoint: 4096) applies, and reasoning models burn the whole
+// budget on thinking before producing any visible text — finishing with
+// "length" and an empty message. 32k keeps room for reasoning AND output.
+const defaultMaxTokens = 32768
+
+// clampMaxTokens bounds a candidate default so absurd settings values
+// (e.g. 500000) never reach providers that reject oversized max_tokens.
+func clampMaxTokens(v int) int {
+	switch {
+	case v < 4096:
+		return 4096
+	case v > defaultMaxTokens:
+		return defaultMaxTokens
+	default:
+		return v
+	}
+}
+
+// ensureDefaultMaxTokens injects a sane max_tokens floor when the client
+// omitted it. Must run before request translation/dispatch.
+func ensureDefaultMaxTokens(req *ChatCompletionRequest, configured int) {
+	if req.MaxTokens == nil {
+		v := clampMaxTokens(configured)
+		req.MaxTokens = &v
+	}
+}
+
 func OpenAIToAnthropic(req ChatCompletionRequest) AnthropicRequest {
 	anthReq := AnthropicRequest{
 		Model:     req.Model,
-		MaxTokens: 4096,
+		MaxTokens: defaultMaxTokens,
 	}
 
 	if req.MaxTokens != nil {
